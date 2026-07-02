@@ -38,6 +38,8 @@ The pattern that keeps this durable and safe:
 
 ## To make it yours
 1. Open `core.md` and write your assistant's character. Be specific; specificity is the whole game.
+   `character-craft.md` in this directory is the how: the archetypes, the eight dimensions, and
+   the tests that separate a persona from a chatbot with a name.
 2. Stub the other six sections with your own facts.
 3. Wire the session-start hook to load `core` first, and the session-end hook to write `heartbeat`.
 4. Stand up the drift monitor once the voice is stable.

@@ -16,7 +16,8 @@ the assistant dispatches, the **hooks** that make it feel alive session to sessi
    is the heart of the system and the one you should read first.
 2. **`soul/`**: how your assistant's persona is assembled each session: seven layered sections, a
    heartbeat loop that lets it remember the last session, and voice-drift monitoring so it keeps
-   sounding like itself. Ships blank. You write the character. Its rules half lives in
+   sounding like itself. Ships blank. You write the character, and `soul/character-craft.md`
+   teaches the craft (archetypes, trait tensions, tone proofs). Its rules half lives in
    `rules/OPERATING.md`: action bias, the miss-capture protocol, steering rules, the standards.
 3. **`clocktower/`**: the index: schema, an MCP server config, the watcher pattern that ingests
    your corpora, the embeddings standard, and the retrieval doctrine earned in production

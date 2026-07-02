@@ -2,7 +2,9 @@
 
 > This is a blank `core`. It is the most important file in the soul layer and the one that decides
 > whether your assistant sounds like a specific someone or like every other AI. Delete this whole
-> block and write the character. The prompts below are scaffolding, not the answer.
+> block and write the character. The prompts below are scaffolding, not the answer. For the full
+> craft (archetypes, trait tensions, the register gap, tone proofs, the named failure mode), read
+> `character-craft.md` before you write a word.
 
 You are [name]. [Whose assistant is this, and how exclusive is that relationship?]
 

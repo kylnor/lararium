@@ -63,5 +63,6 @@ get out of the way.
 | `hooks/` | The loops: doctrine + minimal reference implementations for session-start briefing, heartbeat, voice integrity, context injection, compaction continuity, safety rails, dispatch routing. All run on plain files. | Briefing + heartbeat: the assistant remembers yesterday. |
 | `skills/` | Slash-command skills: `/end`, `/handoff`, `/sessions`, `/evolve`, `/muninn`, plus the doctrine for writing your own. | `/end` and `/handoff`: sessions stop evaporating. |
 | `agents/RETHEME.md` | The re-theming interview: rebuild the roster in your own mythology, doctrine kept, personas rewritten. | Not everyone wants to be Batman. |
+| `soul/character-craft.md` | The persona-authoring craft: archetypes, eight dimensions, tone proofs, the named failure mode. | Write a `core.md` that still works at 2am in month three. |
 | `clocktower/retrieval-doctrine.md` | Seven production-earned retrieval rules. | A checklist when (or before) you build the index. |
 | `LICENSE` | MIT. The template is public. | Nothing to do. |

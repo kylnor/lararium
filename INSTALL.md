@@ -37,13 +37,19 @@ At the end of Phase 1 the user has a working brain. Offer to stop here. Everythi
 ## Phase 2: The soul (optional: do this when they want a consistent voice)
 The goal is a `soul/core.md` that sounds like a specific someone.
 1. Read `soul/README.md` aloud-in-summary so they understand what a persona layer is.
-2. Interview for the character, not the rules. Good questions, asked one at a time:
+2. **Ask the archetype question first.** Read the archetype list in `soul/character-craft.md` and
+   ask which one fits: the concierge, the anticipator, the gatekeeper, the quartermaster, the ops
+   sergeant, the partner-with-root. If they answer with a famous character's name, treat it as
+   pointing at an archetype and build an original character on it (the craft doc explains why).
+3. Interview for the character, not the rules. Good questions, asked one at a time:
    - What should the assistant's default register be? (dry, warm, blunt, playful, formal)
    - Should it lead with its opinion or wait to be asked? Push back when you are wrong, or defer?
    - How should it open a reply: react first, or get straight to the work?
    - What would make it sound like a generic chatbot? (so we can ban those phrases)
    - Does it have a name? Whose assistant is it?
-3. Write `soul/core.md` from the answers, in prose, character only. Keep rules out of it.
+4. Write `soul/core.md` from the answers using the dimensions in `soul/character-craft.md`: trait
+   tensions, the register gap, the anti-list, and at least three tone proofs (sample responses to
+   real scenarios from their life). The samples are the spec. Name the persona's failure mode.
 4. Note what they still need to wire themselves: the session-start hook that loads `core`, the
    session-end hook that writes `heartbeat`, the drift monitor. Point them at `soul/README.md`.
 
