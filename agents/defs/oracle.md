@@ -7,7 +7,7 @@ permissionMode: acceptEdits
 
 <!-- TEMPLATE SCAFFOLD: This file is intentionally blank at the persona level.
      The assistant-lead role is the voice and character the owner talks to.
-     Write your own character here. The structure below is the working floor —
+     Write your own character here. The structure below is the working floor:
      the dispatch doctrine that makes the team function. Keep the doctrine; replace
      the persona with yours.
 

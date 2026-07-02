@@ -15,7 +15,7 @@ assistant interviews you and writes your files. You answer questions; it does th
 ---
 
 ## Phase 0: Read the map
-Before any question, read `brain/CLAUDE.md` (the laws) and `README.md` (the four layers). Tell the
+Before any question, read `brain/CLAUDE.md` (the laws) and `README.md` (the six layers). Tell the
 user, in two sentences, what they are about to set up. Then begin.
 
 ## Phase 1: The brain (required, do this first)
@@ -47,13 +47,27 @@ The goal is a `soul/core.md` that sounds like a specific someone.
 4. Note what they still need to wire themselves: the session-start hook that loads `core`, the
    session-end hook that writes `heartbeat`, the drift monitor. Point them at `soul/README.md`.
 
-## Phase 3: The agents (optional: leverage on top of a working system)
+## Phase 3: The rules and the loops (optional, but the cheapest leverage here)
+1. **Rules.** Walk `rules/OPERATING.md` with them. The miss-capture protocol is the one section to
+   sell hard: it needs zero infrastructure and compounds from day one. Help them copy the document
+   into their global config (`CLAUDE.md` or equivalent) and delete the example steering rules that
+   are not theirs.
+2. **Hooks.** Read `hooks/README.md` for the loop catalog. Ask which loops they want first (the
+   honest default: session-start briefing + heartbeat, skip the rest until the voice exists). Copy
+   the chosen reference hooks into their assistant config, wire them per
+   `hooks/settings.example.json`, and run each once standalone with a fake payload to prove it
+   exits clean. The reference hooks run on plain files; no database needed yet.
+3. **Skills.** Copy `skills/defs/` into their skills directory. Adapt the paths the skills mention
+   (handoff file location, index tool names) to what actually exists in their install; a skill that
+   references infrastructure they skipped should have that step cut, not left to error.
+
+## Phase 4: The agents (optional: leverage on top of a working system)
 1. Ask whether they want the themed roster as-is or renamed. If renamed, do a find-and-replace pass
    over `agents/defs/` and the README.
 2. Ask which functions they actually need (most people do not need chaos + load + red-team on day one).
    Prune the defs they will not use; keep the dispatch doctrine in the README.
 
-## Phase 4: The index (optional: only when files outgrow grep-and-read)
+## Phase 5: The index (optional: only when files outgrow grep-and-read)
 1. Tell them plainly: this is the heaviest phase and they can defer it indefinitely. The brain works
    without it.
 2. Walk `clocktower/README.md`. Help them produce a real `.env` from `.env.example` (their own

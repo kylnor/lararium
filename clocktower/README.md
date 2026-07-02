@@ -26,6 +26,8 @@ at. Do not copy corpora into markdown. The card points at the corpus; it does no
 - The MCP server config and the tool surface, **with credentials removed**.
 - The watcher pattern, documented.
 - The embeddings standard.
+- The retrieval doctrine (`retrieval-doctrine.md`): seven production-earned rules that make
+  retrieval good, not just present. Walk it as a checklist when you implement.
 
 ## What does NOT ship
 - The database itself. You stand up an empty one.
@@ -73,7 +75,8 @@ Every watcher must declare a freshness SLA (expected max age between successful 
 should alert. "The watcher is running" is not the same as "the watcher is producing." Track
 both.
 
-## Extraction note (Mac / live-system pass)
-This README is the architecture only. The real schema, MCP config, and watcher code live in the
-original system's code repo, not in this template's source brain. Pull them from there, strip
-credentials per `../SCRUB.md`, and drop them in here.
+## What you build vs what you copy
+The schema (`schema/`), the tool surface, and the server config in this directory are the map. The
+running server, the watchers, and the database are yours to stand up: this layer is infrastructure
+you operate, not code you clone. When you have it running, walk `retrieval-doctrine.md` as the
+quality checklist, and if you ever share your implementation, strip credentials per `../SCRUB.md`.

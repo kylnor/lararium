@@ -1,25 +1,36 @@
 # The Agentic Stack (template)
 
 A clone-and-run scaffold for a personal agentic system: a file-based knowledge **brain**, a layered
-**soul** (your assistant's persona), a **clocktower** index over your data, and a roster of
-**agents** the assistant dispatches. This is the empty cathedral. You bring the life that goes in it.
+**soul** (your assistant's persona), a **clocktower** index over your data, a roster of **agents**
+the assistant dispatches, the **hooks** that make it feel alive session to session, and the
+**skills** it runs as slash commands. This is the empty cathedral. You bring the life that goes in it.
 
 > This is a *template*, extracted from a working private system and depersonalized. It ships
 > structure, conventions, and patterns. It ships **none** of the original owner's data, persona, or
 > secrets. See `SCRUB.md` for exactly what was removed and how to verify nothing leaked.
 
-## The four layers
+## The six layers
 
 1. **`brain/`**: a human-navigable markdown knowledge store, scoped by life sphere, governed by a
    small set of laws (`brain/CLAUDE.md`). Files are canonical; the database is an index on top. This
    is the heart of the system and the one you should read first.
 2. **`soul/`**: how your assistant's persona is assembled each session: seven layered sections, a
    heartbeat loop that lets it remember the last session, and voice-drift monitoring so it keeps
-   sounding like itself. Ships blank. You write the character.
+   sounding like itself. Ships blank. You write the character. Its rules half lives in
+   `rules/OPERATING.md`: action bias, the miss-capture protocol, steering rules, the standards.
 3. **`clocktower/`**: the index: schema, an MCP server config, the watcher pattern that ingests
-   your corpora, and the embeddings standard. Ships with an empty database and no credentials.
+   your corpora, the embeddings standard, and the retrieval doctrine earned in production
+   (`clocktower/retrieval-doctrine.md`). Ships with an empty database and no credentials.
 4. **`agents/`**: a roster of specialized subagents (build, review, research, infra, adversarial,
    memory) plus the dispatch doctrine for when to use which.
+5. **`hooks/`**: the loops. Session-start briefing, the heartbeat that remembers yesterday, voice
+   integrity, compaction continuity, safety rails, dispatch routing. Doctrine plus minimal
+   reference implementations that run on plain files, no database required.
+6. **`skills/`**: slash-command skills for the session lifecycle (`/end`, `/handoff`, `/sessions`),
+   self-improvement (`/evolve`), and memory curation (`/muninn`), plus the doctrine for writing
+   your own.
+
+Upgrading from the four-layer v1? `UPGRADING.md` is the delta and the adoption order.
 
 ## Getting it onto your machine
 
@@ -52,16 +63,20 @@ an agent. If you would rather do it by hand, follow the manual setup order below
 ## Setup order (manual)
 
 Start with the brain. It is useful on day one with zero infrastructure: just markdown and the laws.
-Add the soul when you want a consistent voice. Add clocktower when the file layer outgrows
-grep-and-read and you want semantic search at scale. Add agents last; they are leverage on top of a
-system that already works.
+Add the soul when you want a consistent voice, and its rules half with it. Wire the hooks when you
+want the assistant to remember yesterday; the reference implementations run on plain files. Add
+clocktower when the file layer outgrows grep-and-read and you want semantic search at scale. Add
+agents and skills last; they are leverage on top of a system that already works.
 
 ```
 1. Read  brain/CLAUDE.md          # the laws, the map
 2. Fill  brain/now.md             # your cross-cutting heartbeat
 3. Write soul/core.md             # your assistant's character (replace the blank)
-4. Stand up clocktower/           # optional: the index, when you need it
-5. Adopt agents/                  # optional: the roster + dispatch doctrine
+4. Adopt rules/OPERATING.md       # the operating rules, edited until true of you
+5. Wire  hooks/                   # the loops: briefing, heartbeat, rails
+6. Adopt skills/                  # the session-lifecycle slash commands
+7. Stand up clocktower/           # optional: the index, when you need it
+8. Adopt agents/                  # optional: the roster + dispatch doctrine
 ```
 
 ## What this is not

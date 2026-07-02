@@ -38,10 +38,9 @@ Make sure you have one agent for each of these jobs:
   write the failing test before fixing. Verify reported success against ground truth.
 
 ## To make it yours
-1. Pull the agent definition files from your assistant's config (they are largely generic already).
+1. Copy the definition files from `defs/` into your assistant's agent config (in Claude Code:
+   `~/.claude/agents/`, one file per agent).
 2. Rename the roster if you do not want the original theme.
 3. Keep this README as the dispatch doctrine and prune the agents you do not use.
-
-## Extraction note (Mac / live-system pass)
-The definition files are not in this template's source brain; they live with the assistant config.
-Copy them, scrub any owner-specific references per `../SCRUB.md`, and drop them in here.
+4. If you later re-derive this layer from your own live system to share it, scrub the defs per
+   `../SCRUB.md` first: agent prompts absorb owner specifics the same way skills do.

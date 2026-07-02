@@ -1,0 +1,40 @@
+{
+  "//": "Drop this hooks block into your Claude Code settings.json (merge it with whatever else lives there). Copy the reference/ hooks to ~/.claude/hooks/stack/ first, or point the paths wherever you keep them. Every command is a shell invocation; the hook reads its JSON payload from stdin.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node ~/.claude/hooks/stack/session-start.js" }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node ~/.claude/hooks/stack/session-end-heartbeat.js" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node ~/.claude/hooks/stack/voice-log.js" }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "node ~/.claude/hooks/stack/pretooluse-guard.js" }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          { "type": "command", "command": "node ~/.claude/hooks/stack/agent-model-router.js" }
+        ]
+      }
+    ]
+  }
+}

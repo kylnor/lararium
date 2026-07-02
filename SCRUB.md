@@ -25,6 +25,27 @@ run the same three. A miss here leaks your real life.
 - [ ] Voice/convention rules that are personal preference (banned punctuation, tone) are marked
       optional, not presented as law.
 
+## The two surfaces that leak hardest
+
+- **Hooks.** Production hooks are soaked in your infrastructure: database hosts, table names,
+  persona injection, project slugs. Never scrub production hook code for sharing; write minimal
+  clean-room reference implementations instead (see `hooks/reference/`). Smaller surface, nothing
+  to miss.
+- **Skills.** A skill is a prompt, and prompts absorb your life: client names, absolute paths,
+  dollar amounts, tool tokens. Every skill gets all three passes before it ships. Cut a
+  personal step entirely rather than genericizing it awkwardly.
+
 ## Verify
 Do a final full-text sweep for the owner's name, the assistant's name, and any client names before
 you publish or hand it over. The cheapest leak to catch is the one you grep for.
+
+## Going public (a higher bar than gifting)
+
+Handing a scrubbed repo to a trusted peer tolerates seams; publishing does not. Before flipping a
+template repo public:
+- [ ] Re-run all three passes on the *current* tree, not the tree as you remember it.
+- [ ] Have a second reviewer (a dispatched adversarial agent counts) sweep specifically for identity
+      seams: paths containing usernames, example values that are real values, "generic" names that
+      are actually your clients'.
+- [ ] Check the commit history, issue text, and repo description, not just the files.
+- [ ] A license file. Public without a license is not shareable, it is just visible.

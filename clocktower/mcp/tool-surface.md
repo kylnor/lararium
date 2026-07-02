@@ -3,12 +3,10 @@
 Complete tool inventory, organized by authorization tier.
 All tools are exposed over HTTP unless noted [stdio only].
 
-Agents call tools via the authenticated shell helper or the MCP protocol
-directly. The helper signature is:
-
-```bash
-~/.claude/bin/ct.sh <tool_name> '<json_args>'
-```
+Agents call tools via the MCP protocol directly, or via a small authenticated
+shell wrapper you write (a curl POST to the HTTP endpoint with the bearer token
+from your environment; give it a signature like `<tool_name> '<json_args>'` and
+subagents without a native MCP binding can reach the index too).
 
 ---
 

@@ -17,7 +17,7 @@ exposes a single endpoint for MCP-over-SSE.
 
 ```
 POST https://<your-host>/mcp
-Authorization: Bearer <CLOCKTOWER_TOKEN_WRITE | CLOCKTOWER_TOKEN_READ | CLOCKTOWER_TOKEN_ADMIN>
+Authorization: Bearer <CLOCKTOWER_TOKEN | CLOCKTOWER_TOKEN_WRITE | CLOCKTOWER_TOKEN_READ>
 Content-Type: application/json
 ```
 
@@ -26,10 +26,10 @@ Token tier determines which tool tier is accessible:
 - `CLOCKTOWER_TOKEN_WRITE`: read + write tier
 - `CLOCKTOWER_TOKEN` (admin/full): all three tiers including admin tools
 
-Agents dispatched with shell access use the authenticated shell helper
-(`ct.sh <tool_name> '<json_args>'`) which wraps the HTTP transport with the
-appropriate token from environment. Cloud agents with no shell access connect
-via an MCP client pointed at the HTTP URL.
+Agents dispatched with shell access can use a small authenticated wrapper
+script you write (a curl POST wrapping the HTTP transport with the appropriate
+token from the environment; see `tool-surface.md`). Cloud agents with no shell
+access connect via an MCP client pointed at the HTTP URL.
 
 ### Stdio (for local CLI / trusted-machine only)
 
@@ -106,7 +106,7 @@ Use this as the liveness probe for any reverse proxy or process monitor.
 ## Deployment
 
 The reference deployment uses a container image on a managed hosting platform
-(the original uses Fly.io; adapt to your own). The server expects:
+(Fly.io, Render, a VM: anything that runs a container). The server expects:
 
 1. `DATABASE_URL` pointing at a Postgres instance with pgvector enabled.
 2. All token env vars populated.
