@@ -22,7 +22,9 @@ the assistant dispatches, the **hooks** that make it feel alive session to sessi
    your corpora, the embeddings standard, and the retrieval doctrine earned in production
    (`clocktower/retrieval-doctrine.md`). Ships with an empty database and no credentials.
 4. **`agents/`**: a roster of specialized subagents (build, review, research, infra, adversarial,
-   memory) plus the dispatch doctrine for when to use which.
+   memory) plus the dispatch doctrine for when to use which. The theme is replaceable: the
+   re-theming interview (`agents/RETHEME.md`) rebuilds the roster in your own mythology, doctrine
+   intact. Bring your own gods.
 5. **`hooks/`**: the loops. Session-start briefing, the heartbeat that remembers yesterday, voice
    integrity, compaction continuity, safety rails, dispatch routing. Doctrine plus minimal
    reference implementations that run on plain files, no database required.
@@ -30,7 +32,8 @@ the assistant dispatches, the **hooks** that make it feel alive session to sessi
    self-improvement (`/evolve`), and memory curation (`/muninn`), plus the doctrine for writing
    your own.
 
-Upgrading from the four-layer v1? `UPGRADING.md` is the delta and the adoption order.
+Upgrading from the four-layer v1? Open your stack beside this template and say *"run the upgrade
+interview in UPGRADING.md."* Same deal as the install: your assistant does the typing.
 
 ## Getting it onto your machine
 

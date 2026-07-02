@@ -62,8 +62,9 @@ The goal is a `soul/core.md` that sounds like a specific someone.
    references infrastructure they skipped should have that step cut, not left to error.
 
 ## Phase 4: The agents (optional: leverage on top of a working system)
-1. Ask whether they want the themed roster as-is or renamed. If renamed, do a find-and-replace pass
-   over `agents/defs/` and the README.
+1. Ask whether they want the themed roster as-is or in their own mythology. If they want their own,
+   run the re-theming interview in `agents/RETHEME.md` (doctrine kept, personas regenerated; never
+   a find-and-replace).
 2. Ask which functions they actually need (most people do not need chaos + load + red-team on day one).
    Prune the defs they will not use; keep the dispatch doctrine in the README.
 
