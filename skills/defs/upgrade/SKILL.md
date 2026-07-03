@@ -24,11 +24,11 @@ Shallow-clone the upstream template to a scratch directory (a shallow clone is a
 upgrade reads files, not history):
 
 ```
-git clone --depth 1 https://github.com/<upstream>.git /tmp/agentic-stack-upstream
+git clone --depth 1 https://github.com/<upstream>.git /tmp/lararium-upstream
 ```
 
 `<upstream>` is already the full `owner/repo` (do not append the repo name again). It is the same
-repo the update-check hook watches: the default is `kylnor/agentic-stack`,
+repo the update-check hook watches: the default is `kylnor/lararium`,
 re-pointable by a fork in `settings.json` under `stackUpdateCheck.templateUpstream` (or the constant
 at the top of `hooks/reference/update-check.js`). Read that config and use whatever it names; do not
 assume the default if the owner has re-pointed it.
@@ -59,7 +59,7 @@ file wins. This skill is just the errand-runner.
 
 ## Step 3: Clean up
 
-Remove the scratch clone (`rm -rf /tmp/agentic-stack-upstream`, or the unzip path). Then close with
+Remove the scratch clone (`rm -rf /tmp/lararium-upstream`, or the unzip path). Then close with
 the same shape the interview specifies: a short checklist of what was added, what was skipped and why,
 and what the owner still owns (hooks to test in a live session, rules to keep pruning).
 
@@ -69,7 +69,7 @@ Every piece in this stack has one. If the clone fails (no network, DNS dead, the
 plainly and stop. Do not partially apply a half-fetched tree. The owner has two clean fallbacks:
 
 - Point this skill at a **local copy** of the newer template they already have on disk ("upgrade from
-  `~/Downloads/agentic-stack-main`"). Skip step 1, treat that folder as the fetched template.
+  `~/Downloads/lararium-main`"). Skip step 1, treat that folder as the fetched template.
 - Wait and re-run when the network is back. Nothing is lost: the stamp is unchanged, so the next run
   re-offers exactly the same deltas.
 

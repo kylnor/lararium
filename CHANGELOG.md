@@ -15,6 +15,34 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 
 ---
 
+## v2.5 (2026-07-02): structural
+
+The template gets a name and a one-line front door. It is now **Lararium**, and there is an npx
+scaffolder that fetches and unpacks it for you.
+
+- **`npx/`** (new): a zero-dependency scaffolder published to npm as `lararium`. `npx lararium
+  [folder]` resolves the newest tagged release, downloads that tarball, unpacks it into a new folder,
+  strips its own scaffolder code out of the copy, and runs `git init` with a first commit. This is
+  the new fastest path onto your machine; the "Use this template" and zip routes still work.
+- **The rename to Lararium.** Every machine identifier moved from `agentic-stack` to `lararium`: the
+  npm package name and `npx` command, the `kylnor/agentic-stack` repo slug (now `kylnor/lararium`)
+  wherever it appears (the update-check hook's `templateUpstream` default, `hooks/settings.example.json`,
+  the `/upgrade` skill's clone/API URLs), and the README brand title. The taglines and the "an
+  agentic stack you clone and run" category language are unchanged; only the proper-noun name and the
+  slugs moved.
+- **`README.md`, `hooks/README.md`, `hooks/reference/update-check.js`, `hooks/settings.example.json`,
+  `skills/defs/upgrade/SKILL.md`**: the brand title, the install command, and every `kylnor/agentic-stack`
+  reference now read `Lararium` / `lararium` / `kylnor/lararium`.
+- **Honest note on the redirect.** Stacks already on v2.4 carry `templateUpstream: kylnor/agentic-stack`
+  in their `settings.json`. GitHub redirects the old `kylnor/agentic-stack` slug to `kylnor/lararium`,
+  so the daily update-check keeps resolving for now and nothing breaks the day of the rename. But a
+  redirect is not a guarantee: this v2.5 structural upgrade repoints that setting to `kylnor/lararium`
+  so the check points at the canonical slug directly. If you never run the upgrade, you keep riding the
+  redirect until GitHub stops honoring it.
+- **Apply:** structural. Run the upgrade interview: it adds the `npx/` scaffolder note and, the
+  one owner-side migration that matters, updates your `stackUpdateCheck.templateUpstream` from
+  `kylnor/agentic-stack` to `kylnor/lararium`.
+
 ## v2.4 (2026-07-02): structural
 
 The template learns to announce its own updates. A stack on this version stops depending on you to

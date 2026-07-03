@@ -154,7 +154,7 @@ alongside the `hooks` block.
 
 ```json
 {
-  "stackUpdateCheck": { "updateCheck": true, "templateUpstream": "kylnor/agentic-stack" },
+  "stackUpdateCheck": { "updateCheck": true, "templateUpstream": "kylnor/lararium" },
   "hooks": {
     "SessionStart": [
       { "hooks": [

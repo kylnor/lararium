@@ -49,7 +49,11 @@ step 0 below establishes from your `STACK_VERSION` and `CHANGELOG.md`.
 3. **`hooks/`.** Ask which loops they want first (honest default: session-start briefing +
    heartbeat; skip voice-drift until a soul exists). Copy the chosen reference hooks, adapt the
    paths to their layout, wire them per `hooks/settings.example.json`, and run each standalone
-   with a fake payload to prove it exits clean before wiring the next.
+   with a fake payload to prove it exits clean before wiring the next. **If they already run the
+   update-check hook (v2.4+), repoint `stackUpdateCheck.templateUpstream` in their `settings.json`
+   from `kylnor/agentic-stack` to `kylnor/lararium`** as part of this step: the old slug still
+   redirects today, but the canonical name is the new one, and this is the single owner-side migration
+   the Lararium rename requires.
 4. **`skills/`.** Copy `skills/defs/` into their skills directory. Adapt every path and tool name
    to what actually exists in their install; cut steps that reference infrastructure they skipped
    rather than leaving them to error.

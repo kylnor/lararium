@@ -1,9 +1,9 @@
 {
-  "name": "agentic-stack",
+  "name": "lararium",
   "version": "0.1.0",
-  "description": "One-line scaffolder for the agentic-stack template: fetches the latest release and unpacks it into a new folder.",
+  "description": "One-line scaffolder for the lararium template: fetches the latest release and unpacks it into a new folder.",
   "bin": {
-    "agentic-stack": "./index.js"
+    "lararium": "./index.js"
   },
   "files": [
     "index.js",
@@ -15,7 +15,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/kylnor/agentic-stack.git"
+    "url": "https://github.com/kylnor/lararium.git"
   },
   "keywords": [
     "scaffold",

@@ -1,15 +1,15 @@
-# agentic-stack
+# lararium
 
-The one-line door into the [agentic-stack](https://github.com/kylnor/agentic-stack) template. It
+The one-line door into the [lararium](https://github.com/kylnor/lararium) template. It
 fetches the latest release, unpacks it into a new folder, and gets out of the way. No dependencies,
 node stdlib only.
 
 ```
-npx agentic-stack [folder]
+npx lararium [folder]
 ```
 
 That's the whole tool. It resolves the newest tagged release from GitHub, downloads that tarball,
-unpacks it into `folder` (default `agentic-stack`), strips its own scaffolder code out of the copy,
+unpacks it into `folder` (default `lararium`), strips its own scaffolder code out of the copy,
 runs `git init` with a first commit, and prints what to do next:
 
 ```
@@ -26,7 +26,7 @@ bumping this package is only for fixing the scaffolder itself.
 
 ## Publishing (for the template's owner)
 
-Requires an npm login with publish rights on the `agentic-stack` package name. From this directory:
+Requires an npm login with publish rights on the `lararium` package name. From this directory:
 
 ```
 npm publish

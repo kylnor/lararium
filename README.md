@@ -1,4 +1,4 @@
-# The Agentic Stack (template)
+# Lararium
 
 A clone-and-run scaffold for a personal agentic system: a file-based knowledge **brain**, a layered
 **soul** (your assistant's persona), a **clocktower** index over your data, a roster of **agents**
@@ -56,13 +56,13 @@ Then get the template locally, whichever way is easiest:
 
 ```
 # Fastest: the scaffolder fetches the latest release and unpacks it for you
-npx agentic-stack [folder]   &&   cd [folder]
+npx lararium [folder]   &&   cd [folder]
 
 # Or, if it is a GitHub template repo: click "Use this template" to make your own copy, then
 git clone https://github.com/<you>/<your-copy>.git   &&   cd <your-copy>
 
 # Or, if you were sent a zip: unzip it, then
-cd agentic-stack
+cd lararium
 ```
 
 Now open that folder in Claude Code (`claude` from inside it) and run the interview below. That is the

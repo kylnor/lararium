@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
-// agentic-stack scaffolder. Node stdlib only, zero dependencies.
-// Fetches the latest release of the agentic-stack template and unpacks it
+// lararium scaffolder. Node stdlib only, zero dependencies.
+// Fetches the latest release of the lararium template and unpacks it
 // into a new folder. See README.md in this package for the three-step story.
 
 const fs = require('fs');
@@ -12,8 +12,8 @@ const https = require('https');
 const { execFileSync } = require('child_process');
 
 const OWNER = 'kylnor';
-const REPO = 'agentic-stack';
-const USER_AGENT = 'agentic-stack-scaffolder';
+const REPO = 'lararium';
+const USER_AGENT = 'lararium-scaffolder';
 const TAG_RE = /^[A-Za-z0-9._-]{1,32}$/;
 const REQUEST_TIMEOUT_MS = 4000;
 
@@ -26,7 +26,7 @@ function manualRoute() {
 }
 
 function fail(message) {
-  console.error(`\nagentic-stack: ${message}\n`);
+  console.error(`\nlararium: ${message}\n`);
   console.error(manualRoute());
   process.exit(1);
 }
@@ -85,14 +85,14 @@ async function resolveRef() {
     }
     throw new Error('releases API returned no usable tag');
   } catch (err) {
-    console.log(`agentic-stack: could not resolve the latest release (${err.message}). Falling back to main.`);
+    console.log(`lararium: could not resolve the latest release (${err.message}). Falling back to main.`);
     return { ref: 'main', kind: 'heads', usedFallback: true };
   }
 }
 
 async function downloadTarball(ref, kind) {
   const url = `https://codeload.github.com/${OWNER}/${REPO}/tar.gz/refs/${kind}/${ref}`;
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentic-stack-'));
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lararium-'));
   const tarPath = path.join(tmpDir, 'stack.tar.gz');
   await httpGet(url, { destFile: tarPath });
   const stat = fs.statSync(tarPath);
@@ -103,7 +103,7 @@ async function downloadTarball(ref, kind) {
 }
 
 async function run() {
-  const folderArg = process.argv[2] || 'agentic-stack';
+  const folderArg = process.argv[2] || 'lararium';
   const target = path.resolve(process.cwd(), folderArg);
 
   if (fs.existsSync(target)) {
@@ -118,10 +118,10 @@ async function run() {
     fs.mkdirSync(target, { recursive: true });
   }
 
-  console.log('agentic-stack: resolving the latest release...');
+  console.log('lararium: resolving the latest release...');
   const { ref, kind, usedFallback } = await resolveRef();
 
-  console.log(`agentic-stack: downloading ${ref}...`);
+  console.log(`lararium: downloading ${ref}...`);
   let tarPath;
   try {
     tarPath = await downloadTarball(ref, kind);
@@ -133,7 +133,7 @@ async function run() {
     return;
   }
 
-  console.log(`agentic-stack: unpacking into ${target}...`);
+  console.log(`lararium: unpacking into ${target}...`);
   try {
     execFileSync('tar', ['-xzf', tarPath, '-C', target, '--strip-components=1']);
   } catch (err) {
@@ -150,17 +150,17 @@ async function run() {
     }
   }
 
-  console.log('agentic-stack: initializing git...');
+  console.log('lararium: initializing git...');
   try {
     execFileSync('git', ['init'], { cwd: target, stdio: 'ignore' });
     execFileSync('git', ['add', '-A'], { cwd: target, stdio: 'ignore' });
-    execFileSync('git', ['commit', '-m', 'Initial commit from agentic-stack template'], {
+    execFileSync('git', ['commit', '-m', 'Initial commit from lararium template'], {
       cwd: target,
       stdio: 'ignore',
     });
   } catch (err) {
     console.log(
-      'agentic-stack: git init/commit skipped (configure git user.name and user.email, then commit by hand).'
+      'lararium: git init/commit skipped (configure git user.name and user.email, then commit by hand).'
     );
   }
 
