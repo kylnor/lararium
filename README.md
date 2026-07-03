@@ -52,13 +52,16 @@ interview *writes your files for you*, so it needs filesystem access. [Claude Co
 is the reference setup (it has its own subscription or API key). A browser chat can talk you through
 the interview but cannot write into your folder, so you would be copy-pasting; use the real tool.
 
-Then get the template locally, whichever way you were handed it:
+Then get the template locally, whichever way is easiest:
 
 ```
-# If it is a GitHub template repo: click "Use this template" to make your own copy, then
+# Fastest: the scaffolder fetches the latest release and unpacks it for you
+npx agentic-stack [folder]   &&   cd [folder]
+
+# Or, if it is a GitHub template repo: click "Use this template" to make your own copy, then
 git clone https://github.com/<you>/<your-copy>.git   &&   cd <your-copy>
 
-# If you were sent a zip: unzip it, then
+# Or, if you were sent a zip: unzip it, then
 cd agentic-stack
 ```
 
