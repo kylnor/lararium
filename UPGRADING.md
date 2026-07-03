@@ -29,7 +29,10 @@ step 0 below establishes from your `STACK_VERSION` and `CHANGELOG.md`.
 
 ## The interview, in order
 
-0. **Establish the version gap.** Before anything else, read the owner's `STACK_VERSION` file
+0. **Establish the version gap.** Most owners arrive here two ways: the session-start update-check
+   hook noticed a newer upstream version and nudged them, and they ran the `/upgrade` skill, which
+   fetched this template and invoked this interview. Either way the job is the same. Before anything
+   else, read the owner's `STACK_VERSION` file
    (absent means they are on v1, predating the stamp). Read the new template's `CHANGELOG.md`. List
    every entry newer than the owner's version, in order, and tell them what you found: "you are on
    vX, these releases apply." Then split the applicable entries by class. **additive-doc** entries
@@ -59,9 +62,11 @@ step 0 below establishes from your `STACK_VERSION` and `CHANGELOG.md`.
 ## Closing
 
 As your **last act**, update the version stamp: overwrite the owner's `STACK_VERSION` with the
-version they just upgraded to (the newest applicable `CHANGELOG.md` entry). This is what the next
-upgrade reads to know where they now stand; skip it and the next run re-offers everything you just
-applied. If step 0 found no entries newer than the owner's stamp, report that they are already up
+version they just upgraded to (the newest applicable `CHANGELOG.md` entry). The stamp lives at the
+owner's stack repo root; if they wired the update-check hook, that path is exactly what its
+`stackUpdateCheck.localVersionFile` config names, so restamp the same file the hook reads. This is
+what the next upgrade reads to know where they now stand; skip it and the next run re-offers
+everything you just applied. If step 0 found no entries newer than the owner's stamp, report that they are already up
 to date and stop; never lower the stamp. Then end with the same shape as the install: a short checklist of what was added, what was
 skipped and why, and what the owner still owns (hooks to test in a real session, rules to keep
 pruning). Then get out of the way.

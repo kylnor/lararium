@@ -15,6 +15,32 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 
 ---
 
+## v2.4 (2026-07-02): structural
+
+The template learns to announce its own updates. A stack on this version stops depending on you to
+watch the upstream repo: it checks for a newer version itself and tells you how to apply it.
+
+- **`hooks/reference/update-check.js`** (new): a fail-soft `SessionStart` hook. At most once a day it
+  fetches the upstream template's `STACK_VERSION`, compares it numerically to your local stamp, and if
+  you are behind injects one line pointing you at `/upgrade`. It treats the fetched body as untrusted
+  remote input, accepting only a `^v\d+(\.\d+)*$` string and never injecting any other remote content,
+  so the upstream owner cannot use it to reach into your session. Off via `updateCheck: false` or the
+  `STACK_UPDATE_CHECK=off` env var.
+- **`skills/defs/upgrade/`** (new): the `/upgrade` slash command. Fetches the latest template (shallow
+  clone, or a local copy in degraded mode) and runs the existing `UPGRADING.md` interview against your
+  stack, applying additive-doc deltas directly and interviewing you only for structural ones. A thin
+  wrapper that defers to `UPGRADING.md` rather than duplicating its rules.
+- **`hooks/settings.example.json`**: registers `update-check.js` as a second `SessionStart` command
+  and adds the `stackUpdateCheck` config block (toggle + `templateUpstream`, re-pointable by forks).
+- **`README.md`, `INSTALL.md`, `UPGRADING.md`, `hooks/README.md`, `skills/README.md`**: the upgrade
+  story now leads with "your stack tells you," with Watch-releases demoted to the manual fallback.
+- **Note on how you learned about this one:** stacks on v2.3 and earlier had no self-announcing hook,
+  so they find out about this release the old way, via Watch-releases on the upstream repo. From v2.4
+  onward, a stack that adopts the update-check hook self-announces the next release automatically.
+- **Apply:** structural. Run the upgrade interview: it wires the new hook (a second `SessionStart`
+  entry plus the `stackUpdateCheck` block) and adds the `/upgrade` skill, without touching your owned
+  files.
+
 ## v2.3 (2026-07-02): additive-doc
 
 The memory layer gains a named fourth organ.

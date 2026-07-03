@@ -59,8 +59,17 @@ The goal is a `soul/core.md` that sounds like a specific someone.
    into their global config (`CLAUDE.md` or equivalent) and delete the example steering rules that
    are not theirs.
 2. **Hooks.** Read `hooks/README.md` for the loop catalog. Ask which loops they want first (the
-   honest default: session-start briefing + heartbeat, skip the rest until the voice exists). Copy
-   the chosen reference hooks into their assistant config, wire them per
+   honest default: session-start briefing + heartbeat + the update checker, all three on plain files;
+   skip voice-drift until the voice exists). The update checker rides the same `SessionStart` event as
+   the briefing, so wire it in the same phase: copy `update-check.js` in alongside `session-start.js`,
+   register both `SessionStart` commands, and copy the `stackUpdateCheck` config block from
+   `hooks/settings.example.json` (it defaults the upstream to this template; a forker re-points it).
+   **Set `localVersionFile` to the absolute path of this stack's `STACK_VERSION`** (the repo root you
+   are installing against, the same file you stamp in the closing step). You know that path, it is the
+   folder you are working in, so fill it in explicitly rather than leaving the placeholder. If it is
+   wrong or unset the hook reads v1 and nudges every session forever, the one way this hook annoys
+   instead of helps.
+   Copy the chosen reference hooks into their assistant config, wire them per
    `hooks/settings.example.json`, and run each once standalone with a fake payload to prove it
    exits clean. The reference hooks run on plain files; no database needed yet.
 3. **Skills.** Copy `skills/defs/` into their skills directory. Adapt the paths the skills mention
