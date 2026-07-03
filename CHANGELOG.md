@@ -27,7 +27,10 @@ The memory layer gains a named fourth organ.
   backfill, alert delivery vs salience, bound-the-walk startup starvation, heartbeat-is-an-upsert).
   Merge them beside your own; do not clobber your pruned steering rules.
 - **`README.md`**: the clocktower layer bullet now names the four organs and points at the new doc.
-- **Apply:** copy the connector doctrine in clean; merge the OPERATING and README deltas.
+- **`clocktower/retrieval-doctrine.md`**: a see-also line in the intro pointing at the connector
+  doctrine as the write-path sibling.
+- **Apply:** copy the connector doctrine in clean; merge the OPERATING, README, and
+  retrieval-doctrine deltas.
 
 ## v2.2 (2026-07-02): additive-doc
 

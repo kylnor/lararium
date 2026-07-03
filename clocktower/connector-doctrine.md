@@ -5,8 +5,8 @@ The memory system has four organs, not three. **Intake** (watchers pulling corpo
 judges staged cards before they go live) are the three most systems build first. This document names
 the fourth: the **connector**.
 
-A connector is a daily job that reads only the new *learning-material* delta since its last run,
-video transcripts, saved bookmarks, newsletters, meeting enrichments, through a lens of the owner's
+A connector is a daily job that reads only the new *learning-material* delta since its last run
+(video transcripts, saved bookmarks, newsletters, meeting enrichments) through a lens of the owner's
 current context, and emits a tiny number of high-precision "this idea maps to that live problem"
 connections. The good ones get pushed to the owner. All of them stage as cards for the gate. The
 whole value is the join between what the owner just learned and what the owner is currently stuck on.
