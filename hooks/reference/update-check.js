@@ -36,13 +36,25 @@
  *   } }
  * Otherwise print nothing. Always exit 0.
  *
- * Config. The hook resolves three knobs, each overridable:
+ * Config. The hook resolves these knobs, each overridable:
  *   - templateUpstream: which repo to check. Default below; forks re-point it.
  *   - updateCheck: on/off. Default on.
- *   Both are read from your Claude Code settings.json under a "stackUpdateCheck"
- *   block (see hooks/settings.example.json), falling back to the constants below
- *   when that file or block is absent. The env var STACK_UPDATE_CHECK is a hard
- *   kill: set it to 0/off/false/no to disable without editing any file.
+ *   - localVersionFile: the absolute path to YOUR installed STACK_VERSION stamp.
+ *     This is the one that must match reality: the install and upgrade interviews
+ *     stamp STACK_VERSION at your stack's repo root, not in ~/.assistant, so the
+ *     interview writes this key to that path. The constant fallback below is a
+ *     last resort; when the key is unset and the fallback path is absent, the
+ *     local version reads as v1 (always behind), which is the safe degrade.
+ *   All three are read from your Claude Code settings.json under a "stackUpdateCheck"
+ *   block (see hooks/settings.example.json); each falls back to the constant below
+ *   when that file, block, or key is absent. The config key is resolved first, the
+ *   constant only as fallback. The env var STACK_UPDATE_CHECK is a hard kill: set
+ *   it to 0/off/false/no to disable without editing any file.
+ *
+ * Trust boundary: the host is pinned to raw.githubusercontent.com. Only the
+ * owner/repo portion (templateUpstream) is caller-configurable, and it is
+ * validated to a plain "owner/repo" before it goes into the URL, so the config
+ * value cannot redirect the fetch to an arbitrary host.
  *
  * Privacy: an enabled check makes one HTTPS GET to GitHub per day, which exposes
  * your IP to GitHub the same way visiting the repo would. Turn it off (env var or
@@ -77,8 +89,11 @@ const DEFAULT_ENABLED = true
 // Where the pieces live. Named constants: point them at your own layout.
 const STACK_HOME = path.join(os.homedir(), '.assistant')
 const STATE_FILE = path.join(STACK_HOME, '.update-check-state.json')
-const LOCAL_VERSION_FILE = path.join(STACK_HOME, 'STACK_VERSION') // your installed stamp
 const SETTINGS_FILE = path.join(os.homedir(), '.claude', 'settings.json')
+// Fallback ONLY. The real path is stackUpdateCheck.localVersionFile, written by
+// the install interview (which knows your stack's repo root, where STACK_VERSION
+// is actually stamped). This default almost never exists; absent = v1 = behind.
+const DEFAULT_LOCAL_VERSION_FILE = path.join(os.homedir(), 'agentic-stack', 'STACK_VERSION')
 
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000 // one network check per 24h
 const FETCH_TIMEOUT_MS = 2500 // short: a briefing must not wait on the network
@@ -118,6 +133,7 @@ function readJson(filePath) {
 function resolveConfig() {
   let enabled = DEFAULT_ENABLED
   let upstream = DEFAULT_UPSTREAM
+  let localVersionFile = DEFAULT_LOCAL_VERSION_FILE
 
   const settings = readJson(SETTINGS_FILE)
   const block = settings && settings.stackUpdateCheck
@@ -125,6 +141,10 @@ function resolveConfig() {
     if (typeof block.updateCheck === 'boolean') enabled = block.updateCheck
     if (typeof block.templateUpstream === 'string' && block.templateUpstream.trim()) {
       upstream = block.templateUpstream.trim()
+    }
+    // Config key first; the constant is only the fallback above.
+    if (typeof block.localVersionFile === 'string' && block.localVersionFile.trim()) {
+      localVersionFile = block.localVersionFile.trim()
     }
   }
 
@@ -135,13 +155,13 @@ function resolveConfig() {
   // Reject an upstream that is not a plain "owner/repo": it goes into a URL.
   if (!/^[\w.-]+\/[\w.-]+$/.test(upstream)) upstream = DEFAULT_UPSTREAM
 
-  return { enabled, upstream }
+  return { enabled, upstream, localVersionFile }
 }
 
 /** The local stamp. Absent means a pre-stamp stack: treat as v1 = always behind. */
-function readLocalVersion() {
+function readLocalVersion(localVersionFile) {
   try {
-    return sanitizeVersion(fs.readFileSync(LOCAL_VERSION_FILE, 'utf8')) || 'v1'
+    return sanitizeVersion(fs.readFileSync(localVersionFile, 'utf8')) || 'v1'
   } catch {
     return 'v1'
   }
@@ -149,13 +169,11 @@ function readLocalVersion() {
 
 /**
  * Fetch the upstream STACK_VERSION over HTTPS, stdlib only. Resolves to a clean
- * version string or null. A test fixture short-circuits the network so the hook
- * is standalone-testable; any real failure path also resolves null (fail soft).
+ * version string or null. Any real failure path resolves null (fail soft). The
+ * test fixture is handled one level up, in resolveRemoteVersion, so it bypasses
+ * the throttle and cache entirely.
  */
 function fetchRemoteVersion(upstream) {
-  if (Object.prototype.hasOwnProperty.call(process.env, 'STACK_UPDATE_CHECK_FIXTURE')) {
-    return Promise.resolve(sanitizeVersion(process.env.STACK_UPDATE_CHECK_FIXTURE))
-  }
   return new Promise((resolve) => {
     let settled = false
     const done = (v) => { if (!settled) { settled = true; resolve(v) } }
@@ -197,10 +215,19 @@ function writeState(state) {
  * one we fall back to whatever was cached. Returns a clean version or null.
  */
 async function resolveRemoteVersion(upstream) {
+  // Test fixture: bypass the throttle AND the cache entirely so the documented
+  // one-liners behave identically on every run, not just the first.
+  if (Object.prototype.hasOwnProperty.call(process.env, 'STACK_UPDATE_CHECK_FIXTURE')) {
+    return sanitizeVersion(process.env.STACK_UPDATE_CHECK_FIXTURE)
+  }
+
   const state = readState()
   const cached = sanitizeVersion(state.lastRemote)
   const lastAt = Number(state.lastCheckAt) || 0
-  const fresh = Date.now() - lastAt < CHECK_INTERVAL_MS
+  const now = Date.now()
+  // A future lastCheckAt (clock skew, a restored backup) must not pin the cache
+  // fresh forever: only a timestamp in the past counts as a real recent check.
+  const fresh = lastAt > 0 && lastAt <= now && (now - lastAt) < CHECK_INTERVAL_MS
 
   if (fresh && cached) return cached
 
@@ -220,10 +247,10 @@ process.stdin.setEncoding('utf8')
 process.stdin.on('data', (chunk) => (input += chunk))
 process.stdin.on('end', async () => {
   try {
-    const { enabled, upstream } = resolveConfig()
+    const { enabled, upstream, localVersionFile } = resolveConfig()
     if (!enabled) return process.exit(0)
 
-    const local = readLocalVersion()
+    const local = readLocalVersion(localVersionFile)
     const remote = await resolveRemoteVersion(upstream)
     if (!remote) return process.exit(0) // no trustworthy remote: say nothing
 

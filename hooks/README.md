@@ -179,11 +179,17 @@ alongside the `hooks` block.
 ## Paths and where the files live
 
 The reference hooks read from a stack home at `~/.assistant/` (soul core, heartbeat, voice log,
-handoff, the update-check state file, and your installed `STACK_VERSION` stamp) and a `brain/now.md`.
-Those are conventions, not requirements: every path is a named constant at the top of each file. Point
-them at wherever your soul, brain, and working files actually live before you wire anything in. The
-update checker additionally reads its config from `~/.claude/settings.json` (the `stackUpdateCheck`
-block); if that file is absent it falls back to the constants at the top of the hook.
+handoff, and the update-check state file) and a `brain/now.md`. Those are conventions, not
+requirements: every path is a named constant at the top of each file. Point them at wherever your
+soul, brain, and working files actually live before you wire anything in.
+
+One path is deliberately NOT in `~/.assistant/`: your installed `STACK_VERSION` stamp. The install and
+upgrade interviews write it at your stack's repo **root** (the folder you cloned the template into),
+and that is the single source of truth, never copied into `~/.assistant/`. The update checker reads it
+from the absolute path named by `stackUpdateCheck.localVersionFile` in `~/.claude/settings.json`, which
+the install interview fills in with your real repo-root path. The checker reads the rest of its config
+(toggle, upstream) from that same `stackUpdateCheck` block; when a key or the file is absent it falls
+back to the constants at the top of the hook, and an absent stamp reads as v1.
 
 ## What these deliberately do not do
 

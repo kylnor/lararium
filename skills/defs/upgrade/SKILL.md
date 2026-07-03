@@ -24,10 +24,11 @@ Shallow-clone the upstream template to a scratch directory (a shallow clone is a
 upgrade reads files, not history):
 
 ```
-git clone --depth 1 https://github.com/<upstream>/agentic-stack.git /tmp/agentic-stack-upstream
+git clone --depth 1 https://github.com/<upstream>.git /tmp/agentic-stack-upstream
 ```
 
-`<upstream>` is the same repo the update-check hook watches: the default is `kylnor/agentic-stack`,
+`<upstream>` is already the full `owner/repo` (do not append the repo name again). It is the same
+repo the update-check hook watches: the default is `kylnor/agentic-stack`,
 re-pointable by a fork in `settings.json` under `stackUpdateCheck.templateUpstream` (or the constant
 at the top of `hooks/reference/update-check.js`). Read that config and use whatever it names; do not
 assume the default if the owner has re-pointed it.
