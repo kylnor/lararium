@@ -15,6 +15,21 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 
 ---
 
+## v2.5 (2026-07-02): additive-doc
+
+The template gets a name. It was "The Agentic Stack," a description wearing a title. It is now
+**Lararium**: the shrine in a Roman house where the household gods lived, kept and spoken to daily.
+The name is the thesis, the soul is a household deity you talk to every day, and the agent roster is
+yours to re-theme (`agents/RETHEME.md`). Bring your own gods.
+
+- **`README.md`**: rewritten around the Lararium name, with an opening myth line, a "why this instead
+  of a prompt pack" pitch, and a closing tagline. The six-layer catalog, install steps, and upgrade
+  pointer are unchanged in substance. "an agentic stack" survives as the category noun (Lararium is
+  one), not the title.
+- **Apply:** cosmetic for an existing stack. Your README has likely diverged into your own; take the
+  Lararium framing only if you are publishing a derivative and want the brand. No layer, hook, skill,
+  or law changed. Nothing to wire.
+
 ## v2.4 (2026-07-02): structural
 
 The template learns to announce its own updates. A stack on this version stops depending on you to
