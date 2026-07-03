@@ -1,10 +1,16 @@
 {
   "//": "Drop this hooks block into your Claude Code settings.json (merge it with whatever else lives there). Copy the reference/ hooks to ~/.claude/hooks/stack/ first, or point the paths wherever you keep them. Every command is a shell invocation; the hook reads its JSON payload from stdin.",
+  "// stackUpdateCheck": "Config for the update-check SessionStart hook. It reads THIS block from your real settings.json at runtime, falling back to the constants at the top of update-check.js when the block is absent. updateCheck toggles the once-a-day check; templateUpstream is the owner/repo it asks for a version (re-point it if you forked). To disable without editing any file, set the env var STACK_UPDATE_CHECK=off.",
+  "stackUpdateCheck": {
+    "updateCheck": true,
+    "templateUpstream": "kylnor/agentic-stack"
+  },
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "node ~/.claude/hooks/stack/session-start.js" }
+          { "type": "command", "command": "node ~/.claude/hooks/stack/session-start.js" },
+          { "type": "command", "command": "node ~/.claude/hooks/stack/update-check.js" }
         ]
       }
     ],

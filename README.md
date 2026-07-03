@@ -35,11 +35,15 @@ the assistant dispatches, the **hooks** that make it feel alive session to sessi
    self-improvement (`/evolve`), and memory curation (`/muninn`), plus the doctrine for writing
    your own.
 
-Upgrading from the four-layer v1? Open your stack beside this template and say *"run the upgrade
-interview in UPGRADING.md."* Same deal as the install: your assistant does the typing. To know an
-upgrade even exists, **Watch releases** on the upstream repo: each release maps to an entry in
-`CHANGELOG.md`, which classifies it as a doc copy-in or a full interview and tells you exactly which
-files moved since your own `STACK_VERSION`.
+Staying current is meant to be passive: **your stack tells you when it is behind.** Adopt the
+update-check hook (`hooks/reference/update-check.js`) and once a day, at session start, it checks the
+upstream template's version against your own `STACK_VERSION` and, if a newer release is out, drops one
+line into your session: type **`/upgrade`**. That skill fetches the latest template and runs the
+upgrade interview in `UPGRADING.md` for you, applying the doc-only deltas directly and asking you only
+about the structural ones. You answer questions; your assistant does the typing. The manual fallback,
+for a stack that has not wired the hook yet: **Watch releases** on the upstream repo and read
+`CHANGELOG.md`, where each release maps to an entry that classifies it as a doc copy-in or a full
+interview and names exactly which files moved since your own `STACK_VERSION`.
 
 ## Getting it onto your machine
 

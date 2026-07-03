@@ -84,6 +84,22 @@ Rewrites subagent dispatch parameters by policy: some agents should always run o
 nobody should have to remember that. The hook injects the model when policy matches and the caller did
 not already pin one. An explicit choice on the dispatch always wins; the router only fills the gap.
 
+### h. Update check (`update-check.js`, SessionStart)
+A clone is a detached copy; nothing tells you an upstream release exists. This hook is that signal,
+delivered into the session instead of relying on you to watch the repo. At most once a day it fetches
+the upstream template's `STACK_VERSION`, compares it numerically to your local stamp, and if you are
+behind injects one line: a newer template is out, type `/upgrade`. Between checks it reads a cached
+version, so the network is touched only once a day while the nudge keeps showing until you upgrade.
+Two things make it safe to run every session: it is fail-soft on everything (no network, a 404, a
+timeout, a disabled flag all mean emit nothing and exit 0), and it treats the fetched body as
+**untrusted remote input**. The only value it will accept from the network is a string matching
+`^v\d+(\.\d+)*$`; it never injects any other remote content into the context. That is deliberate:
+a SessionStart hook's stdout goes into the model, so echoing arbitrary upstream text would let the
+repo owner inject instructions into every subscriber's session. The nudge is local static text built
+from two version numbers, nothing else. Off-switch: `updateCheck: false` in the `stackUpdateCheck`
+settings block, or the `STACK_UPDATE_CHECK=off` env var. Privacy: an enabled check makes one HTTPS GET
+to GitHub per day, exposing your IP the same way visiting the repo would; turn it off if that matters.
+
 ## The laws
 
 These are not style preferences. Break one and you will eventually wedge a session or leak a slow hook
@@ -115,25 +131,36 @@ Every hook takes its payload on stdin, so you can exercise it without Claude Cod
 echo '{"source":"startup","session_id":"test","cwd":"/tmp"}' | node reference/session-start.js
 echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | node reference/pretooluse-guard.js
 echo '{"tool_name":"Agent","tool_input":{"subagent_type":"architect","prompt":"x"}}' | node reference/agent-model-router.js
+echo '{"source":"startup"}' | STACK_UPDATE_CHECK_FIXTURE=v9.9 node reference/update-check.js
 ```
 
 The guard should print a deny JSON for the destructive command and print nothing for a safe one. The
 router should print an `updatedInput` for a policy-matched agent and nothing otherwise. The
 briefing hook should print whatever soul/heartbeat/now files it finds (and nothing, cleanly, if none
-exist yet). If any of them throws or exits non-zero, fix that before wiring it in.
+exist yet). The update checker carries a fixture seam (`STACK_UPDATE_CHECK_FIXTURE`) that stands in
+for the network so you can drive all five of its paths without a mock; the header comment lists the
+exact one-liners for behind, current, garbage-response, disabled, and a real fetch. If any of them
+throws or exits non-zero, fix that before wiring it in.
 
 ## The wiring
 
 Copy the reference hooks to wherever you keep hook scripts (the example uses `~/.claude/hooks/stack/`)
 and add the `hooks` block from `settings.example.json` to your Claude Code `settings.json`. The block
-registers all five reference hooks against their events, with two PreToolUse entries: one matched to
-`Bash` for the safety rail, one matched to `Agent` for the dispatch router.
+registers all six reference hooks against their events: two on `SessionStart` (the briefing and the
+update checker, both of whose stdout is injected), and two PreToolUse entries, one matched to `Bash`
+for the safety rail, one matched to `Agent` for the dispatch router. The example file also carries a
+top-level `stackUpdateCheck` block, the config the update checker reads (toggle + upstream); copy it
+alongside the `hooks` block.
 
 ```json
 {
+  "stackUpdateCheck": { "updateCheck": true, "templateUpstream": "kylnor/agentic-stack" },
   "hooks": {
     "SessionStart": [
-      { "hooks": [ { "type": "command", "command": "node ~/.claude/hooks/stack/session-start.js" } ] }
+      { "hooks": [
+        { "type": "command", "command": "node ~/.claude/hooks/stack/session-start.js" },
+        { "type": "command", "command": "node ~/.claude/hooks/stack/update-check.js" }
+      ] }
     ],
     "SessionEnd": [
       { "hooks": [ { "type": "command", "command": "node ~/.claude/hooks/stack/session-end-heartbeat.js" } ] }
@@ -152,9 +179,11 @@ registers all five reference hooks against their events, with two PreToolUse ent
 ## Paths and where the files live
 
 The reference hooks read from a stack home at `~/.assistant/` (soul core, heartbeat, voice log,
-handoff) and a `brain/now.md`. Those are conventions, not requirements: every path is a named constant
-at the top of each file. Point them at wherever your soul, brain, and working files actually live
-before you wire anything in.
+handoff, the update-check state file, and your installed `STACK_VERSION` stamp) and a `brain/now.md`.
+Those are conventions, not requirements: every path is a named constant at the top of each file. Point
+them at wherever your soul, brain, and working files actually live before you wire anything in. The
+update checker additionally reads its config from `~/.claude/settings.json` (the `stackUpdateCheck`
+block); if that file is absent it falls back to the constants at the top of the hook.
 
 ## What these deliberately do not do
 

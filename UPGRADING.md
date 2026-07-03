@@ -29,7 +29,10 @@ step 0 below establishes from your `STACK_VERSION` and `CHANGELOG.md`.
 
 ## The interview, in order
 
-0. **Establish the version gap.** Before anything else, read the owner's `STACK_VERSION` file
+0. **Establish the version gap.** Most owners arrive here two ways: the session-start update-check
+   hook noticed a newer upstream version and nudged them, and they ran the `/upgrade` skill, which
+   fetched this template and invoked this interview. Either way the job is the same. Before anything
+   else, read the owner's `STACK_VERSION` file
    (absent means they are on v1, predating the stamp). Read the new template's `CHANGELOG.md`. List
    every entry newer than the owner's version, in order, and tell them what you found: "you are on
    vX, these releases apply." Then split the applicable entries by class. **additive-doc** entries
