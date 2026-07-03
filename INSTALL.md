@@ -86,5 +86,8 @@ The goal is a `soul/core.md` that sounds like a specific someone.
 ---
 
 ## Closing
-End the interview with a short checklist of what is done and what the user still owns (hooks to wire,
-infra to stand up). Then get out of the way. The system is theirs now.
+As your **last act**, stamp the version: copy this template's `STACK_VERSION` file into the root of
+the user's stack unchanged. It is a one-line file naming the template version they just installed
+from. It is what the upgrade interview reads later to know which changelog deltas apply, so a stack
+without it reads as v1. Then end the interview with a short checklist of what is done and what the
+user still owns (hooks to wire, infra to stand up), and get out of the way. The system is theirs now.

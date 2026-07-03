@@ -5,6 +5,10 @@ whether your index is Postgres + pgvector, SQLite + a vector file, or something 
 schema in this template gives you storage; this document is what makes retrieval *good*. Each rule
 was earned by a real degradation.
 
+This doc is about the *read* path. For the *write* organ that feeds the owner fresh connections
+between new learning material and current problems, see `connector-doctrine.md`, the fourth organ
+beside intake, carding, and the gate.
+
 ## 1. Sanitize queries before they hit full-text search
 
 Raw user text contains characters your FTS parser treats as syntax (quotes, colons, parentheses,

@@ -1,15 +1,16 @@
-# Upgrading from v1 (the interview)
+# Upgrading, from any version (the interview)
 
 Like the install, this is not a script. It is a prompt. An agentic stack is upgraded by an agent.
 
-**How to run it:** open *your* stack (the repo you made from the v1 template and have been living
-in) in your assistant, give it access to a fresh copy of this v2 template beside it, and say:
-*"Run the upgrade interview in UPGRADING.md against my stack."* The assistant reads both trees,
-interviews you about what you diverged on, and applies the additions. You answer questions; it
-does the typing.
+**How to run it:** open *your* stack (the repo you made from the template and have been living in)
+in your assistant, give it access to a fresh copy of the newer template beside it, and say: *"Run
+the upgrade interview in UPGRADING.md against my stack."* The assistant reads both trees, works out
+which versions you are missing, interviews you about what you diverged on, and applies the changes.
+You answer questions; it does the typing.
 
-Nothing in v2 breaks a v1 install: the four original layers are untouched in structure. v2 adds
-two new layers (`hooks/`, `skills/`), three doctrine documents, and a license.
+No upgrade breaks a lower version: the founding layers are untouched in structure, every release
+only adds or extends. What a given run does depends on how far behind you are, which is exactly what
+step 0 below establishes from your `STACK_VERSION` and `CHANGELOG.md`.
 
 ## The rules the assistant follows during the upgrade
 
@@ -28,6 +29,14 @@ two new layers (`hooks/`, `skills/`), three doctrine documents, and a license.
 
 ## The interview, in order
 
+0. **Establish the version gap.** Before anything else, read the owner's `STACK_VERSION` file
+   (absent means they are on v1, predating the stamp). Read the new template's `CHANGELOG.md`. List
+   every entry newer than the owner's version, in order, and tell them what you found: "you are on
+   vX, these releases apply." Then split the applicable entries by class. **additive-doc** entries
+   you apply directly, copy the listed files in, translating names per their renames, no interview
+   needed for those. **structural** entries you walk with them using the steps below. If every
+   applicable entry is additive-doc, this is a copy-and-translate pass, not an interview: do it and
+   skip to the closing.
 1. **Map the divergence.** Read their tree, not the template: sphere names, whether a soul exists,
    whether the index is live, what the agent roster looks like now. State what you found in three
    or four lines and let them correct you.
@@ -49,13 +58,20 @@ two new layers (`hooks/`, `skills/`), three doctrine documents, and a license.
 
 ## Closing
 
-End with the same shape as the install: a short checklist of what was added, what was skipped and
-why, and what the owner still owns (hooks to test in a real session, rules to keep pruning). Then
-get out of the way.
+As your **last act**, update the version stamp: overwrite the owner's `STACK_VERSION` with the
+version they just upgraded to (the newest applicable `CHANGELOG.md` entry). This is what the next
+upgrade reads to know where they now stand; skip it and the next run re-offers everything you just
+applied. If step 0 found no entries newer than the owner's stamp, report that they are already up
+to date and stop; never lower the stamp. Then end with the same shape as the install: a short checklist of what was added, what was
+skipped and why, and what the owner still owns (hooks to test in a real session, rules to keep
+pruning). Then get out of the way.
 
 ---
 
-## The delta at a glance (for the human skimming)
+## The v1-to-v2 delta at a glance (for the human skimming)
+
+This table is the v1-to-v2 jump specifically, kept for anyone making that leap. The full
+release-by-release ledger, including v2.1 and later, lives in `CHANGELOG.md`.
 
 | Addition | What it is | Fastest payoff |
 |---|---|---|
