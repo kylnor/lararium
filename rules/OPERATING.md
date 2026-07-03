@@ -122,6 +122,22 @@ Default is not 5. If it feels like a reflexive 5, drop a tier.
 - **A spec is a hypothesis, not a blueprint.** Architecture-review it on paper before the build
   dispatch. Half of design bugs are catchable in thirty minutes of reading; the other half cost
   days of staging cleanup.
+- **Deploy the code before you run the backfill.** A data backfill only sticks if the new code has
+  already reached every checkout that executes, or the old code reverts the data on its next tick. The
+  durable form is not "remember the deploy order," it is guards that write through on *semantic*
+  change, not just content change, so a stale executor cannot undo a corrected value it does not
+  recognize.
+- **Alert delivery is not alert salience.** A monitor that fires correctly into a channel nobody reads
+  has not surfaced anything. Before declaring a monitor broken, read its own send log: often it fired
+  and the signal drowned. Differentiate alert classes so the rare urgent one does not arrive looking
+  like the daily noise.
+- **Bound every walk, or schedule first.** A daemon that runs once straight through all its producers
+  before starting its scheduler lets one unbounded producer starve every other of its turn. Either
+  bound each producer's walk, or start the scheduler before the first full pass, so no single source
+  can hold the loop.
+- **The heartbeat is an upsert.** A producer whose very first run finds zero items must still register
+  its freshness row. An unregistered producer is an uncounted producer: it cannot age past an SLA it
+  never declared, so a dead one hides as "never seen."
 
 ## Dispatch
 
