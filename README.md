@@ -36,7 +36,10 @@ the assistant dispatches, the **hooks** that make it feel alive session to sessi
    your own.
 
 Upgrading from the four-layer v1? Open your stack beside this template and say *"run the upgrade
-interview in UPGRADING.md."* Same deal as the install: your assistant does the typing.
+interview in UPGRADING.md."* Same deal as the install: your assistant does the typing. To know an
+upgrade even exists, **Watch releases** on the upstream repo: each release maps to an entry in
+`CHANGELOG.md`, which classifies it as a doc copy-in or a full interview and tells you exactly which
+files moved since your own `STACK_VERSION`.
 
 ## Getting it onto your machine
 
