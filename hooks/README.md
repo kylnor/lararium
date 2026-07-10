@@ -100,6 +100,23 @@ from two version numbers, nothing else. Off-switch: `updateCheck: false` in the 
 settings block, or the `STACK_UPDATE_CHECK=off` env var. Privacy: an enabled check makes one HTTPS GET
 to GitHub per day, exposing your IP the same way visiting the repo would; turn it off if that matters.
 
+### i. Deny-list depth (`bash-deny-guard.py`, PreToolUse on Bash)
+The settings `deny` list matches command strings whole, so `git status && rm -rf ~/.ssh` sails past
+a `rm -rf ~/.ssh` deny because the string starts with `git`. This hook decomposes compound commands
+(`&&`, `||`, `;`, pipes, `$()` subshells, backticks, env-var prefixes; heredoc bodies correctly
+treated as data) and checks every sub-command against your merged deny patterns, plus the raw
+string for pipe-shaped patterns like `curl * | sh`. Deny-only by design: it never auto-approves,
+so it can only make the system stricter. Because hook denies fire even in bypass-permissions
+sessions, this is what makes your deny list hold for autonomous agents. Derived from
+liberzon/claude-hooks smart-approve.py (MIT) with the allow path removed.
+
+### j. Secret-write guard (`secret-write-guard.js`, PreToolUse on Write|Edit)
+Scans the content about to be written (not the file on disk) for credential patterns: cloud keys,
+API tokens, private-key blocks, DB URLs with passwords, JWTs. On a hit it returns "ask" with line
+numbers, never "deny", because a matched pattern can be a test fixture. Files named `.env*` are
+exempt; that is where secrets are supposed to live. This is the enforcement half of a "no secrets
+in repos" rule: the rule in prose catches nothing at 2am, the hook does.
+
 ## The laws
 
 These are not style preferences. Break one and you will eventually wedge a session or leak a slow hook
@@ -132,6 +149,8 @@ echo '{"source":"startup","session_id":"test","cwd":"/tmp"}' | node reference/se
 echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | node reference/pretooluse-guard.js
 echo '{"tool_name":"Agent","tool_input":{"subagent_type":"architect","prompt":"x"}}' | node reference/agent-model-router.js
 echo '{"source":"startup"}' | STACK_UPDATE_CHECK_FIXTURE=v9.9 node reference/update-check.js
+echo '{"tool_name":"Bash","tool_input":{"command":"git status && rm -rf ~/.ssh"}}' | python3 reference/bash-deny-guard.py
+echo '{"tool_name":"Write","tool_input":{"file_path":"/tmp/x.py","content":"key=\"AKIAIOSFODNN7EXAMPLE\""}}' | node reference/secret-write-guard.js
 ```
 
 The guard should print a deny JSON for the destructive command and print nothing for a safe one. The

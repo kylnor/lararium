@@ -33,13 +33,20 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "node ~/.claude/hooks/stack/pretooluse-guard.js" }
+          { "type": "command", "command": "node ~/.claude/hooks/stack/pretooluse-guard.js" },
+          { "type": "command", "command": "python3 ~/.claude/hooks/stack/bash-deny-guard.py", "timeout": 10 }
         ]
       },
       {
         "matcher": "Agent",
         "hooks": [
           { "type": "command", "command": "node ~/.claude/hooks/stack/agent-model-router.js" }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          { "type": "command", "command": "node ~/.claude/hooks/stack/secret-write-guard.js", "timeout": 10 }
         ]
       }
     ]

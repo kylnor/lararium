@@ -74,6 +74,11 @@ session).
 3. Graduation candidates = groups with 3+ hits in 30 days not already in your steering-rules file
    (grep it for any keyword from the lesson; if present, flag as reinforcement instead, the existing
    rule is not sticking).
+3.5. Held-out gate: frequency proves the miss recurs, not that the proposed rule fixes it. Hold
+   back the most recent hit in the group and replay it: re-read that incident's context and check
+   whether an agent following the proposed rule text would have avoided that specific miss. If not,
+   rewrite the rule until it would, or drop the candidate. Include the held-out case in the proposal
+   as evidence. A rule that cannot win its own held-out replay is a vibe, not a rule.
 4. For each candidate, present the proposed rule and ask to promote (y/n/edit). If approved, append
    it as a new bullet to the matching subsection of your steering-rules file with a surgical edit,
    never a bulk replace. Record the promotion via `clocktower_remember` for audit history.

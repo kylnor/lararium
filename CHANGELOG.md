@@ -15,6 +15,35 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 
 ---
 
+## v2.6 (2026-07-10): structural
+
+The safety rail grows depth. Two new PreToolUse reference hooks close the two holes a prose rule
+cannot: compound commands that smuggle a denied sub-command past whole-string matching, and secrets
+that reach a file before anyone re-reads it.
+
+- **`hooks/reference/bash-deny-guard.py`** (new): decomposes compound bash commands (`&&`, `||`,
+  `;`, pipes, `$()`, backticks, env-var prefixes; heredoc bodies treated as data) and checks every
+  sub-command against your merged settings deny patterns, plus the raw string for pipe-shaped
+  patterns. Deny-only: it never auto-approves, so it can only tighten. Hook denies fire even in
+  bypass-permissions sessions, which makes your deny list hold for autonomous agents. Derived from
+  liberzon/claude-hooks smart-approve.py (MIT), allow path removed.
+- **`hooks/reference/secret-write-guard.js`** (new): scans the content ABOUT to be written by
+  Write/Edit (not the file on disk) for credential patterns (cloud keys, API tokens, private-key
+  blocks, DB URLs with passwords, JWTs); returns "ask" with line numbers, never "deny" (fixtures
+  exist); `.env*` basenames exempt.
+- **`hooks/settings.example.json`**: both wired under PreToolUse (`Bash` and `Write|Edit` matchers).
+- **`agents/defs/red-robin.md`**: the detective gains a "Case File" output contract
+  (Summary / Root Cause / Evidence / Fix / Verification / Prevention), so investigations come back
+  in one fixed, checkable shape.
+- **`skills/defs/evolve/SKILL.md`**: rule graduation gains a held-out gate (step 3.5): before a
+  recurring miss is proposed as a permanent steering rule, the most recent hit is held back and
+  replayed against the proposed rule text; a rule that would not have prevented its own held-out
+  case gets rewritten or dropped. Frequency proves recurrence, the gate proves the fix.
+- **Apply:** copy the two new hooks to your hooks directory, merge the two `PreToolUse` blocks from
+  `settings.example.json` into your settings, and take the red-robin + evolve edits (translating
+  agent names if you re-themed). Test standalone first, both hooks carry their exact test command
+  in the README's testing section.
+
 ## v2.5 (2026-07-02): additive-doc
 
 The template gets a name. It was "The Agentic Stack," a description wearing a title. It is now
