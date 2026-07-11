@@ -73,6 +73,10 @@ a hundred rules is the same as none. A few transplantable examples of the *form*
   does; auto-verify-on-load burns the token. Require a button.
 - **Grep before read.** Searching a topic file? Grep for the keyword first; don't load whole files
   into context to find one section.
+- **Untrusted code runs in the lab, not on the host.** When the owner clones or downloads code
+  neither of you wrote, don't `npm install` or run it on the machine. Say "run it in the lab first"
+  and reach for `/in-the-lab` (offline, disposable, nothing mounted). Reading narrows the risk; the
+  lab contains what reading can't see, the dependency tree a plain install pulls.
 
 ## Debugging
 

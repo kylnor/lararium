@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# lab — throw untrusted code in a disposable box and look at it without betting your machine.
+#
+# The container is the blast wall. Guarantees on every run:
+#   • NOTHING of yours is ever mounted in (no assistant config, no keys, no keychain, no
+#     home dir). Code enters via `git clone` inside the box or `docker cp` — never a bind mount.
+#   • No network by default. A git URL gets network for the CLONE only, then the analysis
+#     shell drops offline. `--net` keeps network on when you want to watch what it dials.
+#   • Disposable. --rm on exit; any docker volume it makes is deleted on the way out.
+#   • De-fanged. All Linux capabilities dropped + no-new-privileges (so even root inside has
+#     no kernel power) + memory/pid caps so a zip-bomb or fork-bomb can't take the host down.
+#
+# usage:
+#   lab <git-url>            clone a repo, land offline inside it (interactive shell)
+#   lab <path/to/dir>        copy a local dir in, offline shell
+#   lab <file.zip>           copy a zip in, unzip it, offline shell
+#   lab --net <source>       same, but leave the network ON (to test install/run)
+#   lab --analyze <source>   non-interactive: run a canned offline recon and print a report,
+#                            then tear down. This is what the /in-the-lab skill calls.
+#
+# Exit the interactive shell with `exit`. The box and everything in it is gone.
+# Portable to bash 3.2 (macOS default): no mapfile, no associative arrays.
+set -euo pipefail
+
+IMAGE="lab:latest"
+NET="none"
+MODE="shell"
+SRC=""
+
+usage() { grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --net) NET="on"; shift ;;
+    --analyze) MODE="analyze"; shift ;;
+    -h|--help) usage ;;
+    -*) echo "unknown flag: $1" >&2; usage ;;
+    *) SRC="$1"; shift ;;
+  esac
+done
+[ -n "$SRC" ] || usage
+
+command -v docker >/dev/null || { echo "docker not found / daemon not running" >&2; exit 1; }
+docker image inspect "$IMAGE" >/dev/null 2>&1 || {
+  echo "building $IMAGE (first run only)…"
+  docker build -t "$IMAGE" "$(dirname "$0")"
+}
+
+# Hardening flags for the analysis container, built into the global array HARDEN.
+# Root inside, but every capability dropped. First arg = network, second = "it" for a TTY.
+HARDEN=()
+harden() {
+  HARDEN=(--rm)
+  [ -n "$2" ] && HARDEN+=("$2")
+  HARDEN+=(--network "$1"
+    --memory 4g --memory-swap 4g --pids-limit 512
+    --cap-drop ALL --security-opt no-new-privileges)
+}
+
+VOL=""
+cleanup() { [ -n "$VOL" ] && docker volume rm -f "$VOL" >/dev/null 2>&1 || true; }
+trap cleanup EXIT
+
+banner() {
+  [ "$MODE" = "analyze" ] && return 0
+  if [ "$1" = "none" ]; then echo "🔒 offline — this box cannot reach the network or your machine."
+  else echo "🌐 NETWORK ON — nothing of yours is mounted, but watch what it dials."; fi
+}
+
+# The canned, offline recon that --analyze runs INSIDE the box. Executes nothing of the repo's
+# own code — it only reads. Surfaces what the code reaches for so a human or an assistant can
+# judge it before anyone runs it for real.
+RECON='
+set +e
+echo "=== files ==="; find . -type f -not -path "*/.git/*" | wc -l | xargs echo "count:"
+echo "=== top level ==="; ls -1 | head -30
+echo "=== package.json (install hooks are the classic payload) ==="
+if [ -f package.json ]; then jq -r "{name, scripts, deps: (.dependencies|length), dev: (.devDependencies|length)}" package.json 2>/dev/null || head -40 package.json; fi
+echo "=== install/postinstall hooks anywhere ==="
+grep -RIn --include=package.json -E "\"(pre|post)?install\"[[:space:]]*:" . 2>/dev/null | grep -v node_modules | head -20
+echo "=== reaches for network / shell / eval (read-time signals, not proof) ==="
+grep -RInE "child_process|execSync|spawn\(|/dev/tcp|\bcurl\b|\bwget\b|\bnc\b|require\(.http|fetch\(|eval\(|atob\(|base64[[:space:]]+-d|Function\(" \
+  --include=*.js --include=*.ts --include=*.mjs --include=*.cjs --include=*.sh --include=*.py . 2>/dev/null | grep -v node_modules | head -40
+echo "=== possible obfuscation (very long lines) ==="
+grep -RIlE ".{500,}" --include=*.js --include=*.ts . 2>/dev/null | grep -v node_modules | head -10
+echo "=== END RECON ==="
+'
+
+# ---- git URL: clone online (git only), then analyze offline ----
+if echo "$SRC" | grep -qE '^(https?://|git@)'; then
+  VOL="lab-$(date +%s 2>/dev/null || echo x)-$$"
+  docker volume create "$VOL" >/dev/null
+  echo "cloning (network up for the clone only)…"
+  # SRC is passed as an env var (never re-evaluated by the container shell) and git is
+  # pinned to safe transports + `--` so a hostile URL string can't inject a command or
+  # option. Same mem/pid caps as the analysis step so a bomb in the clone can't hit the host.
+  docker run --rm --network bridge \
+    --memory 4g --memory-swap 4g --pids-limit 512 \
+    --cap-drop ALL --security-opt no-new-privileges \
+    -e LAB_SRC="$SRC" -v "$VOL":/work "$IMAGE" \
+    bash -c 'git -c protocol.ext.allow=never -c protocol.file.allow=never clone --depth 1 --no-local -- "$LAB_SRC" /work/repo'
+  ANALYZE_NET="none"; [ "$NET" = "on" ] && ANALYZE_NET="bridge"
+  banner "$ANALYZE_NET"
+  if [ "$MODE" = "analyze" ]; then
+    harden "$ANALYZE_NET" ""
+    docker run "${HARDEN[@]}" -v "$VOL":/work -w /work/repo "$IMAGE" bash -c "$RECON"
+  else
+    harden "$ANALYZE_NET" "-it"
+    # No `exec`: the shell must survive so the EXIT trap fires and removes the named
+    # volume holding the untrusted clone. exec would replace us and leak the volume.
+    docker run "${HARDEN[@]}" -v "$VOL":/work -w /work/repo "$IMAGE" bash
+  fi
+  exit 0
+fi
+
+# ---- local dir or zip: copy in (never bind-mount), analyze ----
+[ -e "$SRC" ] || { echo "no such path: $SRC" >&2; exit 1; }
+# Refuse to copy an obvious secret store into a box (dangerous especially with --net):
+# the point is to sandbox code, not hand your keys to it.
+case "$(basename "$SRC")" in
+  .ssh|.aws|.gnupg|.env|.envrc|gcloud|credentials|.netrc|.docker)
+    echo "lab: refusing to sandbox an obvious secret path ($SRC). Point it at code, not keys." >&2; exit 1 ;;
+esac
+RUN_NET="none"; [ "$NET" = "on" ] && RUN_NET="bridge"
+banner "$RUN_NET"
+
+ENTRY='if ls ./*.zip >/dev/null 2>&1; then unzip -q ./*.zip -d unpacked && cd unpacked; fi;'
+if [ "$MODE" = "analyze" ]; then
+  harden "$RUN_NET" ""
+  FINAL="$ENTRY $RECON"
+else
+  harden "$RUN_NET" "-it"
+  FINAL="$ENTRY exec bash"
+fi
+CID=$(docker create "${HARDEN[@]}" -w /work "$IMAGE" bash -c "$FINAL")
+if [ -d "$SRC" ]; then docker cp "$SRC/." "$CID:/work/"; else docker cp "$SRC" "$CID:/work/"; fi
+if [ "$MODE" = "analyze" ]; then
+  docker start -a "$CID"; docker rm -f "$CID" >/dev/null 2>&1
+else
+  exec docker start -ai "$CID"
+fi
