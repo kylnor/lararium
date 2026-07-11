@@ -4,14 +4,13 @@ The memory organs teach the system how to *know* things: intake pulls corpora, t
 into cards, the gate judges what goes live, the connector joins new learning to current problems.
 None of that teaches the system how to *coordinate*. The moment you have more than one agent draining
 the same pile of work, you have a new class of failure that no memory organ addresses. This document
-names the coordination organ: a **work queue** built on the tables the stack already runs, with no
-second SaaS underneath it.
+names the coordination organ: a **work queue** built on the tables the stack already runs.
 
-The design loots one good idea from prior art and refuses one bad one. The good idea is the
-**receipt**: a human-readable, one-line record of what an agent just did, so a person scanning the
-feed understands the swarm without reading its logs (Nate Jones' "Open Engine" builds this on Linear).
-The bad idea is the dependency. A queue does not need Linear, or any external tracker, when your index
-already has a tasks table and you are willing to add one append-only log. This doctrine does it native.
+The design borrows one good idea from prior art: the **receipt**, a human-readable one-line record of
+what an agent just did, so a person scanning the feed understands the swarm without reading its logs
+(the pattern Nate Jones names in his "Open Engine" work). That idea is worth building right on the
+tables you already have. Your index has a tasks table; add one append-only log beside it and the whole
+queue is native to the stack, with nothing extra to stand up or keep in sync.
 
 ## What the substrate gives you, and what you add
 

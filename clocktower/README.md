@@ -29,7 +29,7 @@ at. Do not copy corpora into markdown. The card points at the corpus; it does no
 - The retrieval doctrine (`retrieval-doctrine.md`): seven production-earned rules that make
   retrieval good, not just present. Walk it as a checklist when you implement.
 - The queue doctrine (`queue-doctrine.md`): how to coordinate multiple agents draining shared work
-  on the tasks table plus an append-only action log, no external tracker. Compare-and-swap claims,
+  natively on the tasks table plus an append-only action log. Compare-and-swap claims,
   a receipt grammar, and a global kill-switch. Walk it when you run more than one agent at a time.
 
 ## What does NOT ship

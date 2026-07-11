@@ -18,18 +18,18 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 ## v2.7 (2026-07-11): additive-doc
 
 The memory layer had four organs and no coordination story. This release adds the fifth surface: a
-work queue for multiple agents draining shared work, built on the tables the stack already runs, with
-no second SaaS underneath it. Doctrine only, no wired queue.
+work queue for multiple agents draining shared work, built natively on the tables the stack already
+runs. Doctrine only, no wired queue.
 
-- **`clocktower/queue-doctrine.md`** (new): how to coordinate a swarm without Linear or any external
-  tracker. Names the four failures a queue prevents (double-claims, lost updates, no audit, no human
+- **`clocktower/queue-doctrine.md`** (new): how to coordinate a swarm on your own tables. Names the
+  four failures a queue prevents (double-claims, lost updates, no audit, no human
   off-ramp); encodes six lanes (todo, working, needs-input, review, done, human-hold) over the tasks
   table's four states plus an append-only action log; leads with compare-and-swap as the correct
   claim primitive (one conditional `UPDATE ... WHERE assigned_to IS NULL RETURNING *`) and documents
   optimistic claim-then-reread only as an explicitly-racy fallback for substrates that cannot CAS.
   The receipt grammar (`AGENT_CLAIMED` / `WORKING` / `NEEDS_INPUT` / `REVIEW` / `DONE` / `BLOCKED` /
-  `HUMAN_HOLD`, one log row each) is the loot from Nate Jones' Open Engine, kept while its Linear
-  dependency is dropped. Off-ramps are the global kill-switch (read first, fail closed) and the
+  `HUMAN_HOLD`, one log row each) borrows the receipt idea Nate Jones names in Open Engine and builds
+  it on your own log. Off-ramps are the global kill-switch (read first, fail closed) and the
   per-task red rung; the runner heartbeats on every iteration including empty ones, so an idle swarm
   is distinguishable from a dead one.
 - **`README.md`** and **`clocktower/README.md`**: point at the new doctrine under the memory-organs
