@@ -80,15 +80,34 @@ install interview *writes your files for you*, so it needs filesystem access.
 or API key). A browser chat can talk you through the interview but cannot write into your folder, so
 you would be copy-pasting; use the real tool.
 
-Get the template locally, whichever way you were handed it:
+Get the template locally. Three ways in, pick your trust level:
 
 ```
+# Fast path: the scaffolder downloads the latest release and unpacks it
+npx lararium my-stack  &&  cd my-stack
+
 # GitHub template repo: click "Use this template" to make your own copy, then
 git clone https://github.com/<you>/<your-copy>.git  &&  cd <your-copy>
 
 # Sent a zip: unzip it, then
 cd lararium
 ```
+
+Wary of `npx`-ing a stranger's installer? Good instinct, it is the whole reason this stack
+exists. The scaffolder (`npx/index.js`) is about 200 lines of Node standard library with zero
+dependencies: it downloads a release tarball, unpacks it, and runs `git init`. It runs none of
+the template's own code. Read it before you run it, or skip it entirely and clone the repo by
+hand, then you have inspected everything before a single line executes.
+
+And if you are properly paranoid: the two files worth eyeballing are both short (`npx/index.js`
+and `lab/lab`). Read those, then let your very first lab run be Lararium itself:
+
+```
+lab/lab https://github.com/kylnor/lararium
+```
+
+That vets the rest of the stack inside the box it ships. The tool's first job can be auditing
+its own supplier.
 
 Then open the folder in Claude Code (`claude` from inside it) and say:
 
