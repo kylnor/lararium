@@ -15,6 +15,27 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 
 ---
 
+## v2.8 (2026-07-11): additive-doc
+
+The stack could clone and run other people's code but had nowhere safe to do it. This release adds
+the missing surface: a disposable sandbox so untrusted repos never touch the host, plus the skill
+and the reflex that make your assistant use it by default. Opt-in, requires a Docker daemon; skip
+the copy-in if you don't have one.
+
+- **`lab/`** (new): the untrusted-code sandbox. A `Dockerfile` + a `lab` wrapper. Every run is
+  offline by default, mounts nothing of yours (code enters by in-container clone or `docker cp`,
+  never a bind mount), disposable (`--rm` + volume cleanup), and de-fanged (all Linux capabilities
+  dropped + `no-new-privileges` + memory/pid caps). `lab <url|dir|zip>` for an interactive offline
+  shell; `lab --analyze <source>` for a non-interactive read-only recon report.
+- **`skills/defs/in-the-lab/`** (new): the `/in-the-lab` skill. Resolves a repo/dir/zip, runs the
+  offline recon in the box, reports what the code reaches for (install hooks, network/shell/eval,
+  obfuscation, dependency count), and offers a deeper interactive session, never running the code
+  on the host as part of triage.
+- **`rules/OPERATING.md`**: one new steering rule, untrusted code runs in the lab, not on the host.
+- **`README.md`**: the lab described beside the six layers.
+- **Copy-in:** copy `lab/` and `skills/defs/in-the-lab/` into your stack, add the one steering rule
+  to your `rules`/`CLAUDE.md`. No interview. Needs Docker (Docker Desktop, OrbStack, or `colima`).
+
 ## v2.7 (2026-07-11): additive-doc
 
 The memory layer had four organs and no coordination story. This release adds the fifth surface: a

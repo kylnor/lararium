@@ -55,6 +55,13 @@ your files while you answer.
    self-improvement (`/evolve`), and memory curation (`/muninn`), plus the doctrine for writing
    your own.
 
+Beside the six layers ships one optional tool: **`lab/`**, a disposable sandbox for untrusted
+code. Your assistant is most useful when it can clone and run other people's repos, which is
+exactly when it is most dangerous. The lab is a throwaway container, no network by default,
+nothing of yours mounted in, every capability dropped, that you drop untrusted code into so it can
+do its worst and it doesn't matter. The `/in-the-lab` skill runs it for you: offline recon first,
+then an optional deeper session. Requires Docker; skip it if you don't have a daemon.
+
 Staying current is meant to be passive: **your stack tells you when it is behind.** Adopt the
 update-check hook (`hooks/reference/update-check.js`) and once a day, at session start, it checks the
 upstream template's version against your own `STACK_VERSION` and, if a newer release is out, drops one
