@@ -17,8 +17,9 @@ The container is the blast wall. Every run guarantees:
 - **Disposable.** `--rm` on exit; any volume it creates is deleted on the way out. You never
   clean it, you delete it. Cattle, not a pet.
 - **De-fanged.** Every Linux capability dropped + `no-new-privileges`, so even the root user
-  inside has no kernel power. Plus memory + pid limits so a zip-bomb or fork-bomb can't take
-  the host down.
+  inside has no kernel power. Plus memory + pid limits so a fork-bomb can't exhaust the host's
+  memory or PIDs. (A decompression bomb can still fill the container's disk; it's disposable,
+  so `exit` reclaims it.)
 
 ## Use
 
@@ -48,6 +49,9 @@ First run builds the `lab:latest` image once (~30s). After that it's instant.
   For "safe regardless of contents," run it in a throwaway cloud box instead.
 - Not a substitute for reading. `--analyze` narrows it down; the lab contains what reading
   can't see (the dependency tree `npm install` pulls, runtime-only payloads).
+- Not a shield against what *you* copy in. Nothing is bind-mounted, but `lab <path>` copies
+  the path you give it into the box, so don't point it at a secret store (`~/.ssh`, `~/.aws`,
+  a `.env`) and then turn `--net` on. The wrapper refuses the obvious ones; it can't catch all.
 
 ## Requires
 

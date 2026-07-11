@@ -91,8 +91,14 @@ if echo "$SRC" | grep -qE '^(https?://|git@)'; then
   VOL="lab-$(date +%s 2>/dev/null || echo x)-$$"
   docker volume create "$VOL" >/dev/null
   echo "cloning (network up for the clone only)…"
-  docker run --rm --network bridge --cap-drop ALL --security-opt no-new-privileges \
-    -v "$VOL":/work "$IMAGE" bash -c "git clone --depth 1 '$SRC' /work/repo"
+  # SRC is passed as an env var (never re-evaluated by the container shell) and git is
+  # pinned to safe transports + `--` so a hostile URL string can't inject a command or
+  # option. Same mem/pid caps as the analysis step so a bomb in the clone can't hit the host.
+  docker run --rm --network bridge \
+    --memory 4g --memory-swap 4g --pids-limit 512 \
+    --cap-drop ALL --security-opt no-new-privileges \
+    -e LAB_SRC="$SRC" -v "$VOL":/work "$IMAGE" \
+    bash -c 'git -c protocol.ext.allow=never -c protocol.file.allow=never clone --depth 1 --no-local -- "$LAB_SRC" /work/repo'
   ANALYZE_NET="none"; [ "$NET" = "on" ] && ANALYZE_NET="bridge"
   banner "$ANALYZE_NET"
   if [ "$MODE" = "analyze" ]; then
@@ -100,13 +106,21 @@ if echo "$SRC" | grep -qE '^(https?://|git@)'; then
     docker run "${HARDEN[@]}" -v "$VOL":/work -w /work/repo "$IMAGE" bash -c "$RECON"
   else
     harden "$ANALYZE_NET" "-it"
-    exec docker run "${HARDEN[@]}" -v "$VOL":/work -w /work/repo "$IMAGE" bash
+    # No `exec`: the shell must survive so the EXIT trap fires and removes the named
+    # volume holding the untrusted clone. exec would replace us and leak the volume.
+    docker run "${HARDEN[@]}" -v "$VOL":/work -w /work/repo "$IMAGE" bash
   fi
   exit 0
 fi
 
 # ---- local dir or zip: copy in (never bind-mount), analyze ----
 [ -e "$SRC" ] || { echo "no such path: $SRC" >&2; exit 1; }
+# Refuse to copy an obvious secret store into a box (dangerous especially with --net):
+# the point is to sandbox code, not hand your keys to it.
+case "$(basename "$SRC")" in
+  .ssh|.aws|.gnupg|.env|.envrc|gcloud|credentials|.netrc|.docker)
+    echo "lab: refusing to sandbox an obvious secret path ($SRC). Point it at code, not keys." >&2; exit 1 ;;
+esac
 RUN_NET="none"; [ "$NET" = "on" ] && RUN_NET="bridge"
 banner "$RUN_NET"
 
