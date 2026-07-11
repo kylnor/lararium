@@ -41,7 +41,9 @@ your files while you answer.
    your corpora, the embeddings standard, and the retrieval doctrine earned in production
    (`clocktower/retrieval-doctrine.md`). The memory layer has four organs, intake, carder, gate, and
    connector; the last is the daily "what I just learned maps to what I am stuck on" job, documented
-   in `clocktower/connector-doctrine.md`. Ships with an empty database and no credentials.
+   in `clocktower/connector-doctrine.md`. Coordination is a separate surface: `clocktower/queue-doctrine.md`
+   runs multi-agent work on the tasks table you already have, no Linear and no second SaaS. Ships with
+   an empty database and no credentials.
 4. **`agents/`**: a roster of specialized subagents (build, review, research, infra, adversarial,
    memory) plus the dispatch doctrine for which to use when. The theme is yours to replace: the
    re-theming interview (`agents/RETHEME.md`) rebuilds the whole roster in your own mythology,
