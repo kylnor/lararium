@@ -143,6 +143,30 @@ Default is not 5. If it feels like a reflexive 5, drop a tier.
   its freshness row. An unregistered producer is an uncounted producer: it cannot age past an SLA it
   never declared, so a dead one hides as "never seen."
 
+## Feature lists (earned)
+
+The single artifact that makes "done" mean something a machine can check instead of something the
+assistant asserts. A feature list is not a planning memo; it is a data structure the rest of the
+harness reads. One file per repo: `feature_list.json`.
+
+- **Three parts or it does not count.** Every entry carries a one-line behavior, a verification
+  command that actually runs, and a state. Missing the command, it is a wish, not a feature.
+- **State is machine-owned; the assistant never hand-edits it.** A feature reaches `passing` only
+  when its verification command exits zero, and the verifier script writes that transition, not the
+  model. "Looks correct" is not a state. A green exit code is.
+- **`blocked` is for human switches only.** Live keys, prod creds, DNS, the demo. The verifier skips
+  them. Everything else is `not_started`, `active`, `passing`, or `failing`.
+- **Never fabricate a verification.** A command pointing at a test that does not exist is worse than
+  an empty list: it reports green on nothing. If a shipped feature has no test, leave it
+  `not_started` with no command and let the gap show. Six honest features beat eleven fabricated
+  ones.
+- **WIP=1 lives here too.** At most one feature `active` at a time. Drive it to `passing` before the
+  next goes active.
+- **The verifier ships with the repo.** `scripts/verify-features.mjs` runs the commands and rewrites
+  state; `--report` prints the board. Wire it into the session-open read and the finish-a-branch
+  check, so every session opens knowing what is proven and closes without claiming what is not. The
+  `/feature-list` skill scaffolds both files into any repo, grounded in its real test suite.
+
 ## Dispatch
 
 The full doctrine lives in `../agents/README.md`. The one-line version: default to dispatching

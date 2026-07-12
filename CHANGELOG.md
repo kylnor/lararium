@@ -15,6 +15,24 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 
 ---
 
+## v2.9 (2026-07-12): additive-doc
+
+The assistant was the one deciding whether its own work was done, which is the one judge it should
+never be. This release moves the "done" verdict out of the model and into a script: a feature list
+where a feature reaches `passing` only when a real verification command exits zero, and the verifier
+writes that state, not the assistant. Proven the first day it ran, on a live repo it flipped a
+shipped feature red and the red was a real bug nobody had caught. Opt-in, per repo.
+
+- **`skills/defs/feature-list/`** (new): the `/feature-list` skill plus the verifier it ships. The
+  skill scaffolds `feature_list.json` (behavior + verification command + machine-owned state) and
+  `scripts/verify-features.mjs` into a repo, grounded in that repo's real test suite. It refuses to
+  point a verification at a test that does not exist. The verifier is language-agnostic (Node reads
+  the file and shells out), so it works over Node, Python, or shell-script tests alike.
+- **`rules/OPERATING.md`**: one new earned section, feature lists. State is machine-owned, never
+  fabricate a verification, `blocked` is for human switches only, WIP=1 lives here too.
+- **Copy-in:** copy `skills/defs/feature-list/` into your stack and add the feature-lists section to
+  your `rules`/`CLAUDE.md`. No interview. Needs Node on the machine (the tests can be anything).
+
 ## v2.8 (2026-07-11): additive-doc
 
 The stack could clone and run other people's code but had nowhere safe to do it. This release adds
