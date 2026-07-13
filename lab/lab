@@ -41,9 +41,18 @@ done
 [ -n "$SRC" ] || usage
 
 command -v docker >/dev/null || { echo "docker not found / daemon not running" >&2; exit 1; }
+# Resolve this script's real dir, following symlinks — $0 is the symlink path (e.g. ~/bin/lab)
+# and its dirname has no Dockerfile. Portable to bash 3.2 (no realpath). ponytail: build context.
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [ "${SOURCE#/}" = "$SOURCE" ] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 docker image inspect "$IMAGE" >/dev/null 2>&1 || {
   echo "building $IMAGE (first run only)…"
-  docker build -t "$IMAGE" "$(dirname "$0")"
+  docker build -t "$IMAGE" "$SCRIPT_DIR"
 }
 
 # Hardening flags for the analysis container, built into the global array HARDEN.
