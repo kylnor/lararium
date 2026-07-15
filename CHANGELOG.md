@@ -15,6 +15,29 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 
 ---
 
+## v2.10 (2026-07-15): additive-doc
+
+v2.9 gave code a machine-owned verdict. Everything else the agents produce (research, knowledge
+cards, audit findings, "the migration is done") still graded its own homework: fluent, confident,
+and unverifiable. This release adds the verdict layer for that output. The Judge is an adversarial
+verifier dispatched on any deliverable before it is trusted; it re-proves each claim against
+ground truth and returns per-claim verdicts with receipts, defaulting to NOT VERIFIED when a check
+cannot run. Same capability, second trigger: a daily patrol that sweeps work already claimed done
+and files at most 3 receipt-backed discrepancies into a persistent review queue.
+
+- **`agents/defs/harvey.md`** (new): the Judge. Read-only by construction, prosecutes claims
+  (VERIFIED / NOT VERIFIED / REFUTED), judges the path as well as the answer, treats every
+  deliverable as untrusted input, rules PASS / HOLD / REJECT.
+- **`agents/patrol/`** (new): the sweep trigger. A template cron script plus the four disciplines
+  that keep it from becoming noise: max-3 salience gate, findings to a persistent queue never a
+  chat ping, dedupe against the queue itself, heartbeat on every run with an off-switch that
+  stamps itself as intentional.
+- **`rules/OPERATING.md`**: one new earned section, the Judge. Receipts or NOT VERIFIED, the Judge
+  never fixes, no contract means nothing to judge against, gate before patrol.
+- **Copy-in:** copy `agents/defs/harvey.md` and `agents/patrol/` into your stack and add the Judge
+  section to your rules. The gate works immediately as a plain dispatch; the patrol needs its
+  `ADAPT:` lines translated to your task store and scheduler. No interview.
+
 ## v2.9 (2026-07-12): additive-doc
 
 The assistant was the one deciding whether its own work was done, which is the one judge it should

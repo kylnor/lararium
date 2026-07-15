@@ -167,6 +167,26 @@ harness reads. One file per repo: `feature_list.json`.
   check, so every session opens knowing what is proven and closes without claiming what is not. The
   `/feature-list` skill scaffolds both files into any repo, grounded in its real test suite.
 
+## The Judge (earned)
+
+The feature list gives code a machine-owned verdict. Everything else your agents produce
+(research, knowledge cards, audit findings, "I finished the migration") has no exit code, and a
+model asked whether its own work is done says yes. The Judge is the verdict layer for that output:
+an adversarial verifier (`agents/defs/harvey.md`) dispatched on a deliverable *before* it is
+trusted, merged, or acted on.
+
+- **Receipts or NOT VERIFIED.** Every claim is re-proven against ground truth (the live file, the
+  endpoint, the repo, the cited source), and every verdict cites the check that produced it. A
+  claim that cannot be checked defaults to NOT VERIFIED; it never rounds up to a pass.
+- **The Judge never fixes.** Read-only by construction. The builder does not grade its own
+  homework, and the grader does not rewrite the homework.
+- **No contract, nothing to judge against.** The dispatch names the contract (the brief, the task,
+  the ship-definition) and the ground-truth sources. A missing contract is itself the finding.
+- **Two triggers, one capability.** The gate (dispatch per deliverable, synchronous) and the
+  patrol (`agents/patrol/`, a daily sweep re-proving work already claimed done, max 3
+  receipt-backed findings to a persistent queue). Build the gate first; the patrol is nearly free
+  once it exists.
+
 ## Dispatch
 
 The full doctrine lives in `../agents/README.md`. The one-line version: default to dispatching

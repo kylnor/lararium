@@ -16,7 +16,9 @@ Make sure you have one agent for each of these jobs:
   feature), an architect (think-before-build on the hard problems).
 - **Review / quality**: an adversarial code reviewer + deploy guardian, a QA agent that hunts edge
   cases and will not sign off easily, a fast silent pattern scanner, a long-horizon strategic
-  reviewer, an A/B decision analyst.
+  reviewer, an A/B decision analyst, and a universal Judge that re-proves any non-code deliverable
+  against ground truth before it is trusted (`defs/harvey.md`; its scheduled sweep lives in
+  `patrol/`).
 - **Research / detective**: a deep researcher (web, returns knowledge not code), a debugger (traces
   data flows), a data-acquisition agent (scraping, APIs), a risk/threat modeler.
 - **Infra / monitoring**: an infrastructure/hardware agent, a monitoring/anomaly/drift agent.
