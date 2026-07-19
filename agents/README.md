@@ -32,8 +32,13 @@ Make sure you have one agent for each of these jobs:
 - **Subagent-first dispatch.** Default to dispatching; work inline only by exception. It preserves
   the main context, parallelizes, and moves faster. When in doubt, dispatch.
 - **Build to a branch, then adversarial review, then merge.** A complex build goes: builder produces
-  a branch (no PR), reviewer does an adversarial pass (blockers / watch-outs / confirmed-clean), fix
-  the blockers verbatim, then merge. This catches scope and auth holes that would otherwise ship.
+  a branch (no PR), reviewer does an adversarial pass, fix the blockers verbatim, then merge. This
+  catches scope and auth holes that would otherwise ship. The review report is a structured
+  contract, not prose: `BLOCKERS` (each with file:line, failure scenario, specific fix, and a
+  confidence), `Watch-outs` (each ticketed or consciously skipped), `Confirmed clean` BY DIMENSION
+  with what was actually inspected (a dimension not checked says NOT CHECKED, never silence), and
+  `Assumptions` (any claim without file:line or command-output evidence demotes here, never into
+  BLOCKERS). Silence is not a verdict; evidence-free findings are not findings.
 - **Worktree isolation** when two or more agents touch the same repo at once. Never run parallel
   agents against one working tree.
 - **Agent claims are signal, not truth.** When a review agent reports a "bug," trace the path or

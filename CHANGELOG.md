@@ -15,6 +15,34 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 
 ---
 
+## v2.12 (2026-07-19): additive-doc
+
+Three additions: two from the same study that produced v2.11 (aimed at generated prose and
+review reports, the outputs that drift quietest), and one organ the template should have
+shipped with from the start.
+
+- **`rules/EDITORIAL.md`** (new): the editorial constitution, a versioned, numbered law
+  (E1-E10 defaults) for every surface where the assistant synthesizes prose from your data:
+  briefings, digests, knowledge cards, audit reports. Every synthesis prompt cites the
+  version; drift gets flagged by rule number ("violates E3"), and recurring drift patches
+  the rule so every citing prompt inherits the fix. Includes anti-inflation (one source =
+  at most one output line), themes-need-three, no-synthesis-of-synthesis, epistemic labels
+  (firm finding / inference / open question), and scope honesty.
+- **`agents/README.md`**: the build-then-adversarial-review loop's report format is now a
+  structured contract: blockers carry file:line, failure scenario, fix, and confidence;
+  confirmed-clean is reported BY DIMENSION with what was actually inspected (NOT CHECKED is
+  said out loud, never implied by silence); evidence-free claims demote to an Assumptions
+  section and can never sit in blockers.
+- **`soul/DIARY.md`** (new): the assistant's diary. A nightly first-person entry in the
+  persona's voice, canonical in the brain repo, plus a rolling digest (latest entry whole,
+  prior few as gists) injected at session start beside the heartbeat. Carries the
+  truth-over-immutability law: entries are never edited after the fact, but corrupted-input
+  entries are regenerated from truth with the old prose preserved and the pipeline fixed
+  first. The heartbeat remembers what is hot; the diary remembers what it was like.
+- **Copy-in:** copy `rules/EDITORIAL.md` and `soul/DIARY.md`, customize the ten rules and
+  the diary schedule, and cite the constitution version from your synthesis prompts. Fold
+  the report contract into your reviewer agent's dispatch prompt. No interview.
+
 ## v2.11 (2026-07-19): additive-doc
 
 The stack had two verdict layers: the feature list gives a repo's features a machine-owned state,

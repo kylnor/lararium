@@ -30,6 +30,9 @@ The pattern that keeps this durable and safe:
 - **Heartbeat (writable memory).** A Stop hook summarizes each session (3+ exchanges) into the
   assistant's own voice and upserts it to `soul.heartbeat`. Next session's briefing reads what just
   happened. That is the loop that lets it remember yesterday.
+- **The diary (narrative memory).** A nightly first-person entry in the persona's voice, canonical
+  in the brain repo, digest injected at session start. The heartbeat remembers what is hot; the
+  diary remembers what it was like. Doctrine + wiring in `DIARY.md`.
 - **Voice-drift monitoring.** The Stop hook logs every response. A nightly job samples a handful,
   scores whether the assistant still sounds like itself, and writes a drift alert if the average
   drops. Cheap insurance against the persona eroding over time.
