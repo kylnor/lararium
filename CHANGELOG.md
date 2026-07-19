@@ -15,6 +15,25 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 
 ---
 
+## v2.11 (2026-07-19): additive-doc
+
+The stack had two verdict layers: the feature list gives a repo's features a machine-owned state,
+and the Judge re-proves non-code deliverables after the fact. This release closes the gap between
+them: verification inside the dispatch itself. The doctrine, adopted after studying Nate B. Jones's
+Ringer orchestrator, is "the check is the contract." A dispatched task whose done can be an
+executable command names that command in the brief; exit 0 is the only pass, and the worker's
+summary is never evidence. Checks print WHY they fail, so the one informed retry (failure output
+pasted in) fixes instead of guesses. Two informed failures means the spec is broken, not the
+worker: amend it, do not loop.
+
+- **`agents/README.md`**: one new validated loop, the check is the contract. Executable check named
+  in the brief, exit 0 or nothing, why-it-fails output, one informed retry then amend the spec,
+  prose criteria only for genuinely unexecutable judgments and declared as such.
+- **`rules/OPERATING.md`**: the Dispatch section carries the same rule in one-line form.
+- **Copy-in:** fold the new loop bullet into your dispatch doctrine and the sentence into your
+  rules. If you keep a dispatch-brief template, add a check-command line to its acceptance
+  section. No interview.
+
 ## v2.10 (2026-07-15): additive-doc
 
 v2.9 gave code a machine-owned verdict. Everything else the agents produce (research, knowledge

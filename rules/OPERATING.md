@@ -192,4 +192,7 @@ trusted, merged, or acted on.
 The full doctrine lives in `../agents/README.md`. The one-line version: default to dispatching
 subagents; work inline only when the task needs conversational back-and-forth or context that only
 exists in the current session. Parallel same-repo work gets worktrees. Agent findings are signal,
-not truth: verify before paying for the fix.
+not truth: verify before paying for the fix. And the check is the contract: a dispatched task
+whose "done" can be an executable command names that command in the brief, exit 0 is the only
+pass, checks print why they fail, and a task that fails two informed attempts means the spec is
+broken, not the worker.

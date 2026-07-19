@@ -38,6 +38,13 @@ Make sure you have one agent for each of these jobs:
   agents against one working tree.
 - **Agent claims are signal, not truth.** When a review agent reports a "bug," trace the path or
   write the failing test before fixing. Verify reported success against ground truth.
+- **The check is the contract.** Wherever a dispatched task's "done" CAN be an executable command,
+  the brief names that command up front: exit 0 is the only pass, and the worker's summary is never
+  evidence. Write checks that print WHY they fail, because the failure output is what makes the
+  retry smart instead of a guess. One informed retry, then stop: a failed check gets exactly one
+  fix attempt with the failure output pasted in, and if it cannot pass in two informed attempts,
+  treat the spec as the broken part and amend it rather than looping. Prose acceptance criteria
+  are the fallback for genuinely unexecutable judgments, and the brief says so explicitly.
 
 ## To make it yours
 1. Copy the definition files from `defs/` into your assistant's agent config (in Claude Code:
