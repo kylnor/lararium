@@ -15,6 +15,29 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 
 ---
 
+## v2.13 (2026-07-21): additive-doc
+
+The no-quiet-failures release. A retrieval search returned nothing because its embedding layer
+was down: the error was caught, resolved to null, and the corpus was reported as searched
+anyway, so a broken search and an empty search produced the identical answer. That is a class
+of bug. This release names it and scrubs the same rot out of the template's own docs.
+
+- **`clocktower/mcp/tool-surface.md`**: removed 14 tool rows pointing at tools no longer in the
+  surface (dead, suppressed, or ghost registry entries), the exact map-vs-territory drift the
+  doctrine warns about. Rewrote the stale capture/staging prose to the real flow
+  (`clocktower_remember` writes; staging-scoped writes wait; `clocktower_staging_review`
+  triages list/promote/reject). Added a caveat: if a semantic recall returns unexpectedly
+  empty, check the embedder is actually running, because a dead embedder can return nothing
+  while claiming it searched.
+- **`clocktower/README.md`**: repointed the watcher-freshness reference at `clocktower_status`,
+  the tool that actually surfaces per-watcher SLA health.
+- **`docs/blog/dispatch-06-no-quiet-failures.md`** (new): the dispatch. A working state and a
+  broken state must never produce the same observable. Five rules: errors never become empty
+  successes, partial failure names which half, producers heartbeat on success, every critical
+  capability gets an outside probe, and the map matches the territory.
+
+---
+
 ## v2.12 (2026-07-19): additive-doc
 
 Three additions: two from the same study that produced v2.11 (aimed at generated prose and
