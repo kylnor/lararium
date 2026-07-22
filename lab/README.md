@@ -1,4 +1,4 @@
-# lab — the untrusted-code sandbox
+# lab: the untrusted-code sandbox
 
 Your assistant is at its most useful when it can clone and run other people's code. That is
 also exactly when it is most dangerous: `npm install` pulls a dependency tree nobody read, a
@@ -10,7 +10,7 @@ matter.
 The container is the blast wall. Every run guarantees:
 
 - **Nothing of yours is mounted in.** No assistant config, no SSH keys, no keychain, no home
-  dir. Code enters by `git clone` inside the box or `docker cp` — never a bind mount. If the
+  dir. Code enters by `git clone` inside the box or `docker cp`, never a bind mount. If the
   code fully owns the box, there is nothing of yours in there to steal.
 - **No network by default.** A git URL gets network for the *clone only*, then the shell drops
   offline. `--net` keeps it on when you actually want to watch what it dials.
@@ -31,19 +31,19 @@ lab --net https://github.com/x/y                 # leave network ON to test inst
 lab --analyze <source>                           # non-interactive recon report, then tear down
 ```
 
-Inside you get a normal shell. `npm install`, run the dev server, whatever — if it detonates,
+Inside you get a normal shell. `npm install`, run the dev server, whatever. If it detonates,
 type `exit` and the box and everything in it is gone. Nothing reached your machine.
 
 `--analyze` is what the `/in-the-lab` skill runs: it spins the box, does an offline read-only
 recon (install hooks, network/shell/eval reaches, obfuscation, dependency count), prints a
-report, and tears down. It executes none of the repo's own code — it only reads — so your
+report, and tears down. It executes none of the repo's own code, it only reads, so your
 assistant can tell you what the code reaches for before anyone runs it for real.
 
 First run builds the `lab:latest` image once (~30s). After that it's instant.
 
 ## What this is NOT
 
-- Not protection if you `--net` AND the code exfiltrates — network on means it can talk. Use
+- Not protection if you `--net` AND the code exfiltrates: network on means it can talk. Use
   `--net` only when you are watching, and prefer reading (`--analyze`) first.
 - Not proof against a kernel container-escape 0-day (nation-state tier, not the usual threat).
   For "safe regardless of contents," run it in a throwaway cloud box instead.

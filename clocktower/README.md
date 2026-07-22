@@ -74,7 +74,7 @@ Use this pattern when the source signal is high-volume and low-signal-density (e
 threads, web captures) and you want a quality gate before items are searchable by the assistant.
 
 Every watcher must declare a freshness SLA (expected max age between successful runs). The
-`clocktower_watcher_status` tool surfaces these. Any watcher whose last-sync exceeds its SLA
+`clocktower_status` tool surfaces these (its health output includes per-watcher freshness). Any watcher whose last-sync exceeds its SLA
 should alert. "The watcher is running" is not the same as "the watcher is producing." Track
 both.
 
