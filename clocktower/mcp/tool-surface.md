@@ -18,8 +18,8 @@ Available to all authenticated sessions (read-token or higher).
 
 | Tool | Purpose |
 |---|---|
-| `clocktower_search` | Semantic + keyword search across all knowledge (embeddings + FTS) |
-| `clocktower_recall` | Quick recall by topic/query; surfaces the most relevant knowledge items |
+| `clocktower_search` | Keyword full-text search across knowledge (FTS only, no embeddings) |
+| `clocktower_recall` | The default retrieval front door: hybrid keyword + vector fan-out across every corpus |
 | `clocktower_find` | Find a specific item by ID or exact title |
 | `clocktower_knowledge_query` | Filtered knowledge query (by project, type, status, confidence) |
 | `library_ask` | Ask a question against the document library (books, clippings, research) |
@@ -184,6 +184,11 @@ transport intentionally omits them.
   are NOT in the live knowledge base until a Muninn pass promotes them.
 - The staging token (`CLOCKTOWER_TOKEN_STAGING`) authorizes `clocktower_capture`
   but NOT `clocktower_staging_review` (that requires full write or admin).
-- All semantic search tools (`clocktower_search`, `clocktower_recall`) use the
-  embedded vector index. Run the embedding pass after bulk ingestion to make
-  new items searchable.
+- Vector (semantic) search lives in `clocktower_recall`'s fan-out and the
+  per-corpus `*_search` tools. `clocktower_search` is keyword-only (FTS), no
+  embeddings. Run the embedding pass after bulk ingestion so new items are
+  searchable.
+- If a semantic recall returns unexpectedly empty, check your embedder is
+  actually running. A missing or dead embedder can make vector scopes return
+  nothing; a healthy setup reports those scopes as degraded rather than
+  silently returning zero and claiming it searched.
