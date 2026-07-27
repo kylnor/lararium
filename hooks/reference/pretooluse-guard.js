@@ -31,6 +31,50 @@
 // Each rule: a regex, the decision tier, and the reason surfaced on a match.
 // The reason should name the danger and, where possible, the safe alternative.
 const RULES = [
+
+  // ─────────────────────────────────────────────────────────────────────
+  // YOUR RULES GO HERE. Ships empty on purpose.
+  //
+  // Everything below this block guards against DESTRUCTION. That is not
+  // the only thing this file is for. It is also where your own working
+  // protocol gets enforced BEFORE a command runs, which is the one thing
+  // a rule written in prose can never do.
+  //
+  // A prose rule (in your CLAUDE.md, in memory, in a doc) can only be
+  // recalled, and recall is triggered by relevance scoring over recent
+  // turns, so it always trails the action. The reminder arrives two or
+  // three turns after the merge you were supposed to not make. This block
+  // is how a rule fires first instead of last.
+  //
+  // ── How to fill it in ──
+  //
+  // Do not sit down and try to list your rules. You will forget the ones
+  // that actually bite and invent ones you don't need. Nobody can recall
+  // their own protocol cold; people only recognize one being violated.
+  //
+  // So wait for that. The next time a reminder lands AFTER you have
+  // already done the thing, you are holding both halves of the rule:
+  //
+  //   the command you just ran   -> the regex
+  //   the reminder text          -> the reason
+  //
+  // Paste them in as a new entry. That reminder has now fired late for
+  // the last time. Capture them one at a time as they annoy you; three
+  // or four is a complete set for most people.
+  //
+  //   {
+  //     re: /\bgit\s+merge\b/i,   // the command that triggered it
+  //     decision: 'ask',          // 'ask' pauses; 'deny' blocks outright
+  //     reason: 'Paste the reminder text here, as-is.',
+  //   },
+  //
+  // Use 'ask' for protocol and reserve 'deny' for what you never want
+  // under any circumstance. A guard that cries wolf gets disabled, and a
+  // disabled guard protects nothing. First match wins, so put specific
+  // rules above general ones.
+  // ─────────────────────────────────────────────────────────────────────
+
+  // ── Stock rules: unconditional destruction, safe to leave as-is ──
   {
     // Bare root, bare home, or home with only whitespace/end after it.
     // A scoped subpath (rm -rf ~/Dev/old-build) deliberately does NOT match
