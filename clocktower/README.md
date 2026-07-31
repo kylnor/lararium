@@ -31,6 +31,10 @@ at. Do not copy corpora into markdown. The card points at the corpus; it does no
 - The queue doctrine (`queue-doctrine.md`): how to coordinate multiple agents draining shared work
   natively on the tasks table plus an append-only action log. Compare-and-swap claims,
   a receipt grammar, and a global kill-switch. Walk it when you run more than one agent at a time.
+- The bitemporal doctrine (`bitemporal-doctrine.md`): how to store anything time-dependent so it can
+  be corrected instead of overwritten. Four timestamps on two clocks (when it was true, when you
+  believed it), supersession by insert, precision as a field. Apply it to whatever table you already
+  have; it is a convention over columns, not a library.
 
 ## What does NOT ship
 - The database itself. You stand up an empty one.
