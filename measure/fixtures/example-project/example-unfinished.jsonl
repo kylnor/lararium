@@ -1,0 +1,5 @@
+{"type":"user","timestamp":"2026-01-02T21:40:00.000Z","message":{"role":"user","content":"the nightly digest job has been silent for three days, find out why"}}
+{"type":"assistant","timestamp":"2026-01-02T21:40:06.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Checking the job's last run before I touch anything."},{"type":"tool_use","id":"u1","name":"Bash","input":{"command":"systemctl --user status digest.timer"}}]}}
+{"type":"user","timestamp":"2026-01-02T21:40:08.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"u1","content":"Loaded: loaded\n   Active: active (waiting)\n  Trigger: n/a"}]}}
+{"type":"user","timestamp":"2026-01-02T21:41:15.000Z","message":{"role":"user","content":"n/a on the trigger looks wrong to me"}}
+{"type":"assistant","timestamp":"2026-01-02T21:41:31.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Agreed. An active timer with no next trigger means the calendar spec never parsed, so it is loaded and will never fire. Pulling the unit file."},{"type":"tool_use","id":"u2","name":"Read","input":{"file_path":"~/.config/systemd/user/digest.timer"}}]}}
