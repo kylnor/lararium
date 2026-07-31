@@ -58,6 +58,23 @@ Before logging, ask: durable lesson, or transient noise? Discard:
 
 The correct shape is always the corrected positive lesson, not the failure event.
 
+### Recall misses go in the ledger, not here
+
+One class of miss gets its own file. When the failure is that the system **held the answer and did
+not surface it** (a recall came back empty on something the corpus provably contains, a stale belief
+was served as current, a briefing left out the one thing that mattered), log it in
+`../brain/spheres/infrastructure/reference/recall-miss-ledger.md` instead. A general miss teaches the
+assistant a rule; a recall miss is evidence about your memory system's actual hit rate, which is the
+one number nobody measures and everybody assumes.
+
+Two things make that file worth keeping and both are laws in it. **Every entry is written to be
+replayable**: a verbatim question a future harness can re-ask, and a checkable expected answer. An
+entry that cannot be re-asked is a diary line, not an eval case. And **every entry names the layer
+that failed** (retrieval, the briefing, a digest, a card, the fact store, or the assistant's own
+inference on top of correct data), because the distribution across layers is the finding. At twenty
+entries you have a real eval corpus grown from your own life, and building the replay harness is a
+short afternoon. Before twenty, build nothing: the ledger is a markdown file and that is the point.
+
 ## Steering rules (earned; the examples are yours to replace)
 
 Steering rules are the graduated misses: short, imperative, always loaded. Keep the list pruned;
@@ -113,6 +130,11 @@ Default is not 5. If it feels like a reflexive 5, drop a tier.
   tell you.
 
 ## Pipelines and observability (earned)
+
+The rules below keep a pipeline alive. Keeping it *worth having* is a second question, and it has
+its own document: `MEASUREMENT.md`. The one line to carry here is that a green heartbeat proves a job
+ran and never that it produced anything, so every producer is graded twice: once on liveness, once on
+output.
 
 - **Every producer declares a freshness SLA, and breaking it surfaces within a day.** "The service
   is running" is not "the service is producing." Watchers, crons, webhooks, syncs: the producer
