@@ -62,6 +62,14 @@ nothing of yours mounted in, every capability dropped, that you drop untrusted c
 do its worst and it doesn't matter. The `/in-the-lab` skill runs it for you: offline recon first,
 then an optional deeper session. Requires Docker; skip it if you don't have a daemon.
 
+And one more beside them: **`measure/`**, four small programs that grade the assistant from evidence
+it already produced. They read your session transcripts (read-only, always) and derive what a session
+actually did from its tool calls, what you left unfinished, what you have now started twice, and
+whether the assistant is getting better or worse, the last one read off your own next message rather
+than out of a survey nobody answers honestly. No model call, no spend, no database. Run them with
+`/measure`. The doctrine underneath, why a green heartbeat proves nothing and what to grade instead,
+is `rules/MEASUREMENT.md`.
+
 Staying current is meant to be passive: **your stack tells you when it is behind.** Adopt the
 update-check hook (`hooks/reference/update-check.js`) and once a day, at session start, it checks the
 upstream template's version against your own `STACK_VERSION` and, if a newer release is out, drops one
@@ -135,6 +143,7 @@ last: leverage on top of a system that already works.
 6. Adopt skills/                  # the session-lifecycle slash commands
 7. Stand up clocktower/           # optional: the index, when you need it
 8. Adopt agents/                  # optional: the roster + dispatch doctrine
+9. Run   measure/                 # optional: grade the whole thing from evidence
 ```
 
 Already running an earlier version? Open your stack beside this template and say *"run the upgrade

@@ -15,6 +15,64 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 
 ---
 
+## Unreleased: additive-doc
+
+Memory that grades itself. The stack could tell you when a job died and never whether the job was
+worth running, because every check it had measured whether things *ran*. A recorder can support
+three platforms, silently miss a fourth, and stay green forever: the trigger it needs never fires, so
+it never fails, so nothing ages past an SLA it is meeting perfectly. This release is the
+no-quiet-failures doctrine turned on quality instead of liveness, plus the four programs that grade
+the assistant from evidence it already produced.
+
+- **`rules/MEASUREMENT.md`** (new): the doctrine, nine rules. A green heartbeat proves a job ran and
+  never that it produced; a run where every unit of work failed exits nonzero and writes no
+  heartbeat; every producer declares a consumer, and outcome rows nobody reads are the same disease
+  as a digest nobody reads; every proactive surface gets outcome accounting where **rot counts
+  against the producer, not the human**; evidence before self-report (anything tool calls can prove
+  is computed, never asked of a model); check BOTH ends of a data flow before claiming it works;
+  measure a population with the consumer's own predicate, never a paraphrase of it; headless runs
+  file proposals and never ask questions into logs; and satisfaction is mined from the human's next
+  message, never surveyed.
+- **`measure/`** (new): four zero-dependency Node programs, beside the six layers like `lab/`.
+  `trajectory.mjs` recovers what a session actually did from its tool calls (progress is a successful
+  execution, never a file write; permission denials are counted apart from failures; loops are read
+  over a trailing window because a whole workday saturates any lifetime counter). `open-loops.mjs`
+  reports unfinished threads and subjects started more than once. `satisfaction.mjs` classifies the
+  human's next message into correction / praise / re-ask / neutral / abandoned / pending, with the
+  negation guard, the contrast pivot, subject binding on failure reports, a leading "no" gated on
+  whether the assistant's last word was a question, and bare assent and thanks excluded because
+  gratitude approves nothing. `satisfaction-rollup.mjs` prints this week against last. Every verdict
+  names the rule that produced it. Invented fixtures included; run it before you trust it.
+  **The invariant, stated in every file: a reader of transcripts must never modify one or bump its
+  mtime.** Idle age is measured by that mtime and reapers kill from that number, so a reader that
+  touches it makes every conversation permanently unreapable with no visible error.
+- **`skills/defs/measure/`** (new): the `/measure` skill. Runs the layer and reads it back in prose,
+  worst health first, and routes what it finds into the miss-capture protocol or the ledger.
+- **`brain/spheres/infrastructure/reference/recall-miss-ledger.md`** (new): the memory eval, cheap
+  version. An append-only ledger of every time recall failed you live, where **each entry must be
+  replayable** (a verbatim re-askable question plus a checkable expected answer) and **each entry
+  names the layer that failed**, because the distribution across layers is the finding. At twenty
+  entries it graduates into a replay harness grown from your own life instead of from a synthetic
+  benchmark. Before twenty, no infrastructure. Ships empty; the two examples are invented.
+- **`rules/OPERATING.md`**: the miss-capture protocol gains the split. A general miss teaches the
+  assistant a rule; a recall miss is evidence about your memory system's hit rate and goes in the
+  ledger. The pipelines section gains the pointer to the measurement doctrine.
+- **`clocktower/bitemporal-doctrine.md`** (new): how to store anything time-dependent so it can be
+  corrected instead of overwritten. Four timestamps on two clocks (`valid_at`/`invalid_at` for when
+  it was true, `created_at`/`superseded_at` for when you believed it); supersession is an insert,
+  never an update, because update destroys belief time; world time derives from the source record and
+  never from a model, which will produce a plausible date from a sentence that did not contain one;
+  precision and provenance are fields, not rounding decisions; and the two canonical queries (what do
+  I believe now, what did I believe on date D) live behind one function each. Closes with the warning
+  that a half-finished type migration is more dangerous than an unmigrated one, because text
+  compared against a timestamp does not throw, it silently returns fewer rows and reports success.
+- **Copy-in:** copy `rules/MEASUREMENT.md`, `clocktower/bitemporal-doctrine.md`, and the ledger card
+  (translating the sphere name to yours). Copy `measure/` whole and run it against the shipped
+  fixtures before pointing it at your transcripts; set `MEASURE_PROJECTS_ROOT` if they do not live in
+  `~/.claude/projects`. Fold the recall-miss paragraph into your own rules file. No interview.
+
+---
+
 ## v2.14 (2026-07-27): additive-doc
 
 The safety rail was only ever documented as a safety rail, so nobody learned it is also where a

@@ -46,6 +46,10 @@ step 0 below establishes from your `STACK_VERSION` and `CHANGELOG.md`.
 2. **`rules/OPERATING.md`** (the highest-leverage piece, zero infrastructure). Copy it in, then
    walk it with them section by section and delete every example steering rule that is not theirs.
    Sell the miss-capture protocol hard: it compounds from day one and needs only a markdown file.
+   Two companions travel with it and cost nothing to adopt: `rules/MEASUREMENT.md` (the doctrine for
+   grading output rather than liveness) and the recall-miss ledger card in the infrastructure sphere,
+   which is the miss protocol pointed at memory itself. Copy the ledger empty and translate the
+   sphere name to theirs; never copy the example entries into a stack that has real ones.
 3. **`hooks/`.** Ask which loops they want first (honest default: session-start briefing +
    heartbeat; skip voice-drift until a soul exists). Copy the chosen reference hooks, adapt the
    paths to their layout, wire them per `hooks/settings.example.json`, and run each standalone
@@ -54,10 +58,20 @@ step 0 below establishes from your `STACK_VERSION` and `CHANGELOG.md`.
    to what actually exists in their install; cut steps that reference infrastructure they skipped
    rather than leaving them to error.
 5. **`clocktower/retrieval-doctrine.md`.** If their index is live, walk it as a checklist against
-   their implementation and note the gaps. If not, just copy the file in for the day it is.
+   their implementation and note the gaps. If not, just copy the file in for the day it is. Same
+   treatment for `clocktower/bitemporal-doctrine.md`: if they already store facts, walk it against
+   the table they have and propose an extension to it rather than a second table beside it, which is
+   the mistake it exists to prevent. If they have no index yet, copy it in for the day they do.
 6. **Root docs.** Offer the v2 README, SCRUB, and INSTALL changes as diffs. If they plan to share
    or publish their own derivative, point them at SCRUB.md's new "Going public" section and its
    warning that commit author metadata leaks identity even when files grep clean.
+7. **`measure/`** (optional, last, and only if they are past the honeymoon). Copy the directory
+   whole, run it against the fixtures it ships to prove Node is happy, then run `open-loops.mjs`
+   against their real transcripts and read the result with them. Set `MEASURE_PROJECTS_ROOT` if their
+   assistant does not store transcripts in `~/.claude/projects`. Say the invariant out loud while you
+   wire it: these scripts read transcripts and must never modify one or bump its mtime, because idle
+   age is derived from that mtime. Skip this entirely for an owner in their first week; it grades a
+   history they do not have yet.
 
 ## Closing
 
