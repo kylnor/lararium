@@ -15,6 +15,26 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 
 ---
 
+## v2.15 (2026-08-01): additive-doc
+
+Optional skill: **`skills/defs/model-fusion/`**, multi-model routing across the AI CLIs you
+already pay subscriptions for (Claude, Codex, Gemini, Grok), with your assistant as the one spine
+that synthesizes. Extracted from a working install the day after its adversarial review, so the
+sharp edges ship pre-hit: the runner (`fusion-run.mjs`) closes stdin on the Codex child (it hangs
+forever on an open pipe), passes the headless trust flags both Codex and Gemini require, strips
+every metered billing key from child environments, and runs critics read-only in fusion mode. The
+SKILL.md carries the doctrine: subscription-auth-only premise, the dated Gemini
+personal-OAuth-is-dead finding and the no-billing-account free-key pattern that answers it, the
+synthesis contract (the panel renders for the assistant; the owner never reads raw legs), and the
+auth-drift lesson (subscription auth can silently degrade to metered; probe the auth-mode files
+structurally and alarm through your freshness monitor). Skip this skill entirely if you only run
+one model CLI; it earns its place the day you hold two subscriptions.
+
+- **`skills/defs/model-fusion/SKILL.md`**: routing, synthesis contract, safety rails, sharp edges.
+- **`skills/defs/model-fusion/fusion-run.mjs`**: the runner. `FUSION_<PROVIDER>_BIN` overrides,
+  `FUSION_TIMEOUT_MS`, `GEMINI_FUSION_API_KEY` injected per child only.
+- **`skills/README.md`**: gains the beside-the-lifecycle note for optional skills.
+
 ## v2.14 (2026-07-27): additive-doc
 
 The safety rail was only ever documented as a safety rail, so nobody learned it is also where a

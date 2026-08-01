@@ -40,6 +40,11 @@ and the next:
 loops that keep the strategy and knowledge layers from rotting; `/upgrade` keeps the stack itself
 current with the template it came from.
 
+Beside the lifecycle set, `defs/` also carries optional skills that only earn their place under
+specific conditions. **`model-fusion`** is the first: multi-model routing across AI CLIs you
+already hold subscriptions for, with your assistant as the one spine that synthesizes. Skip it if
+you run a single model CLI.
+
 ## The law: scrub before you share
 
 A skill is a prompt, and prompts absorb specifics. The moment a skill touches your real life it
