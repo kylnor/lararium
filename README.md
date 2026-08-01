@@ -126,6 +126,57 @@ Run the install interview in INSTALL.md
 That is the whole install. The brain and soul layers need nothing else. The index (clocktower) is
 optional and wants your own database and embedding key, the day you decide you want search at scale.
 
+## Where your copy lives (never a fork)
+
+You are about to pour your life into this repo. Decide where it lives before you push it anywhere,
+because one of the obvious options cannot be undone. `SCRUB.md` is about what you publish on
+purpose; this is about not publishing by accident.
+
+**Do not use GitHub's Fork button.** A fork of a public repo cannot be made private. Visibility is
+inherited from the parent and there is no switch that flips it later, so the only fix is to delete
+the fork and start again.
+
+The less obvious half is worse. Every fork shares one object store with the repo it came from.
+Commits you push to a fork stay fetchable by SHA from the public parent, and deleting the fork does
+not retract them. A "private" fork of a public template is not private in any sense that matters; it
+is a public repo with a quiet URL. For the repo that ends up holding your people, your money, and
+your health, that is the whole ballgame.
+
+Two clean routes, and neither one is a fork:
+
+**Use this template.** That button makes a genuinely new repository, outside the fork network, with
+its own object store, and it lets you choose private at creation. If you came in that way you are
+already done.
+
+**A plain clone pushed to a new private repo.** Works from any of the three routes above, from a
+zip, from any host:
+
+```
+git clone https://github.com/kylnor/lararium.git my-stack
+cd my-stack
+git remote rename origin upstream          # keep it to read from; never push to it
+
+gh repo create <you>/my-stack --private    # a NEW repo, not a fork. That is the whole point.
+git remote add origin git@github.com:<you>/my-stack.git
+git push -u origin main
+```
+
+Want a history that starts with you instead of with the template? Run `rm -rf .git && git init`
+before the `gh repo create` line. That is exactly what the npx scaffolder does, which is why the
+fast path never has this problem.
+
+You give up nothing by not forking. Staying current needs no git relationship with upstream:
+`/upgrade` fetches the latest release and applies it, and the update-check hook reads the upstream
+version over plain HTTPS. Keep `upstream` as a read-only remote if you like diffing against it.
+Fetching from a public repo leaks nothing.
+
+One cost worth naming, after yc-software/qm (MIT): a plain clone is an ordinary repository, so any
+CI workflows the template ships run live in your own account the moment you push. Lararium ships
+none today. Check before you take any other template this way.
+
+The rest of these docs say "fork" loosely, meaning your own copy of the stack. This section means
+the literal button.
+
 ## Setup order (if you would rather do it by hand)
 
 Start with the brain: useful immediately, zero infrastructure, just markdown and the laws. Add the

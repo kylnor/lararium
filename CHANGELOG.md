@@ -66,6 +66,15 @@ the assistant from evidence it already produced.
   I believe now, what did I believe on date D) live behind one function each. Closes with the warning
   that a half-finished type migration is more dangerous than an unmigrated one, because text
   compared against a timestamp does not throw, it silently returns fewer rows and reports success.
+- **`README.md`**: a new section on where your copy lives, because the distribution model is
+  clone-and-make-it-yours and the template answered the private-copy question worse than it should
+  have. Never use the Fork button: a fork of a public repo cannot be made private, and every fork
+  shares one object store with its parent, so commits pushed to a fork stay fetchable by SHA from the
+  public side and deleting the fork does not retract them. Two clean routes instead ("Use this
+  template", which creates a real repo outside the fork network and can be private, or a plain clone
+  pushed to a new private repo), with the commands. Forking buys nothing here anyway, since
+  `/upgrade` and the update-check hook both work over plain HTTPS with no git relationship to
+  upstream. The CI-runs-in-your-account caveat is after yc-software/qm (MIT).
 - **Copy-in:** copy `rules/MEASUREMENT.md`, `clocktower/bitemporal-doctrine.md`, and the ledger card
   (translating the sphere name to yours). Copy `measure/` whole and run it against the shipped
   fixtures before pointing it at your transcripts; set `MEASURE_PROJECTS_ROOT` if they do not live in
