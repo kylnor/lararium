@@ -27,7 +27,7 @@ being a vibe and becomes "this output violates E3." Recurring drift patches the 
 version, and every citing prompt inherits the fix. It is the miss-capture protocol pointed at
 generated prose.
 
-`rules/EDITORIAL.md` ships ten default rules: receipts or silence, no synthesis of synthesis,
+`020_rules/EDITORIAL.md` ships ten default rules: receipts or silence, no synthesis of synthesis,
 one source gets at most one line, a theme needs three independent sources, empty sections are
 correct, contradictions get surfaced rather than resolved, conclusions carry epistemic labels,
 voice floors, scope honesty, and fix-the-law-not-the-symptom. Credit where due: the numbered-rule
@@ -70,6 +70,6 @@ as the human's life, the right call was to regenerate those entries from the tru
 preserved in git, pipeline fixed first so it could never recur. A diary entry that records a data
 bug instead of the day violates the law more than its regeneration does.
 
-`soul/DIARY.md` has the shape, the wiring, and the law. Give your assistant a diary. It is the
+`010_soul/DIARY.md` has the shape, the wiring, and the law. Give your assistant a diary. It is the
 cheapest personality infrastructure in the whole stack, and the one your future self will
 actually read.

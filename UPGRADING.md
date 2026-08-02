@@ -17,7 +17,7 @@ step 0 below establishes from your `STACK_VERSION` and `CHANGELOG.md`.
 - **Divergence is not drift.** The owner was *supposed* to change things: renamed spheres, their
   own soul, real cards, a pruned or re-themed agent roster. Never "fix" a divergence back toward
   the template.
-- **Never overwrite an owned file.** `soul/core.md`, `now.md`, every card, every `CONTEXT.md`, and
+- **Never overwrite an owned file.** `010_soul/core.md`, `now.md`, every card, every `CONTEXT.md`, and
   any agent def the owner edited are theirs. The upgrade only ADDS files and, where a shared doc
   changed (README, SCRUB), offers the delta for the owner to accept or skip.
 - **Ask one question at a time.** Same as the install: a conversation, not a form.
@@ -43,17 +43,17 @@ step 0 below establishes from your `STACK_VERSION` and `CHANGELOG.md`.
 1. **Map the divergence.** Read their tree, not the template: sphere names, whether a soul exists,
    whether the index is live, what the agent roster looks like now. State what you found in three
    or four lines and let them correct you.
-2. **`rules/OPERATING.md`** (the highest-leverage piece, zero infrastructure). Copy it in, then
+2. **`020_rules/OPERATING.md`** (the highest-leverage piece, zero infrastructure). Copy it in, then
    walk it with them section by section and delete every example steering rule that is not theirs.
    Sell the miss-capture protocol hard: it compounds from day one and needs only a markdown file.
-3. **`hooks/`.** Ask which loops they want first (honest default: session-start briefing +
+3. **`040_hooks/`.** Ask which loops they want first (honest default: session-start briefing +
    heartbeat; skip voice-drift until a soul exists). Copy the chosen reference hooks, adapt the
-   paths to their layout, wire them per `hooks/settings.example.json`, and run each standalone
+   paths to their layout, wire them per `040_hooks/settings.example.json`, and run each standalone
    with a fake payload to prove it exits clean before wiring the next.
-4. **`skills/`.** Copy `skills/defs/` into their skills directory. Adapt every path and tool name
+4. **`050_skills/`.** Copy `050_skills/defs/` into their skills directory. Adapt every path and tool name
    to what actually exists in their install; cut steps that reference infrastructure they skipped
    rather than leaving them to error.
-5. **`clocktower/retrieval-doctrine.md`.** If their index is live, walk it as a checklist against
+5. **`110_clocktower/retrieval-doctrine.md`.** If their index is live, walk it as a checklist against
    their implementation and note the gaps. If not, just copy the file in for the day it is.
 6. **Root docs.** Offer the v2 README, SCRUB, and INSTALL changes as diffs. If they plan to share
    or publish their own derivative, point them at SCRUB.md's new "Going public" section and its
@@ -80,10 +80,10 @@ release-by-release ledger, including v2.1 and later, lives in `CHANGELOG.md`.
 
 | Addition | What it is | Fastest payoff |
 |---|---|---|
-| `rules/OPERATING.md` | The operating-rules template: action bias, the miss-capture protocol, steering rules, strategy rating, production standards, pipeline laws. v1's soul layer said "rules live in a separate document" and never shipped one. This is it. | The miss-capture protocol, day one, no infrastructure. |
-| `hooks/` | The loops: doctrine + minimal reference implementations for session-start briefing, heartbeat, voice integrity, context injection, compaction continuity, safety rails, dispatch routing. All run on plain files. | Briefing + heartbeat: the assistant remembers yesterday. |
-| `skills/` | Slash-command skills: `/end`, `/handoff`, `/sessions`, `/evolve`, `/muninn`, plus the doctrine for writing your own. | `/end` and `/handoff`: sessions stop evaporating. |
-| `agents/RETHEME.md` | The re-theming interview: rebuild the roster in your own mythology, doctrine kept, personas rewritten. | Not everyone wants to be Batman. |
-| `soul/character-craft.md` | The persona-authoring craft: archetypes, eight dimensions, tone proofs, the named failure mode. | Write a `core.md` that still works at 2am in month three. |
-| `clocktower/retrieval-doctrine.md` | Seven production-earned retrieval rules. | A checklist when (or before) you build the index. |
+| `020_rules/OPERATING.md` | The operating-rules template: action bias, the miss-capture protocol, steering rules, strategy rating, production standards, pipeline laws. v1's soul layer said "rules live in a separate document" and never shipped one. This is it. | The miss-capture protocol, day one, no infrastructure. |
+| `040_hooks/` | The loops: doctrine + minimal reference implementations for session-start briefing, heartbeat, voice integrity, context injection, compaction continuity, safety rails, dispatch routing. All run on plain files. | Briefing + heartbeat: the assistant remembers yesterday. |
+| `050_skills/` | Slash-command skills: `/end`, `/handoff`, `/sessions`, `/evolve`, `/muninn`, plus the doctrine for writing your own. | `/end` and `/handoff`: sessions stop evaporating. |
+| `030_agents/RETHEME.md` | The re-theming interview: rebuild the roster in your own mythology, doctrine kept, personas rewritten. | Not everyone wants to be Batman. |
+| `010_soul/character-craft.md` | The persona-authoring craft: archetypes, eight dimensions, tone proofs, the named failure mode. | Write a `core.md` that still works at 2am in month three. |
+| `110_clocktower/retrieval-doctrine.md` | Seven production-earned retrieval rules. | A checklist when (or before) you build the index. |
 | `LICENSE` | MIT. The template is public. | Nothing to do. |

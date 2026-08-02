@@ -18,9 +18,9 @@ That single rule generates the whole sequence. The brain is useful with nothing 
 
 ## The afternoon, step by step
 
-**1. Read the brain's laws, then make four folders.** Open `brain/CLAUDE.md`; it is the map and the rulebook, and it is short. Then make a folder, put four sphere folders inside it named for your life, and write a `now.md` with the two or three things that are actually hot right now. You have a working brain. It does nothing clever yet, and it is already useful: the next time you would have re-explained a project to your assistant, you write a card and point at the sphere instead.
+**1. Read the brain's laws, then make four folders.** Open `100_brain/CLAUDE.md`; it is the map and the rulebook, and it is short. Then make a folder, put four sphere folders inside it named for your life, and write a `now.md` with the two or three things that are actually hot right now. You have a working brain. It does nothing clever yet, and it is already useful: the next time you would have re-explained a project to your assistant, you write a card and point at the sphere instead.
 
-**2. Write the soul core.** Open `soul/core.md`, blank, and write your assistant's character, using `character-craft.md` as the how: an archetype, five traits that are tensions and not adjectives, and the tone proofs that prove you actually wrote a someone. Stub the other sections with your own facts. Now the assistant sounds like itself.
+**2. Write the soul core.** Open `010_soul/core.md`, blank, and write your assistant's character, using `character-craft.md` as the how: an archetype, five traits that are tensions and not adjectives, and the tone proofs that prove you actually wrote a someone. Stub the other sections with your own facts. Now the assistant sounds like itself.
 
 **3. Adopt the operating rules.** Take the rules document that rides with the soul, action bias, steering rules, the standards, and edit it until every line is true of how you actually want to work. Character on top, rules underneath.
 

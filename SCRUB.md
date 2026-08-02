@@ -20,7 +20,7 @@ run the same three. A miss here leaks your real life.
 
 ## Pass 3: Identity
 - [ ] The owner's name is genericized to a neutral placeholder.
-- [ ] The assistant's persona is blanked. `soul/core.md` is a scaffold prompting the recipient to
+- [ ] The assistant's persona is blanked. `010_soul/core.md` is a scaffold prompting the recipient to
       write their own, not the original character.
 - [ ] Voice/convention rules that are personal preference (banned punctuation, tone) are marked
       optional, not presented as law.
@@ -29,7 +29,7 @@ run the same three. A miss here leaks your real life.
 
 - **Hooks.** Production hooks are soaked in your infrastructure: database hosts, table names,
   persona injection, project slugs. Never scrub production hook code for sharing; write minimal
-  clean-room reference implementations instead (see `hooks/reference/`). Smaller surface, nothing
+  clean-room reference implementations instead (see `040_hooks/reference/`). Smaller surface, nothing
   to miss.
 - **Skills.** A skill is a prompt, and prompts absorb your life: client names, absolute paths,
   dollar amounts, tool tokens. Every skill gets all three passes before it ships. Cut a

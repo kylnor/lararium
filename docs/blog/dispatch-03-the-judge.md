@@ -48,8 +48,8 @@ The design notes for this release contained a self-flag worth repeating: it was 
 
 ## What ships
 
-- **The Judge**, `agents/defs/harvey.md`: adversarial, read-only, per-claim verdicts with receipts, rules PASS / HOLD / REJECT.
-- **The patrol**, `agents/patrol/`: the template sweep script plus the four disciplines that keep it signal instead of noise. Its `ADAPT:` lines mark every seam that touches your own task store and scheduler.
+- **The Judge**, `030_agents/defs/harvey.md`: adversarial, read-only, per-claim verdicts with receipts, rules PASS / HOLD / REJECT.
+- **The patrol**, `030_agents/patrol/`: the template sweep script plus the four disciplines that keep it signal instead of noise. Its `ADAPT:` lines mark every seam that touches your own task store and scheduler.
 - **A rule**, in the operating doc: receipts or NOT VERIFIED, the Judge never fixes, no contract means nothing to judge against, gate before patrol.
 
 Opt-in, like everything else. The gate works today as a plain dispatch. Point him at the last thing an agent told you was finished. If the ruling annoys you, it was correct.
