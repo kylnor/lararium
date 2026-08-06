@@ -49,9 +49,24 @@ First run builds the `lab:latest` image once (~30s). After that it's instant.
   For "safe regardless of contents," run it in a throwaway cloud box instead.
 - Not a substitute for reading. `--analyze` narrows it down; the lab contains what reading
   can't see (the dependency tree `npm install` pulls, runtime-only payloads).
-- Not a shield against what *you* copy in. Nothing is bind-mounted, but `lab <path>` copies
-  the path you give it into the box, so don't point it at a secret store (`~/.ssh`, `~/.aws`,
-  a `.env`) and then turn `--net` on. The wrapper refuses the obvious ones; it can't catch all.
+- Only a partial shield against what *you* copy in. Nothing is bind-mounted, but `lab <path>`
+  copies the path you give it into the box, so pointing it at your keys and turning `--net` on
+  is still a bad idea. What the wrapper does about that:
+  - **Refuses** if the tree contains a credential store (`.ssh`, `.aws`, `.gnupg`, `.kube`,
+    `gcloud`, `.netrc`, `.git-credentials`, a bare `id_rsa`/`id_ed25519`), at any depth, and
+    names what it found.
+  - **Strips** dotenv-class files (`.env`, `.env.*`, `.envrc`, `*.pem`, `*.p12`, `credentials`)
+    from the copy and prints what it excluded. These legitimately live in real repos, so
+    refusing the whole tree over one would make the lab useless on exactly the code you most
+    want to sandbox. The code goes in; the credentials do not.
+
+  Through v2.15 this check read only the **basename** of the argument, so `lab ~/.ssh` was
+  refused while `lab ~` was accepted and copied `.ssh`, `.gnupg` and `.aws` straight in. Naming
+  a parent directory defeated it entirely. Check `lab --check <path>` any time you want to see
+  what would go in without starting anything; the corpus is `tests/test-secret-refusal.sh`.
+
+  It still cannot catch a credential that does not look like one — a token pasted into a config
+  file is just text. Point it at code.
 
 ## Requires
 
