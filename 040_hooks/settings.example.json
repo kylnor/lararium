@@ -3,8 +3,8 @@
   "// stackUpdateCheck": "Config for the update-check SessionStart hook. It reads THIS block from your real settings.json at runtime, falling back to the constants at the top of update-check.js when a key is absent. updateCheck toggles the once-a-day check; templateUpstream is the owner/repo it asks for a version (re-point it if you forked); localVersionFile is the ABSOLUTE path to your installed STACK_VERSION stamp, which lives at your stack's repo ROOT (where the install/upgrade interviews stamp it), NOT in ~/.assistant. The install interview writes your real path here. Absent or wrong = the hook reads v1 and nudges every session. To disable without editing any file, set the env var STACK_UPDATE_CHECK=off.",
   "stackUpdateCheck": {
     "updateCheck": true,
-    "templateUpstream": "kylnor/agentic-stack",
-    "localVersionFile": "/absolute/path/to/your/agentic-stack/STACK_VERSION"
+    "templateUpstream": "kylnor/lararium",
+    "localVersionFile": "/absolute/path/to/your/lararium/STACK_VERSION"
   },
   "hooks": {
     "SessionStart": [

@@ -15,6 +15,58 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 
 ---
 
+## v2.15 (2026-08-01): additive-doc
+
+Optional skill: **`050_skills/defs/model-fusion/`**, multi-model routing across the AI CLIs you
+already pay subscriptions for (Claude, Codex, Gemini, Grok), with your assistant as the one spine
+that synthesizes. Extracted from a working install the day after its adversarial review, so the
+sharp edges ship pre-hit: the runner (`fusion-run.mjs`) closes stdin on the Codex child (it hangs
+forever on an open pipe), passes the headless trust flags both Codex and Gemini require, strips
+every metered billing key from child environments, and runs critics read-only in fusion mode. The
+SKILL.md carries the doctrine: subscription-auth-only premise, the dated Gemini
+personal-OAuth-is-dead finding and the no-billing-account free-key pattern that answers it, the
+synthesis contract (the panel renders for the assistant; the owner never reads raw legs), and the
+auth-drift lesson (subscription auth can silently degrade to metered; probe the auth-mode files
+structurally and alarm through your freshness monitor). Skip this skill entirely if you only run
+one model CLI; it earns its place the day you hold two subscriptions.
+
+- **`050_skills/defs/model-fusion/SKILL.md`**: routing, synthesis contract, safety rails, sharp edges.
+- **`050_skills/defs/model-fusion/fusion-run.mjs`**: the runner. `FUSION_<PROVIDER>_BIN` overrides,
+  `FUSION_TIMEOUT_MS`, `GEMINI_FUSION_API_KEY` injected per child only.
+- **`050_skills/README.md`**: gains the beside-the-lifecycle note for optional skills.
+
+## v2.14 (2026-07-27): additive-doc
+
+The safety rail was only ever documented as a safety rail, so nobody learned it is also where a
+personal working rule gets enforced. Found through a recipient of an early pre-install drop whose
+complaint was "my memory is broken": a rebase reminder kept arriving two or three turns after the
+merge. Memory was fine. Recall is triggered by relevance scoring over recent turns, so it always
+trails the action, and with no PreToolUse rule there was nothing to fire first. A prose rule has no
+enforcement point; that is not a memory bug, it is a missing hook.
+
+- **`040_hooks/reference/pretooluse-guard.js`**: the `RULES` array opens with a reserved block for your
+  own protocol, shipping **empty** with a capture protocol rather than a questionnaire. The
+  doctrine: nobody can enumerate their own rules cold, people only recognize one being violated, so
+  do not try to write the block up front. Wait for the next reminder that lands after the fact,
+  when both halves are already in hand (the command just run is the regex, the reminder text is the
+  reason), and paste it in. Each late reminder is a free pre-worded rule that fires late exactly
+  once. A guessed rule is worse than an empty one: the first time it fires on something the owner
+  wanted, they conclude the guard became a nag and remove it, and one wrong rule poisons trust in
+  the whole mechanism.
+- **`040_hooks/README.md`**: loop (f) gains the same, plus why a recalled rule is structurally always
+  late. Ship it empty and let the misses write it.
+- **Rename recovery.** `templateUpstream`, the local-stamp default, and the `/upgrade` scratch
+  paths still said `agentic-stack` in `settings.example.json`, `update-check.js`, `040_hooks/README.md`,
+  and `050_skills/defs/upgrade/SKILL.md`. The fix was written on `feat/npx-scaffolder` on 2026-07-02 and
+  never merged (the `npx/` directory landed on main by another route, these hunks did not). Live
+  behaviour was unaffected because GitHub redirects renamed repos on raw fetches too, verified, but
+  it was exactly the map-vs-territory drift v2.13 was about, sitting in the config example.
+- **Copy-in:** take the new block from `pretooluse-guard.js` (or just paste your own rules above the
+  stock ones, the block is only comments). Re-point `templateUpstream` if you had copied the old
+  default. No interview.
+
+---
+
 ## v2.13 (2026-07-21): additive-doc
 
 The no-quiet-failures release. A retrieval search returned nothing because its embedding layer

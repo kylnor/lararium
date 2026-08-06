@@ -79,6 +79,20 @@ curl-piped-to-shell, echoing secrets into files, and `chmod 777`. It denies only
 destruction and leans on "ask" for anything ambiguous, because falsely blocking real work is worse
 than missing an edge case.
 
+That starter set is the floor, not the point. The top of the `RULES` array is a block reserved for
+**your own working protocol**, and it ships empty. This is the only place a personal rule can fire
+*before* the command it governs. A rule written in prose (in your `CLAUDE.md`, in memory, in a doc)
+can only ever be recalled, and recall is triggered by relevance scoring over recent turns, so it
+trails the action: the reminder about rebasing arrives two or three turns after the merge. That
+reads like broken memory and is not. It is a rule with no enforcement point.
+
+Do not sit down and try to enumerate your rules into that block. Nobody can recall their own
+protocol cold; people only recognize one being violated. Wait instead for the next reminder that
+arrives *after* you have already done the thing, because at that moment you are holding both
+halves of the rule: the command you just ran is the regex, and the reminder text is the reason.
+Paste them in and that reminder has fired late for the last time. Captured one at a time as they
+annoy you, three or four rules is a complete set. Ship it empty and let the misses write it.
+
 ### g. Dispatch router (`agent-model-router.js`, PreToolUse on the Agent tool)
 Rewrites subagent dispatch parameters by policy: some agents should always run on a certain model, and
 nobody should have to remember that. The hook injects the model when policy matches and the caller did
@@ -173,7 +187,7 @@ alongside the `hooks` block.
 
 ```json
 {
-  "stackUpdateCheck": { "updateCheck": true, "templateUpstream": "kylnor/agentic-stack" },
+  "stackUpdateCheck": { "updateCheck": true, "templateUpstream": "kylnor/lararium" },
   "hooks": {
     "SessionStart": [
       { "hooks": [

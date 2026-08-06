@@ -1,0 +1,47 @@
+name: cut-release
+
+# The changelog contract says "watch releases, that is the signal." v2.9-v2.14
+# shipped as CHANGELOG entries with no release cut (the step was manual and got
+# skipped six times), so watchers heard nothing for weeks. This workflow makes
+# the release mechanical: bump STACK_VERSION + write the CHANGELOG entry, push,
+# and the release exists. No discipline required.
+
+on:
+  push:
+    branches: [main]
+    paths: [STACK_VERSION]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cut release for STACK_VERSION if missing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < STACK_VERSION)"
+          case "$version" in v[0-9]*) ;; *) echo "STACK_VERSION '$version' is not a vN.N version, skipping"; exit 0 ;; esac
+          if gh release view "$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release $version already exists, nothing to do"
+            exit 0
+          fi
+          # Notes = the matching CHANGELOG entry (from its "## vX.Y" heading to the next "## ").
+          awk -v v="$version" '
+            $0 ~ "^## " v " " { f=1 }
+            f && $0 ~ "^## " && $0 !~ "^## " v " " { exit }
+            f { print }
+          ' CHANGELOG.md > /tmp/notes.md
+          if ! [ -s /tmp/notes.md ]; then
+            echo "no CHANGELOG entry found for $version; refusing to cut an empty release" >&2
+            exit 1
+          fi
+          title="$(head -1 /tmp/notes.md | sed 's/^## //')"
+          tail -n +2 /tmp/notes.md > /tmp/body.md
+          gh release create "$version" --repo "$GITHUB_REPOSITORY" \
+            --title "$title" --notes-file /tmp/body.md --target "$GITHUB_SHA"
