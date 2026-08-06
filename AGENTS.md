@@ -38,7 +38,7 @@ file are here for one of two jobs, and they need opposite instincts:
 
 ## Verification
 
-- `node --check` any `.mjs` you touch (`skills/defs/*/`, `npx/`).
+- `node --check` any `.mjs` you touch (`050_skills/defs/*/`, `npx/`).
 - Runnable pieces keep zero dependencies unless their SKILL.md says otherwise; do not add
   packages to solve a string problem.
 - Grep-verify the em-dash rule on changed files before committing: `grep -n "—\|–" <files>`

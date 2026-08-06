@@ -15,7 +15,7 @@ assistant interviews you and writes your files. You answer questions; it does th
 ---
 
 ## Phase 0: Read the map
-Before any question, read `brain/CLAUDE.md` (the laws) and `README.md` (the six layers). Tell the
+Before any question, read `100_brain/CLAUDE.md` (the laws) and `README.md` (the six layers). Tell the
 user, in two sentences, what they are about to set up. Then begin.
 
 ## Phase 1: The brain (required, do this first)
@@ -35,9 +35,9 @@ The goal of this phase is a brain the user could start using today.
 At the end of Phase 1 the user has a working brain. Offer to stop here. Everything below is leverage.
 
 ## Phase 2: The soul (optional: do this when they want a consistent voice)
-The goal is a `soul/core.md` that sounds like a specific someone.
-1. Read `soul/README.md` aloud-in-summary so they understand what a persona layer is.
-2. **Ask the archetype question first.** Read the archetype list in `soul/character-craft.md` and
+The goal is a `010_soul/core.md` that sounds like a specific someone.
+1. Read `010_soul/README.md` aloud-in-summary so they understand what a persona layer is.
+2. **Ask the archetype question first.** Read the archetype list in `010_soul/character-craft.md` and
    ask which one fits: the concierge, the anticipator, the gatekeeper, the quartermaster, the ops
    sergeant, the partner-with-root. If they answer with a famous character's name, treat it as
    pointing at an archetype and build an original character on it (the craft doc explains why).
@@ -47,38 +47,38 @@ The goal is a `soul/core.md` that sounds like a specific someone.
    - How should it open a reply: react first, or get straight to the work?
    - What would make it sound like a generic chatbot? (so we can ban those phrases)
    - Does it have a name? Whose assistant is it?
-4. Write `soul/core.md` from the answers using the dimensions in `soul/character-craft.md`: trait
+4. Write `010_soul/core.md` from the answers using the dimensions in `010_soul/character-craft.md`: trait
    tensions, the register gap, the anti-list, and at least three tone proofs (sample responses to
    real scenarios from their life). The samples are the spec. Name the persona's failure mode.
 4. Note what they still need to wire themselves: the session-start hook that loads `core`, the
-   session-end hook that writes `heartbeat`, the drift monitor. Point them at `soul/README.md`.
+   session-end hook that writes `heartbeat`, the drift monitor. Point them at `010_soul/README.md`.
 
 ## Phase 3: The rules and the loops (optional, but the cheapest leverage here)
-1. **Rules.** Walk `rules/OPERATING.md` with them. The miss-capture protocol is the one section to
+1. **Rules.** Walk `020_rules/OPERATING.md` with them. The miss-capture protocol is the one section to
    sell hard: it needs zero infrastructure and compounds from day one. Help them copy the document
    into their global config (`CLAUDE.md` or equivalent) and delete the example steering rules that
    are not theirs.
-2. **Hooks.** Read `hooks/README.md` for the loop catalog. Ask which loops they want first (the
+2. **Hooks.** Read `040_hooks/README.md` for the loop catalog. Ask which loops they want first (the
    honest default: session-start briefing + heartbeat + the update checker, all three on plain files;
    skip voice-drift until the voice exists). The update checker rides the same `SessionStart` event as
    the briefing, so wire it in the same phase: copy `update-check.js` in alongside `session-start.js`,
    register both `SessionStart` commands, and copy the `stackUpdateCheck` config block from
-   `hooks/settings.example.json` (it defaults the upstream to this template; a forker re-points it).
+   `040_hooks/settings.example.json` (it defaults the upstream to this template; a forker re-points it).
    **Set `localVersionFile` to the absolute path of this stack's `STACK_VERSION`** (the repo root you
    are installing against, the same file you stamp in the closing step). You know that path, it is the
    folder you are working in, so fill it in explicitly rather than leaving the placeholder. If it is
    wrong or unset the hook reads v1 and nudges every session forever, the one way this hook annoys
    instead of helps.
    Copy the chosen reference hooks into their assistant config, wire them per
-   `hooks/settings.example.json`, and run each once standalone with a fake payload to prove it
+   `040_hooks/settings.example.json`, and run each once standalone with a fake payload to prove it
    exits clean. The reference hooks run on plain files; no database needed yet.
-3. **Skills.** Copy `skills/defs/` into their skills directory. Adapt the paths the skills mention
+3. **Skills.** Copy `050_skills/defs/` into their skills directory. Adapt the paths the skills mention
    (handoff file location, index tool names) to what actually exists in their install; a skill that
    references infrastructure they skipped should have that step cut, not left to error.
 
 ## Phase 4: The agents (optional: leverage on top of a working system)
 1. Ask whether they want the themed roster as-is or in their own mythology. If they want their own,
-   run the re-theming interview in `agents/RETHEME.md` (doctrine kept, personas regenerated; never
+   run the re-theming interview in `030_agents/RETHEME.md` (doctrine kept, personas regenerated; never
    a find-and-replace).
 2. Ask which functions they actually need (most people do not need chaos + load + red-team on day one).
    Prune the defs they will not use; keep the dispatch doctrine in the README.
@@ -86,7 +86,7 @@ The goal is a `soul/core.md` that sounds like a specific someone.
 ## Phase 5: The index (optional: only when files outgrow grep-and-read)
 1. Tell them plainly: this is the heaviest phase and they can defer it indefinitely. The brain works
    without it.
-2. Walk `clocktower/README.md`. Help them produce a real `.env` from `.env.example` (their own
+2. Walk `110_clocktower/README.md`. Help them produce a real `.env` from `.env.example` (their own
    database, their own embedding key, their own host). **Never invent or reuse anyone else's
    credentials.**
 3. Point them at the schema and the watcher pattern. Standing up the actual database and watchers is

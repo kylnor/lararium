@@ -29,33 +29,33 @@ your files while you answer.
 
 ## The six layers
 
-1. **`brain/`**: a human-navigable markdown knowledge store, scoped by life sphere, governed by a
-   small set of laws (`brain/CLAUDE.md`). Files are canonical; the database is an index on top. The
+1. **`100_brain/`**: a human-navigable markdown knowledge store, scoped by life sphere, governed by a
+   small set of laws (`100_brain/CLAUDE.md`). Files are canonical; the database is an index on top. The
    heart of the system, and the one to read first. Useful on day one with nothing but markdown.
-2. **`soul/`**: the assistant's persona, assembled fresh each session: seven layered sections, a
+2. **`010_soul/`**: the assistant's persona, assembled fresh each session: seven layered sections, a
    heartbeat loop that lets it remember yesterday, voice-drift monitoring so it keeps sounding like
-   itself. Ships blank; `soul/character-craft.md` teaches the craft (archetypes, trait tensions,
-   tone proofs). Its rules half lives in `rules/OPERATING.md`: action bias, the miss-capture
+   itself. Ships blank; `010_soul/character-craft.md` teaches the craft (archetypes, trait tensions,
+   tone proofs). Its rules half lives in `020_rules/OPERATING.md`: action bias, the miss-capture
    protocol, steering rules, the standards.
-3. **`clocktower/`**: the index: schema, an MCP server config, the watcher pattern that ingests
+3. **`110_clocktower/`**: the index: schema, an MCP server config, the watcher pattern that ingests
    your corpora, the embeddings standard, and the retrieval doctrine earned in production
-   (`clocktower/retrieval-doctrine.md`). The memory layer has four organs, intake, carder, gate, and
+   (`110_clocktower/retrieval-doctrine.md`). The memory layer has four organs, intake, carder, gate, and
    connector; the last is the daily "what I just learned maps to what I am stuck on" job, documented
-   in `clocktower/connector-doctrine.md`. Coordination is a separate surface: `clocktower/queue-doctrine.md`
+   in `110_clocktower/connector-doctrine.md`. Coordination is a separate surface: `110_clocktower/queue-doctrine.md`
    runs multi-agent work natively on the tasks table you already have. Ships with
    an empty database and no credentials.
-4. **`agents/`**: a roster of specialized subagents (build, review, research, infra, adversarial,
+4. **`030_agents/`**: a roster of specialized subagents (build, review, research, infra, adversarial,
    memory) plus the dispatch doctrine for which to use when. The theme is yours to replace: the
-   re-theming interview (`agents/RETHEME.md`) rebuilds the whole roster in your own mythology,
+   re-theming interview (`030_agents/RETHEME.md`) rebuilds the whole roster in your own mythology,
    doctrine intact. Bring your own gods, literally.
-5. **`hooks/`**: the loops that make it feel alive. Session-start briefing, the heartbeat that
+5. **`040_hooks/`**: the loops that make it feel alive. Session-start briefing, the heartbeat that
    remembers yesterday, voice integrity, compaction continuity, safety rails, dispatch routing.
    Doctrine plus minimal reference implementations that run on plain files, no database required.
-6. **`skills/`**: slash-command skills for the session lifecycle (`/end`, `/handoff`, `/sessions`),
+6. **`050_skills/`**: slash-command skills for the session lifecycle (`/end`, `/handoff`, `/sessions`),
    self-improvement (`/evolve`), and memory curation (`/muninn`), plus the doctrine for writing
    your own.
 
-Beside the six layers ships one optional tool: **`lab/`**, a disposable sandbox for untrusted
+Beside the six layers ships one optional tool: **`060_lab/`**, a disposable sandbox for untrusted
 code. Your assistant is most useful when it can clone and run other people's repos, which is
 exactly when it is most dangerous. The lab is a throwaway container, no network by default,
 nothing of yours mounted in, every capability dropped, that you drop untrusted code into so it can
@@ -63,7 +63,7 @@ do its worst and it doesn't matter. The `/in-the-lab` skill runs it for you: off
 then an optional deeper session. Requires Docker; skip it if you don't have a daemon.
 
 Staying current is meant to be passive: **your stack tells you when it is behind.** Adopt the
-update-check hook (`hooks/reference/update-check.js`) and once a day, at session start, it checks the
+update-check hook (`040_hooks/reference/update-check.js`) and once a day, at session start, it checks the
 upstream template's version against your own `STACK_VERSION` and, if a newer release is out, drops one
 line into your session: type **`/upgrade`**. That skill fetches the latest template and runs the
 upgrade interview in `UPGRADING.md` for you, applying the doc-only deltas directly and asking you only
@@ -100,10 +100,10 @@ the template's own code. Read it before you run it, or skip it entirely and clon
 hand, then you have inspected everything before a single line executes.
 
 And if you are properly paranoid: the two files worth eyeballing are both short (`npx/index.js`
-and `lab/lab`). Read those, then let your very first lab run be Lararium itself:
+and `060_lab/lab`). Read those, then let your very first lab run be Lararium itself:
 
 ```
-lab/lab https://github.com/kylnor/lararium
+060_lab/lab https://github.com/kylnor/lararium
 ```
 
 That vets the rest of the stack inside the box it ships. The tool's first job can be auditing
@@ -127,14 +127,14 @@ when the file layer outgrows grep-and-read and you want semantic search at scale
 last: leverage on top of a system that already works.
 
 ```
-1. Read  brain/CLAUDE.md          # the laws, the map
-2. Fill  brain/now.md             # your cross-cutting heartbeat
-3. Write soul/core.md             # your assistant's character (replace the blank)
-4. Adopt rules/OPERATING.md       # the operating rules, edited until true of you
-5. Wire  hooks/                   # the loops: briefing, heartbeat, rails
-6. Adopt skills/                  # the session-lifecycle slash commands
-7. Stand up clocktower/           # optional: the index, when you need it
-8. Adopt agents/                  # optional: the roster + dispatch doctrine
+1. Read  100_brain/CLAUDE.md          # the laws, the map
+2. Fill  100_brain/now.md             # your cross-cutting heartbeat
+3. Write 010_soul/core.md             # your assistant's character (replace the blank)
+4. Adopt 020_rules/OPERATING.md       # the operating rules, edited until true of you
+5. Wire  040_hooks/                   # the loops: briefing, heartbeat, rails
+6. Adopt 050_skills/                  # the session-lifecycle slash commands
+7. Stand up 110_clocktower/           # optional: the index, when you need it
+8. Adopt 030_agents/                  # optional: the roster + dispatch doctrine
 ```
 
 Already running an earlier version? Open your stack beside this template and say *"run the upgrade

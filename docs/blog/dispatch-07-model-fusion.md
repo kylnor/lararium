@@ -60,7 +60,7 @@ The skill is optional and ships with v2.15. If you hold one AI subscription, ski
 
 ```
 npx lararium        # new stack, or:
-git pull            # existing stack, then copy skills/defs/model-fusion/
+git pull            # existing stack, then copy 050_skills/defs/model-fusion/
 ```
 
-The skill lives at `skills/defs/model-fusion/`: a SKILL.md carrying the doctrine and a single-file runner with no dependencies. Wire it in and the invocations are plain language: ask your assistant for "a second opinion on this diff" and Codex renders one, hand it a monster PDF and Gemini eats it, say "run fusion on this" and the four-brief panel convenes. The full routing table, the safety rails, and every sharp edge we hit are documented in the skill itself, dated, so you can check whether the vendor ground has shifted before you stand on it.
+The skill lives at `050_skills/defs/model-fusion/`: a SKILL.md carrying the doctrine and a single-file runner with no dependencies. Wire it in and the invocations are plain language: ask your assistant for "a second opinion on this diff" and Codex renders one, hand it a monster PDF and Gemini eats it, say "run fusion on this" and the four-brief panel convenes. The full routing table, the safety rails, and every sharp edge we hit are documented in the skill itself, dated, so you can check whether the vendor ground has shifted before you stand on it.

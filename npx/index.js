@@ -15,7 +15,11 @@ const OWNER = 'kylnor';
 const REPO = 'lararium';
 const USER_AGENT = 'lararium-scaffolder';
 const TAG_RE = /^[A-Za-z0-9._-]{1,32}$/;
-const REQUEST_TIMEOUT_MS = 4000;
+// Was 4000. Raised because a timeout is now FATAL rather than a silent
+// downgrade to main: on a slow connection the old value turned a working
+// install into an unreviewed one, and now it would turn it into a failure.
+// Ten seconds is still short enough to notice and long enough to be fair.
+const REQUEST_TIMEOUT_MS = 10000;
 
 function manualRoute() {
   return [
@@ -74,7 +78,33 @@ function httpGet(url, { asJson = false, destFile = null } = {}, redirectsLeft = 
   });
 }
 
-async function resolveRef() {
+// Parse argv into { folderArg, explicitRef }. `--ref <name>` is the deliberate
+// opt-in to something other than the latest release; it is never automatic.
+function parseArgs(argv) {
+  let folderArg = null;
+  let explicitRef = null;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--ref') {
+      explicitRef = argv[++i] || null;
+      if (!explicitRef || !TAG_RE.test(explicitRef)) {
+        fail('--ref needs a plain tag or branch name (letters, digits, . _ -).');
+      }
+    } else if (!folderArg) {
+      folderArg = argv[i];
+    }
+  }
+  return { folderArg: folderArg || 'lararium', explicitRef };
+}
+
+async function resolveRef(explicitRef) {
+  if (explicitRef) {
+    // A branch and a tag need different codeload paths, and we cannot tell
+    // which this is without asking. Tags are the common case; `main` is the
+    // documented escape hatch, so special-case it and treat the rest as tags.
+    const kind = explicitRef === 'main' || explicitRef === 'master' ? 'heads' : 'tags';
+    console.log(`lararium: using --ref ${explicitRef} (you asked for this explicitly).`);
+    return { ref: explicitRef, kind, usedFallback: false };
+  }
   const apiUrl = `https://api.github.com/repos/${OWNER}/${REPO}/releases/latest`;
   try {
     const res = await httpGet(apiUrl, { asJson: true });
@@ -85,8 +115,19 @@ async function resolveRef() {
     }
     throw new Error('releases API returned no usable tag');
   } catch (err) {
-    console.log(`lararium: could not resolve the latest release (${err.message}). Falling back to main.`);
-    return { ref: 'main', kind: 'heads', usedFallback: true };
+    // FAIL CLOSED. This used to silently fall back to `main`, which turns a
+    // four-second network hiccup into "you installed unreviewed HEAD instead
+    // of the release you asked for" - and prints it as an informational line.
+    // For a scaffolder whose whole pitch is "read it before you run it", the
+    // quiet downgrade is the wrong default. Ask, or pass --ref main.
+    fail(
+      `could not resolve the latest release (${err.message}).\n` +
+      '  Not falling back to main: that would install unreviewed HEAD instead of a\n' +
+      '  tagged release, which is not what you asked for. Retry, or if you really do\n' +
+      '  want the tip of main, say so explicitly:\n\n' +
+      `      npx lararium --ref main ${process.argv[2] || 'my-stack'}`
+    );
+    return { ref: 'main', kind: 'heads', usedFallback: true }; // unreachable: fail() exits
   }
 }
 
@@ -103,7 +144,7 @@ async function downloadTarball(ref, kind) {
 }
 
 async function run() {
-  const folderArg = process.argv[2] || 'lararium';
+  const { folderArg, explicitRef } = parseArgs(process.argv.slice(2));
   const target = path.resolve(process.cwd(), folderArg);
 
   if (fs.existsSync(target)) {
@@ -118,8 +159,8 @@ async function run() {
     fs.mkdirSync(target, { recursive: true });
   }
 
-  console.log('lararium: resolving the latest release...');
-  const { ref, kind, usedFallback } = await resolveRef();
+  if (!explicitRef) console.log('lararium: resolving the latest release...');
+  const { ref, kind, usedFallback } = await resolveRef(explicitRef);
 
   console.log(`lararium: downloading ${ref}...`);
   let tarPath;

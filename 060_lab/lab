@@ -1,0 +1,252 @@
+#!/usr/bin/env bash
+# lab — throw untrusted code in a disposable box and look at it without betting your machine.
+#
+# The container is the blast wall. Guarantees on every run:
+#   • NOTHING of yours is ever mounted in (no assistant config, no keys, no keychain, no
+#     home dir). Code enters via `git clone` inside the box or `docker cp` — never a bind mount.
+#   • No network by default. A git URL gets network for the CLONE only, then the analysis
+#     shell drops offline. `--net` keeps network on when you want to watch what it dials.
+#   • Disposable. --rm on exit; any docker volume it makes is deleted on the way out.
+#   • De-fanged. All Linux capabilities dropped + no-new-privileges (so even root inside has
+#     no kernel power) + memory/pid caps so a zip-bomb or fork-bomb can't take the host down.
+#
+# usage:
+#   lab <git-url>            clone a repo, land offline inside it (interactive shell)
+#   lab <path/to/dir>        copy a local dir in, offline shell
+#   lab <file.zip>           copy a zip in, unzip it, offline shell
+#   lab --net <source>       same, but leave the network ON (to test install/run)
+#   lab --analyze <source>   non-interactive: run a canned offline recon and print a report,
+#                            then tear down. This is what the /in-the-lab skill calls.
+#   lab --check <source>     validate the source only: report what would be refused or
+#                            excluded, copy nothing, start nothing. No docker required.
+#   lab --rebuild <source>   rebuild the image from the pinned base first. The image is
+#                            built once and cached forever otherwise, so this is how the
+#                            box gets security updates. Re-pin the digest first.
+#
+# Exit the interactive shell with `exit`. The box and everything in it is gone.
+# Portable to bash 3.2 (macOS default): no mapfile, no associative arrays.
+set -euo pipefail
+
+IMAGE="lab:latest"
+NET="none"
+MODE="shell"
+SRC=""
+REBUILD="0"
+
+usage() { grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --net) NET="on"; shift ;;
+    --analyze) MODE="analyze"; shift ;;
+    --check) MODE="check"; shift ;;
+    --rebuild) REBUILD="1"; shift ;;
+    -h|--help) usage ;;
+    -*) echo "unknown flag: $1" >&2; usage ;;
+    *) SRC="$1"; shift ;;
+  esac
+done
+[ -n "$SRC" ] || usage
+
+# Credential stores that are never legitimately part of code you are sandboxing.
+# Finding one of these anywhere in the tree is a refusal, not a warning.
+find_secret_stores() {
+  find "$1" -maxdepth 4 \
+    \( -name .ssh -o -name .aws -o -name .gnupg -o -name .kube -o -name gcloud \
+       -o -name .netrc -o -name .git-credentials -o -name .pypirc \
+       -o -name id_rsa -o -name id_ed25519 -o -name id_ecdsa \
+       -o -name 'Keychains' \) \
+    -print 2>/dev/null | head -20
+}
+
+# Dotenv-class files: legitimately present in real repos, so they are stripped
+# from the copy rather than refused. See the call site for why.
+find_secret_files() {
+  find "$1" -maxdepth 4 \
+    \( -name '.env' -o -name '.env.*' -o -name '.envrc' -o -name 'credentials' \
+       -o -name 'credentials.json' -o -name '*.pem' -o -name '*.p12' \) \
+    -type f -print 2>/dev/null | head -20
+}
+
+# Refuse to copy a secret store into a box (dangerous especially with --net):
+# the point is to sandbox code, not hand your keys to it.
+#
+# The basename check is the fast path and is NOT sufficient on its own. It was,
+# through v2.15, and the hole was this: it inspected only the NAME of the
+# argument, so `lab ~/.ssh` was refused while `lab ~` sailed through and
+# docker-cp'd .ssh, .gnupg, .aws and .docker straight into the container. Naming
+# a parent directory defeated the whole check. With --net that is an
+# exfiltration path, and it breaks the guarantee at the top of this file that
+# nothing of yours goes in. So the tree is scanned too: check what the thing IS,
+# not what it is called.
+validate_source() {
+  case "$(basename "$SRC")" in
+    .ssh|.aws|.gnupg|.env|.envrc|gcloud|credentials|.netrc|.docker|.kube)
+      echo "lab: refusing to sandbox an obvious secret path ($SRC). Point it at code, not keys." >&2
+      return 1 ;;
+  esac
+  [ -d "$SRC" ] || return 0
+  local found
+  found=$(find_secret_stores "$SRC")
+  if [ -n "$found" ]; then
+    echo "lab: refusing to copy this tree: it contains credential stores." >&2
+    echo "$found" | sed 's/^/  /' >&2
+    echo "" >&2
+    echo "  Naming a parent directory does not make its keys safe to hand to untrusted" >&2
+    echo "  code. Point lab at the code itself, not at a directory that happens to" >&2
+    echo "  contain it." >&2
+    return 1
+  fi
+  return 0
+}
+
+# --check: run the source validation and report, no docker, nothing copied.
+# Exists so the refusal logic is testable on a machine with no daemon, and so
+# the test drives the REAL code path rather than a copy of it that can drift.
+if [ "$MODE" = "check" ]; then
+  [ -e "$SRC" ] || { echo "no such path: $SRC" >&2; exit 1; }
+  validate_source || exit 1
+  excluded=$(find_secret_files "$SRC" 2>/dev/null)
+  if [ -n "$excluded" ]; then
+    echo "would copy, excluding:"
+    echo "$excluded" | sed "s|^$SRC/||" | sed 's/^/  - /'
+  else
+    echo "would copy: no credential material found"
+  fi
+  exit 0
+fi
+
+command -v docker >/dev/null || { echo "docker not found / daemon not running" >&2; exit 1; }
+# Resolve this script's real dir, following symlinks — $0 is the symlink path (e.g. ~/bin/lab)
+# and its dirname has no Dockerfile. Portable to bash 3.2 (no realpath). ponytail: build context.
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [ "${SOURCE#/}" = "$SOURCE" ] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+# Build once, then reuse. That is fast, and it also means the box you analyze in
+# today is the box you built months ago: the Dockerfile pin makes runs
+# reproducible, but nothing here ever refreshes it, so a pinned base with no
+# refresh path is just a stale base with better paperwork. --rebuild is that
+# path. Re-pin the digest in the Dockerfile first (instructions are in it).
+if [ "$REBUILD" = "1" ]; then
+  echo "rebuilding $IMAGE from the pinned base…"
+  docker build --pull --no-cache -t "$IMAGE" "$SCRIPT_DIR"
+else
+  docker image inspect "$IMAGE" >/dev/null 2>&1 || {
+    echo "building $IMAGE (first run only; refresh later with lab --rebuild)…"
+    docker build --pull -t "$IMAGE" "$SCRIPT_DIR"
+  }
+fi
+
+# Hardening flags for the analysis container, built into the global array HARDEN.
+# Root inside, but every capability dropped. First arg = network, second = "it" for a TTY.
+HARDEN=()
+harden() {
+  HARDEN=(--rm)
+  [ -n "$2" ] && HARDEN+=("$2")
+  HARDEN+=(--network "$1"
+    --memory 4g --memory-swap 4g --pids-limit 512
+    --cap-drop ALL --security-opt no-new-privileges)
+}
+
+VOL=""
+cleanup() { [ -n "$VOL" ] && docker volume rm -f "$VOL" >/dev/null 2>&1 || true; }
+trap cleanup EXIT
+
+banner() {
+  [ "$MODE" = "analyze" ] && return 0
+  if [ "$1" = "none" ]; then echo "🔒 offline — this box cannot reach the network or your machine."
+  else echo "🌐 NETWORK ON — nothing of yours is mounted, but watch what it dials."; fi
+}
+
+# The canned, offline recon that --analyze runs INSIDE the box. Executes nothing of the repo's
+# own code — it only reads. Surfaces what the code reaches for so a human or an assistant can
+# judge it before anyone runs it for real.
+RECON='
+set +e
+echo "=== files ==="; find . -type f -not -path "*/.git/*" | wc -l | xargs echo "count:"
+echo "=== top level ==="; ls -1 | head -30
+echo "=== package.json (install hooks are the classic payload) ==="
+if [ -f package.json ]; then jq -r "{name, scripts, deps: (.dependencies|length), dev: (.devDependencies|length)}" package.json 2>/dev/null || head -40 package.json; fi
+echo "=== install/postinstall hooks anywhere ==="
+grep -RIn --include=package.json -E "\"(pre|post)?install\"[[:space:]]*:" . 2>/dev/null | grep -v node_modules | head -20
+echo "=== reaches for network / shell / eval (read-time signals, not proof) ==="
+grep -RInE "child_process|execSync|spawn\(|/dev/tcp|\bcurl\b|\bwget\b|\bnc\b|require\(.http|fetch\(|eval\(|atob\(|base64[[:space:]]+-d|Function\(" \
+  --include=*.js --include=*.ts --include=*.mjs --include=*.cjs --include=*.sh --include=*.py . 2>/dev/null | grep -v node_modules | head -40
+echo "=== possible obfuscation (very long lines) ==="
+grep -RIlE ".{500,}" --include=*.js --include=*.ts . 2>/dev/null | grep -v node_modules | head -10
+echo "=== END RECON ==="
+'
+
+# ---- git URL: clone online (git only), then analyze offline ----
+if echo "$SRC" | grep -qE '^(https?://|git@)'; then
+  VOL="lab-$(date +%s 2>/dev/null || echo x)-$$"
+  docker volume create "$VOL" >/dev/null
+  echo "cloning (network up for the clone only)…"
+  # SRC is passed as an env var (never re-evaluated by the container shell) and git is
+  # pinned to safe transports + `--` so a hostile URL string can't inject a command or
+  # option. Same mem/pid caps as the analysis step so a bomb in the clone can't hit the host.
+  docker run --rm --network bridge \
+    --memory 4g --memory-swap 4g --pids-limit 512 \
+    --cap-drop ALL --security-opt no-new-privileges \
+    -e LAB_SRC="$SRC" -v "$VOL":/work "$IMAGE" \
+    bash -c 'git -c protocol.ext.allow=never -c protocol.file.allow=never clone --depth 1 --no-local -- "$LAB_SRC" /work/repo'
+  ANALYZE_NET="none"; [ "$NET" = "on" ] && ANALYZE_NET="bridge"
+  banner "$ANALYZE_NET"
+  if [ "$MODE" = "analyze" ]; then
+    harden "$ANALYZE_NET" ""
+    docker run "${HARDEN[@]}" -v "$VOL":/work -w /work/repo "$IMAGE" bash -c "$RECON"
+  else
+    harden "$ANALYZE_NET" "-it"
+    # No `exec`: the shell must survive so the EXIT trap fires and removes the named
+    # volume holding the untrusted clone. exec would replace us and leak the volume.
+    docker run "${HARDEN[@]}" -v "$VOL":/work -w /work/repo "$IMAGE" bash
+  fi
+  exit 0
+fi
+
+# ---- local dir or zip: copy in (never bind-mount), analyze ----
+[ -e "$SRC" ] || { echo "no such path: $SRC" >&2; exit 1; }
+
+validate_source || exit 1
+
+RUN_NET="none"; [ "$NET" = "on" ] && RUN_NET="bridge"
+banner "$RUN_NET"
+
+ENTRY='if ls ./*.zip >/dev/null 2>&1; then unzip -q ./*.zip -d unpacked && cd unpacked; fi;'
+if [ "$MODE" = "analyze" ]; then
+  harden "$RUN_NET" ""
+  FINAL="$ENTRY $RECON"
+else
+  harden "$RUN_NET" "-it"
+  FINAL="$ENTRY exec bash"
+fi
+CID=$(docker create "${HARDEN[@]}" -w /work "$IMAGE" bash -c "$FINAL")
+
+# Dotenv-class files are different from the stores above: they legitimately live
+# inside real repos, so refusing the whole tree over one would make the lab
+# useless on exactly the code people most want to sandbox. Strip them from the
+# copy instead, and SAY SO. The code still runs; the credentials do not go in.
+# Copied via a tar stream because docker cp has no --exclude.
+if [ -d "$SRC" ]; then
+  EXCLUDED=$(find_secret_files "$SRC")
+  if [ -n "$EXCLUDED" ]; then
+    echo "lab: excluding credential files from the copy (the code goes in, these do not):"
+    echo "$EXCLUDED" | sed "s|^$SRC/||" | sed 's/^/  - /'
+  fi
+  tar --exclude='./.env' --exclude='./.env.*' --exclude='./.envrc' \
+      --exclude='./credentials' --exclude='./credentials.json' \
+      --exclude='*/.env' --exclude='*/.env.*' --exclude='*/.envrc' \
+      --exclude='*.pem' --exclude='*.p12' \
+      -cf - -C "$SRC" . | docker cp - "$CID:/work/"
+else
+  docker cp "$SRC" "$CID:/work/"
+fi
+if [ "$MODE" = "analyze" ]; then
+  docker start -a "$CID"; docker rm -f "$CID" >/dev/null 2>&1
+else
+  exec docker start -ai "$CID"
+fi
