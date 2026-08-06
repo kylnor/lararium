@@ -177,7 +177,7 @@ throws or exits non-zero, fix that before wiring it in.
 
 ## The wiring
 
-Copy the reference hooks to wherever you keep hook scripts (the example uses `~/.claude/040_hooks/stack/`)
+Copy the reference hooks to wherever you keep hook scripts (the example uses `~/.claude/hooks/stack/`)
 and add the `hooks` block from `settings.example.json` to your Claude Code `settings.json`. The block
 registers all six reference hooks against their events: two on `SessionStart` (the briefing and the
 update checker, both of whose stdout is injected), and two PreToolUse entries, one matched to `Bash`
@@ -191,19 +191,19 @@ alongside the `hooks` block.
   "hooks": {
     "SessionStart": [
       { "hooks": [
-        { "type": "command", "command": "node ~/.claude/040_hooks/stack/session-start.js" },
-        { "type": "command", "command": "node ~/.claude/040_hooks/stack/update-check.js" }
+        { "type": "command", "command": "node ~/.claude/hooks/stack/session-start.js" },
+        { "type": "command", "command": "node ~/.claude/hooks/stack/update-check.js" }
       ] }
     ],
     "SessionEnd": [
-      { "hooks": [ { "type": "command", "command": "node ~/.claude/040_hooks/stack/session-end-heartbeat.js" } ] }
+      { "hooks": [ { "type": "command", "command": "node ~/.claude/hooks/stack/session-end-heartbeat.js" } ] }
     ],
     "Stop": [
-      { "hooks": [ { "type": "command", "command": "node ~/.claude/040_hooks/stack/voice-log.js" } ] }
+      { "hooks": [ { "type": "command", "command": "node ~/.claude/hooks/stack/voice-log.js" } ] }
     ],
     "PreToolUse": [
-      { "matcher": "Bash",  "hooks": [ { "type": "command", "command": "node ~/.claude/040_hooks/stack/pretooluse-guard.js" } ] },
-      { "matcher": "Agent", "hooks": [ { "type": "command", "command": "node ~/.claude/040_hooks/stack/agent-model-router.js" } ] }
+      { "matcher": "Bash",  "hooks": [ { "type": "command", "command": "node ~/.claude/hooks/stack/pretooluse-guard.js" } ] },
+      { "matcher": "Agent", "hooks": [ { "type": "command", "command": "node ~/.claude/hooks/stack/agent-model-router.js" } ] }
     ]
   }
 }

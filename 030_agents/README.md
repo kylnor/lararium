@@ -53,7 +53,7 @@ Make sure you have one agent for each of these jobs:
 
 ## To make it yours
 1. Copy the definition files from `defs/` into your assistant's agent config (in Claude Code:
-   `~/.claude/030_agents/`, one file per agent).
+   `~/.claude/agents/`, one file per agent).
 2. Want your own mythology instead of this one? Run the re-theming interview in `RETHEME.md`. It
    regenerates the personas in your theme (heist crew, pantheon, plain functional names) while
    keeping the doctrine intact. Do not find-and-replace names; that keeps the old personality

@@ -13,9 +13,12 @@
  * Output contract: to rewrite the call, print:
  *   { "hookSpecificOutput": {
  *       "hookEventName": "PreToolUse",
- *       "permissionDecision": "allow",
  *       "updatedInput": { ...original input, "model": "..." }
  *   } }
+ *
+ * Note the absence of "permissionDecision". Routing is not authorization: an
+ * "allow" here would bypass the permission system for every dispatch this hook
+ * touches, which is a much larger claim than "use opus for the architect".
  * To leave the call untouched, print nothing. Fail-soft: any error means no
  * output and the dispatch proceeds exactly as written. Always exit 0.
  *
@@ -27,11 +30,16 @@
 'use strict'
 
 // agent name -> model it should run on. Rename to match your own roster.
-const MODEL_POLICY = {
+//
+// Null-prototype on purpose. A plain object literal inherits from
+// Object.prototype, so MODEL_POLICY['constructor'] returns a function, which is
+// truthy, which meant a subagent named `constructor` or `toString` matched the
+// policy and got the rewrite path (and, before the fix below, an auto-approve).
+const MODEL_POLICY = Object.assign(Object.create(null), {
   architect: 'opus',
   researcher: 'sonnet',
   reviewer: 'sonnet',
-}
+})
 
 let input = ''
 process.stdin.setEncoding('utf8')
@@ -41,13 +49,22 @@ process.stdin.on('end', () => {
     const data = JSON.parse(input)
     if (data.tool_name === 'Agent') {
       const ti = data.tool_input || {}
-      const target = MODEL_POLICY[ti.subagent_type]
+      const target = typeof ti.subagent_type === 'string'
+        ? MODEL_POLICY[ti.subagent_type]
+        : undefined
       // Only inject when policy matches and the caller did not pin a model.
-      if (target && !ti.model) {
+      if (typeof target === 'string' && !ti.model) {
+        // NOTE: no permissionDecision here, deliberately.
+        //
+        // This hook used to emit `permissionDecision: "allow"` alongside the
+        // rewrite. That is not a no-op: "allow" bypasses the permission system
+        // for the call, so a hook whose stated job is "pick a model" was also
+        // silently auto-approving every dispatch it touched. Routing is not
+        // authorization. Emitting only `updatedInput` applies the model and
+        // leaves the normal permission flow exactly where it was.
         process.stdout.write(JSON.stringify({
           hookSpecificOutput: {
             hookEventName: 'PreToolUse',
-            permissionDecision: 'allow',
             updatedInput: { ...ti, model: target },
           },
         }))

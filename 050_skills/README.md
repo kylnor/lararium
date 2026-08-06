@@ -1,7 +1,7 @@
 # Skills
 
 A skill is a reusable prompt that becomes a slash command. In Claude Code, a skill is a `SKILL.md`
-file living at `~/.claude/050_skills/<name>/SKILL.md`. The frontmatter carries a `name` and a
+file living at `~/.claude/skills/<name>/SKILL.md`. The frontmatter carries a `name` and a
 `description`; the body is the instruction set the assistant follows when the skill fires. Invoking
 `/end` or `/handoff` runs the matching `SKILL.md` as a prompt.
 
@@ -11,7 +11,7 @@ it can fire the skill without an explicit slash command. Write descriptions that
 trigger phrases, not a summary.
 
 > **Canonical definitions live with your assistant's config**, one directory per skill under
-> `~/.claude/050_skills/`. The files in `defs/` here are *starting points*: genericized versions of a
+> `~/.claude/skills/`. The files in `defs/` here are *starting points*: genericized versions of a
 > working set. Copy the ones you want into your config, adapt them, delete the rest.
 
 ## The lifecycle loop this set implements

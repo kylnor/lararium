@@ -75,37 +75,64 @@ const RULES = [
   // ─────────────────────────────────────────────────────────────────────
 
   // ── Stock rules: unconditional destruction, safe to leave as-is ──
+  //
+  // These are DEFENCE IN DEPTH, not the primary control. bash-deny-guard.py
+  // does the structural work (real tokenization, binary normalization, fail
+  // closed) and 040_hooks/sandbox/ does the capability work. These rules are a
+  // fast, readable first pass over the raw string, and they are still only
+  // pattern matching: `rm` here is the literal word `rm`, so `/bin/rm` and
+  // `busybox rm` are the other guard's job, not this one. Read
+  // 040_hooks/README.md for which control covers what.
+  //
+  // Shared flag fragment. Accepts short clusters (-rf, -fr, -R -f) and long
+  // forms (--recursive, --force), in any order and any number. The v2.15
+  // version only understood short clusters, so `rm --recursive --force /`
+  // walked straight past a rule whose entire purpose was to stop it.
   {
     // Bare root, bare home, or home with only whitespace/end after it.
     // A scoped subpath (rm -rf ~/Dev/old-build) deliberately does NOT match
     // here; it falls to the "ask" rule below.
-    re: /\brm\s+(?:-[a-z]*\s+)*-[a-z]*[rf][a-z]*\s+(?:-[a-z]*\s+)*(?:\/|~\/?|\$HOME\/?)(?:\s|$)/i,
+    // Quotes are optional around the target: `rm -rf "$HOME"` is the single
+    // most likely spelling of this command and the old rule missed it because
+    // the quote broke the anchor.
+    re: /\brm\b(?:\s+(?:-[a-zA-Z]*[rRf][a-zA-Z]*|--(?:recursive|force|dir)))+(?:\s+(?:-[a-zA-Z]+|--[a-z-]+))*\s+(['"]?)(?:\/|~\/?|\$\{?HOME\}?\/?)\1(?=\s|$|;|&|\||#)/,
     decision: 'deny',
     reason: 'Recursive delete against / or ~ itself: unconditionally blocked. Scope the path to a specific subdirectory and run it yourself if you truly mean it.',
   },
   {
-    re: /\brm\s+(?:-[a-z]*\s+)*-[a-z]*[rf][a-z]*\s+(?:-[a-z]*\s+)*\*(?:\s|$)/i,
+    re: /\brm\b(?:\s+(?:-[a-zA-Z]*[rRf][a-zA-Z]*|--(?:recursive|force|dir)))+(?:\s+(?:-[a-zA-Z]+|--[a-z-]+))*\s+(['"]?)\*\1(?=\s|$|;|&|\||#)/,
     decision: 'deny',
     reason: 'Recursive delete against an unscoped glob (rm -rf *). Name the exact paths to remove instead of a bare wildcard.',
   },
   {
     // Recursive delete of a home-anchored subpath: real work sometimes, typo'd
     // disaster sometimes. Escalate to a human instead of blocking.
-    re: /\brm\s+(?:-[a-z]*\s+)*-[a-z]*[rf][a-z]*\s+(?:-[a-z]*\s+)*(?:~\/|\$HOME\/)\S/i,
+    re: /\brm\b(?:\s+(?:-[a-zA-Z]*[rRf][a-zA-Z]*|--(?:recursive|force|dir)))+(?:\s+(?:-[a-zA-Z]+|--[a-z-]+))*\s+['"]?(?:~\/|\$\{?HOME\}?\/)\S/,
     decision: 'ask',
     reason: 'Recursive delete inside the home directory. Confirm the path is right before it runs.',
   },
   {
     // --force and the branch can appear in either order, so match a git push
     // that contains a force flag AND names main/master anywhere in the command.
-    re: /\bgit\s+push\b(?=[^\n]*(?:--force|-f)\b)(?=[^\n]*\b(?:main|master)\b)/i,
+    // `-f` needs its own alternative that is not satisfied by the `-f` inside
+    // `--force`, hence the explicit boundary.
+    re: /\bgit\s+push\b(?=[^\n]*(?:--force(?:-with-lease)?\b|(?:^|\s)-[a-zA-Z]*f[a-zA-Z]*(?=\s|$)))(?=[^\n]*\b(?:main|master)\b)/i,
     decision: 'deny',
     reason: 'Force-push to main/master rewrites shared history. Push to a branch and open a PR, or use --force-with-lease on your own branch only.',
   },
   {
-    re: /\b(?:curl|wget)\b[^\n]*\|\s*(?:sudo\s+)?(?:ba)?sh\b/i,
+    // The `+` refspec is a force-push with no force flag anywhere in sight.
+    // Same effect, different spelling, and the v2.15 rule did not see it.
+    re: /\bgit\s+push\b[^\n]*\s\+(?:refs\/heads\/)?(?:main|master)\b/i,
     decision: 'deny',
-    reason: 'Piping a downloaded script straight into a shell runs unreviewed remote code. Download it to a file, read it, then run it.',
+    reason: 'A leading "+" on a refspec is a force-push. Pushing +main rewrites shared history exactly like --force does. Push to a branch and open a PR.',
+  },
+  {
+    // Any fetcher into any interpreter. The v2.15 rule listed only sh/bash, so
+    // `| zsh` and `| python3` (identical risk) sailed through.
+    re: /\b(?:curl|wget|fetch|aria2c|httpie|http)\b[^\n]*\|\s*(?:sudo\s+|doas\s+|env\s+)*(?:ba|z|k|da|fi|c|t?c)?sh\b|\b(?:curl|wget|fetch|aria2c)\b[^\n]*\|\s*(?:sudo\s+|doas\s+|env\s+)*(?:python[0-9.]*|perl|ruby|node|deno|bun|php|lua|osascript)\b/i,
+    decision: 'deny',
+    reason: 'Piping a downloaded script straight into an interpreter runs unreviewed remote code. Download it to a file, read it, then run it.',
   },
   {
     // The sensitive word must be a full underscore-delimited segment of the

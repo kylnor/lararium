@@ -21,54 +21,69 @@
 'use strict'
 
 const path = require('path')
+const { findSecrets } = require('./secret-patterns')
 
-const PATTERNS = [
-  { name: 'AWS access key', re: /AKIA[0-9A-Z]{16}/ },
-  { name: 'GitHub token', re: /\bgh[pousr]_[A-Za-z0-9_]{36,}/ },
-  { name: 'Anthropic key', re: /\bsk-ant-[A-Za-z0-9-]{20,}/ },
-  { name: 'OpenAI key', re: /\bsk-(proj-)?[A-Za-z0-9]{32,}/ },
-  { name: 'Stripe live key', re: /\b[sr]k_live_[A-Za-z0-9]{20,}/ },
-  { name: 'Google API key', re: /\bAIza[0-9A-Za-z_-]{35}/ },
-  { name: 'Slack token', re: /\bxox[bpors]-[0-9A-Za-z-]{10,}/ },
-  { name: 'Telegram bot token', re: /\b\d{8,10}:AA[A-Za-z0-9_-]{33}/ },
-  { name: 'Private key block', re: /-----BEGIN (RSA|EC|OPENSSH|PGP|DSA)? ?PRIVATE KEY-----/ },
-  { name: 'DB URL with password', re: /\b(postgres(ql)?|mysql|mongodb(\+srv)?|redis):\/\/[^:\s'"]+:[^@\s'"]+@/ },
-  { name: 'JWT', re: /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/ },
-]
+// A shell write is still a write. Wiring this hook to Write|Edit alone left the
+// obvious hole open: `cat > config.py <<EOF ... EOF` puts a key on disk without
+// ever touching the Write tool. Matched here so the rule covers the ACT rather
+// than the tool that performed it. Register on Bash too (settings.example.json).
+const SHELL_WRITE_RE =
+  /(?:^|[\s;&|])(?:cat|tee|printf|echo)\b[^\n]*?(?:>>?|\|\s*tee)\s*\S|<<-?\s*['"]?\w+/
+
+/** Best-effort redirect target, for a friendlier message. Not a security check. */
+function targetOf(command) {
+  const m = command.match(/(?:>>?|\|\s*tee\s+)\s*(['"]?)([^\s'"]+)\1/)
+  return m ? m[2] : ''
+}
 
 function main(raw) {
   let input
   try { input = JSON.parse(raw) } catch { return }
 
   const toolName = input.tool_name || ''
-  if (toolName !== 'Write' && toolName !== 'Edit') return
-
   const ti = input.tool_input || {}
-  const filePath = ti.file_path || ''
+
+  let content = ''
+  let filePath = ''
+
+  if (toolName === 'Write') {
+    content = ti.content || ''
+    filePath = ti.file_path || ''
+  } else if (toolName === 'Edit') {
+    content = ti.new_string || ''
+    filePath = ti.file_path || ''
+  } else if (toolName === 'Bash') {
+    const command = ti.command || ''
+    if (!SHELL_WRITE_RE.test(command)) return
+    // Scan the whole command. The secret may be in a heredoc body, an echo
+    // argument, or a printf format string; taking the command apart correctly
+    // is bash-deny-guard.py's job, not this hook's.
+    content = command
+    filePath = targetOf(command)
+  } else {
+    return
+  }
+
   const base = path.basename(filePath)
 
-  // Sanctioned secret homes and our own pattern definitions.
+  // Sanctioned secret homes and our own pattern definitions. Note this is the
+  // RUNTIME path of your installed hooks (~/.claude/hooks/), not a path inside
+  // this repo, so it is deliberately not the 040_hooks/ layout name.
   if (base.startsWith('.env')) return
-  if (filePath.includes('/.claude/040_hooks/')) return
+  if (filePath.includes('/.claude/hooks/')) return
 
-  const content = toolName === 'Write' ? (ti.content || '') : (ti.new_string || '')
   if (!content) return
 
-  const findings = []
-  const lines = content.split('\n')
-  for (const { name, re } of PATTERNS) {
-    for (let i = 0; i < lines.length; i++) {
-      if (re.test(lines[i])) findings.push(`line ${i + 1}: ${name}`)
-    }
-  }
+  const findings = findSecrets(content)
   if (!findings.length) return
 
+  const where = base ? `pending write to ${base}` : 'pending shell write'
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
       permissionDecision: 'ask',
       permissionDecisionReason:
-        `Possible secret in pending write to ${base} (${findings.slice(0, 5).join('; ')}` +
+        `Possible secret in ${where} (${findings.slice(0, 5).join('; ')}` +
         `${findings.length > 5 ? `; +${findings.length - 5} more` : ''}). ` +
         'Secrets belong in ~/.env. If this is a fixture/placeholder, approve.',
     },

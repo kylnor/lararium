@@ -26,10 +26,18 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
+const { redact } = require('./secret-patterns')
+
 const STACK_HOME = path.join(os.homedir(), '.assistant')
 const LOG_FILE = path.join(STACK_HOME, 'voice-log.jsonl')
 const STATE_FILE = path.join(STACK_HOME, '.voice-log-state.json')
 const MAX_RESPONSE_LEN = 8000
+
+// Drift scoring samples a handful of recent records. It never needed the whole
+// history, and an unbounded append-only file of everything you have ever said
+// to your assistant is a liability with no upside.
+const MAX_RECORDS = 500
+const FILE_MODE = 0o600
 
 function extractText(content) {
   if (typeof content === 'string') return content
@@ -55,6 +63,27 @@ function writeState(state) {
   }
   fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true })
   fs.writeFileSync(STATE_FILE, JSON.stringify(state))
+}
+
+/**
+ * Keep the newest MAX_RECORDS lines. Cheap: a Stop hook fires on every single
+ * response, so this only pays the read-and-rewrite cost once the file is
+ * actually over the cap, and the check itself is one statSync.
+ */
+function rotate() {
+  try {
+    const stat = fs.statSync(LOG_FILE)
+    // ~2KB/record is the rough ceiling given the slices above. Skip the read
+    // entirely until the file could plausibly be over the line count.
+    if (stat.size < MAX_RECORDS * 2048) return
+    const lines = fs.readFileSync(LOG_FILE, 'utf8').split('\n').filter(Boolean)
+    if (lines.length <= MAX_RECORDS) return
+    const kept = lines.slice(-MAX_RECORDS).join('\n') + '\n'
+    fs.writeFileSync(LOG_FILE, kept, { mode: FILE_MODE })
+    fs.chmodSync(LOG_FILE, FILE_MODE)
+  } catch {
+    // Rotation is housekeeping. Never break a session over it.
+  }
 }
 
 let input = ''
@@ -97,15 +126,30 @@ process.stdin.on('end', () => {
     }
 
     if (assistantText && lastUserMsg) {
+      // Redact BEFORE anything touches disk. This hook sees every response,
+      // which means it sees every credential the assistant was shown or
+      // generated. secret-write-guard.js asks before a secret reaches a repo;
+      // writing it here unredacted would make that guard theatre.
+      const prompt = redact(String(lastUserMsg).slice(0, 1000))
+      const response = redact(assistantText.slice(0, MAX_RESPONSE_LEN))
+      const redacted = [...new Set([...prompt.hits, ...response.hits])]
+
       const record = {
         ts: new Date().toISOString(),
         session_id: sessionId,
-        prompt: String(lastUserMsg).slice(0, 1000),
-        response: assistantText.slice(0, MAX_RESPONSE_LEN),
+        prompt: prompt.text,
+        response: response.text,
         response_len: assistantText.length,
       }
+      if (redacted.length) record.redacted = redacted
+
       fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true })
-      fs.appendFileSync(LOG_FILE, JSON.stringify(record) + '\n')
+      fs.appendFileSync(LOG_FILE, JSON.stringify(record) + '\n', { mode: FILE_MODE })
+      // mode: on appendFileSync only applies at creation, so enforce it every
+      // time. A voice log is a transcript of your life; 0644 is not the right
+      // answer on a shared or backed-up machine.
+      try { fs.chmodSync(LOG_FILE, FILE_MODE) } catch { /* best effort */ }
+      rotate()
     }
 
     if (endIdx > lastOffset) {
