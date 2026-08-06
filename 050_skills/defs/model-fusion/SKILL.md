@@ -19,7 +19,31 @@ node fusion-run.mjs gemini --cwd "$PWD" -- "<task>"
 node fusion-run.mjs grok   --cwd "$PWD" -- "<task>"
 node fusion-run.mjs auto   --cwd "$PWD" -- "<task>"
 node fusion-run.mjs fusion --cwd "$PWD" -- "<task>"
+
+node fusion-run.mjs codex --write --cwd "$PWD" -- "<task>"   # opt in to writes
 ```
+
+## What this points at, and why that matters
+
+Read this before pointing fusion at a directory. The runner passes `--skip-trust` to Gemini and
+`--skip-git-repo-check` to Codex. Both flags exist to defeat the workspace-trust prompt those CLIs
+show before operating somewhere they do not recognize, and both are required to run headless. That
+is a real cost, not a formality: **fusion runs third-party agents against `--cwd` with their own
+guardrails switched off.** The same stack ships `060_lab/` specifically so untrusted code is never
+handled that way, and for a while it shipped both without mentioning the tension.
+
+So:
+
+- **Reads are the default.** Codex runs `--sandbox read-only` unless you pass `--write`. Asking for
+  a second opinion should not be able to edit the tree it is reading. Fusion mode is always
+  read-only: there the other models are critics, not builders.
+- **The target is announced** on stderr every run. If that line ever names a directory you did not
+  mean, that is the warning you would otherwise not get.
+- **Constrain it if you want a hard boundary.** `FUSION_TRUSTED_ROOTS=/Users/you/Dev:/Users/you/work`
+  refuses any `--cwd` outside those roots. Unset means anywhere, which is the default and the old
+  behaviour; this is opt-in hardening.
+- **For code you do not trust, this is the wrong tool.** Use `/in-the-lab` first. Fusion is for
+  getting other models' opinions on *your* work, not for triaging a stranger's repository.
 
 ## Routing
 

@@ -6,6 +6,11 @@ import { execFile } from "node:child_process";
 import { access } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
+// Aliased: runOne's Promise executor binds a local `resolve`, and an
+// unaliased path import would be shadowed there - silently, and only for
+// whoever adds a path call inside it later.
+import { resolve as resolvePath, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 import process from "node:process";
 
 const VALID = new Set(["auto", "claude", "codex", "gemini", "grok", "fusion"]);
@@ -24,15 +29,56 @@ export function parseArgs(argv) {
   const provider = String(args.shift() || "auto").toLowerCase();
   if (!VALID.has(provider)) throw new Error(`unknown provider: ${provider}`);
   let cwd = process.cwd();
+  let write = false;
   const divider = args.indexOf("--");
   const options = divider === -1 ? [] : args.slice(0, divider);
   const taskParts = divider === -1 ? args : args.slice(divider + 1);
   for (let i = 0; i < options.length; i++) {
     if (options[i] === "--cwd" && options[i + 1]) cwd = options[++i];
+    else if (options[i] === "--write") write = true;
   }
   const task = taskParts.join(" ").trim();
   if (!task) throw new Error("task is required after --");
-  return { provider, cwd, task };
+  return { provider, cwd, task, write };
+}
+
+/**
+ * Trust gate.
+ *
+ * This runner passes --skip-trust to Gemini and --skip-git-repo-check to Codex.
+ * Both flags exist to defeat a safety prompt those CLIs show before operating
+ * on a workspace they do not recognize, and both are required to run headless.
+ * Fine. But it means fusion will happily point three third-party agents at
+ * whatever --cwd you hand it, with their own guardrails switched off, which is
+ * precisely the posture 060_lab/ exists to prevent. Shipping both in one repo
+ * without saying so was the contradiction.
+ *
+ * So the cwd is now stated out loud on every run, and can be constrained:
+ *
+ *   FUSION_TRUSTED_ROOTS=/Users/you/Dev:/Users/you/work
+ *
+ * When set, a cwd outside those roots is refused. Unset means "anywhere",
+ * which is the old behaviour and still the default - this is opt-in hardening,
+ * not a breaking change. If the code you want a second opinion on is code you
+ * do not trust, the answer is not this tool. Read it in the lab first.
+ */
+export function assertTrustedCwd(cwd) {
+  const roots = (process.env.FUSION_TRUSTED_ROOTS || "").split(":").filter(Boolean);
+  if (!roots.length) return;
+  const resolved = resolvePath(cwd);
+  const ok = roots.some((r) => {
+    const root = resolvePath(r);
+    return resolved === root || resolved.startsWith(root + sep);
+  });
+  if (!ok) {
+    throw new Error(
+      `refusing to run in ${resolved}\n` +
+      `  FUSION_TRUSTED_ROOTS is set and does not cover it:\n` +
+      roots.map((r) => `    ${resolvePath(r)}`).join("\n") + "\n" +
+      `  These agents run with their own workspace-trust prompts disabled, so the\n` +
+      `  directory is the only boundary left. For code you do not trust, use 060_lab/.`
+    );
+  }
 }
 
 // PATH additions from installers land in .bashrc, which non-interactive shells
@@ -41,7 +87,11 @@ function readDotenv(name) {
   try {
     const text = readFileSync(`${homedir()}/.env`, "utf-8");
     const line = text.split("\n").find((l) => l.startsWith(`${name}=`));
-    return line ? line.slice(name.length + 1).trim() : "";
+    if (!line) return "";
+    // Strip surrounding quotes. KEY="abc" in a .env is the common spelling, and
+    // passing the quotes through as part of the credential fails auth with an
+    // error that blames the key rather than the parser.
+    return line.slice(name.length + 1).trim().replace(/^(['"])(.*)\1$/, "$2");
   } catch {
     return "";
   }
@@ -75,8 +125,13 @@ function command(provider, task, sandbox) {
       bin: process.env.FUSION_CODEX_BIN || "codex",
       // --skip-git-repo-check: the Gemini --skip-trust twin; codex exec refuses
       // to run outside a git repo without it, and fusion runs in arbitrary cwds.
-      // Fusion mode passes read-only: there Codex is a critic, not the builder.
-      args: ["exec", "--sandbox", sandbox || "workspace-write", "--skip-git-repo-check", task],
+      // See assertTrustedCwd for why that combination is worth constraining.
+      //
+      // Default is READ-ONLY. It used to be workspace-write for single runs,
+      // which meant `fusion codex -- "look at this"` could edit the tree while
+      // reading it. Asking for a second opinion should not be a write
+      // operation; pass --write when you actually want the builder.
+      args: ["exec", "--sandbox", sandbox || "read-only", "--skip-git-repo-check", task],
     };
   }
   if (provider === "grok") {
@@ -148,6 +203,12 @@ function fullFusionTasks(task) {
 
 export async function main(argv = process.argv.slice(2)) {
   const parsed = parseArgs(argv);
+  assertTrustedCwd(parsed.cwd);
+  // Stated out loud because the agents this launches have their own workspace
+  // trust prompts disabled. If this line ever names a directory you did not
+  // mean, that is the warning you would otherwise not get.
+  process.stderr.write(`fusion: ${parsed.provider} in ${resolvePath(parsed.cwd)}` +
+    `${parsed.write ? " (WRITE enabled)" : ""}\n`);
   if (parsed.provider === "fusion") {
     const briefs = fullFusionTasks(parsed.task);
     const results = await Promise.all(
@@ -157,12 +218,16 @@ export async function main(argv = process.argv.slice(2)) {
     return results.every((result) => result.ok) ? 0 : 2;
   }
   const selected = route(parsed.provider, parsed.task);
-  const result = await runOne(selected, parsed.task, parsed.cwd);
+  const result = await runOne(selected, parsed.task, parsed.cwd,
+    parsed.write ? "workspace-write" : "read-only");
   process.stdout.write(JSON.stringify({ mode: parsed.provider, selected, result }, null, 2) + "\n");
   return result.ok ? 0 : 2;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// pathToFileURL, not string concatenation: a path containing a space or any
+// other character needing percent-encoding never matches the naive form, so
+// the script silently does nothing when run from such a directory.
+if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
   main()
     .then((code) => {
       process.exitCode = code;
