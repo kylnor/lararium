@@ -201,7 +201,13 @@ invokes, because those are runtime facts and this runs before runtime. Spawn-cap
 being judged. Unknown binaries escalate too, configurable via `bashGuard.unknownBinaryPolicy`.
 Override with `LARARIUM_GUARD=off`, which disables the structural tiers but *not* your deny list.
 
-Corpus: `reference/tests/test-bash-deny-guard.py`, 51 cases. Derived from liberzon/claude-hooks
+Corpus: `reference/tests/test-bash-deny-guard.py`, 59 cases, plus
+`reference/tests/test-hook-chain.sh`, which runs the guards the way Claude Code runs them and
+**attributes every verdict to a named hook**. That attribution matters more than it sounds: your
+settings `permissions.deny` is both the input to this guard *and* Claude Code's own enforcement
+layer, so a test that puts patterns there cannot tell you which one caught a command. The chain
+test supplies patterns via `CLAUDE_SETTINGS_PATH` instead, a file Claude Code does not read, so
+nothing is masked. Derived from liberzon/claude-hooks
 smart-approve.py (MIT) for the settings-merging and pattern syntax; the analysis engine is a rewrite.
 
 ### j. Secret-write guard (`secret-write-guard.js`, PreToolUse on Write|Edit|Bash)

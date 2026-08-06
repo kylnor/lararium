@@ -23,11 +23,37 @@ GUARD = os.path.join(HERE, "..", "bash-deny-guard.py")
 
 SETTINGS = {"permissions": {"deny": ["Bash(rm:*)", "Bash(curl:*)"]}}
 
+# Alternate settings files, so documented config keys are exercised rather than
+# just asserted. A claim in a README that nothing executes is a hope.
+ALT_SETTINGS = {
+    "silent-unknown": {
+        "permissions": {"deny": ["Bash(rm:*)"]},
+        "bashGuard": {"unknownBinaryPolicy": "silent"},
+    },
+    "disabled": {
+        "permissions": {"deny": ["Bash(rm:*)"]},
+        "bashGuard": {"enabled": False},
+    },
+    "safe-extra": {
+        "permissions": {"deny": ["Bash(rm:*)"]},
+        "bashGuard": {"safeExtra": ["some-unknown-tool"]},
+    },
+    "spawn-extra": {
+        "permissions": {"deny": []},
+        "bashGuard": {"spawnExtra": ["ls"]},
+    },
+}
+ALT_PATHS = {}
 
-def run(command, env_extra=None):
-    """Run the guard and return (decision, reason). decision None = silent."""
+
+def run(command, env_extra=None, settings=None):
+    """Run the guard and return (decision, reason). decision None = silent.
+
+    `settings` selects an alternate settings file (see ALT_SETTINGS) so config
+    keys can be exercised, not just asserted in prose.
+    """
     env = dict(os.environ)
-    env["CLAUDE_SETTINGS_PATH"] = SETTINGS_PATH
+    env["CLAUDE_SETTINGS_PATH"] = ALT_PATHS[settings] if settings else SETTINGS_PATH
     env.pop("CLAUDE_PROJECT_DIR", None)
     env.pop("LARARIUM_GUARD", None)
     if env_extra:
@@ -137,6 +163,32 @@ CASES = [
      {"LARARIUM_GUARD": "off"}),
     ('echo "unbalanced', None, "override silences the parse-failure deny",
      {"LARARIUM_GUARD": "off"}),
+
+    # ── The override cannot be reached from inside the command string ────────
+    # A hook is a separate process: an env prefix typed into the command never
+    # lands in the hook's own environment, and normalize() strips leading
+    # assignments anyway. Pinned because the doc says "override" and a reader
+    # could reasonably assume the model can type its way to one.
+    ('LARARIUM_GUARD=off rm -rf /important', "deny",
+     "inline env prefix cannot disable the guard"),
+    ('env LARARIUM_GUARD=off rm -rf /important', "deny",
+     "`env` prefix cannot disable the guard either"),
+    ('LARARIUM_GUARD=off /bin/rm -rf /important', "deny",
+     "inline prefix + path evasion still denied"),
+]
+
+# Cases that need a different settings file: (command, expected, label, settings-key)
+CONFIG_CASES = [
+    ('some-unknown-tool --flag', None,
+     'unknownBinaryPolicy "silent" suppresses the unknown-binary ask', 'silent-unknown'),
+    ('rm -rf /important', "deny",
+     'unknownBinaryPolicy "silent" does NOT touch the deny list', 'silent-unknown'),
+    ('rm -rf /important', None,
+     'bashGuard.enabled false disables the hook entirely', 'disabled'),
+    ('some-unknown-tool --flag', None,
+     'safeExtra promotes a binary to known-safe', 'safe-extra'),
+    ('ls -la', "ask",
+     'spawnExtra escalates a normally-safe binary', 'spawn-extra'),
 ]
 
 
@@ -147,6 +199,14 @@ def main():
         command, expected, label = case[0], case[1], case[2]
         env_extra = case[3] if len(case) > 3 else None
         actual, reason = run(command, env_extra)
+        if actual == expected:
+            passed += 1
+        else:
+            failed += 1
+            failures.append((label, command, expected, actual, reason))
+
+    for command, expected, label, key in CONFIG_CASES:
+        actual, reason = run(command, settings=key)
         if actual == expected:
             passed += 1
         else:
@@ -168,10 +228,22 @@ def main():
 
 
 if __name__ == "__main__":
+    written = []
     fd, SETTINGS_PATH = tempfile.mkstemp(suffix=".json")
     with os.fdopen(fd, "w") as f:
         json.dump(SETTINGS, f)
+    written.append(SETTINGS_PATH)
+    for key, blob in ALT_SETTINGS.items():
+        fd, p = tempfile.mkstemp(suffix=f".{key}.json")
+        with os.fdopen(fd, "w") as f:
+            json.dump(blob, f)
+        ALT_PATHS[key] = p
+        written.append(p)
     try:
         sys.exit(main())
     finally:
-        os.unlink(SETTINGS_PATH)
+        for p in written:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
