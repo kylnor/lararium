@@ -9,7 +9,7 @@ names the coordination organ: a **work queue** built on the tables the stack alr
 The design borrows one good idea from prior art: the **receipt**, a human-readable one-line record of
 what an agent just did, so a person scanning the feed understands the swarm without reading its logs
 (the pattern Nate Jones names in his "Open Engine" work). That idea is worth building right on the
-tables you already have. Your index has a tasks table; add one append-only log beside it and the whole
+tables you already have. Your index has a task table (`os_project_tasks`); add a receipt log beside it and the whole
 queue is native to the stack, with nothing extra to stand up or keep in sync.
 
 ## What the substrate gives you, and what you add
@@ -17,18 +17,53 @@ queue is native to the stack, with nothing extra to stand up or keep in sync.
 Be honest about the footprint, because the acceptance test for this doc is that a cloner can implement
 it from the template's own tables.
 
-- **The tasks table ships.** It has, at minimum, a `status` in (`todo`, `in_progress`, `blocked`,
-  `done`) and an `assigned_to` that is null until an agent takes the row. That pair is the entire
-  claim-and-lock primitive. Everything correct about this queue rides on those two columns.
-- **The ledger is one table you add.** An append-only action log (who, action type, target task,
-  one-line summary, autonomy rung, result, timestamp) is the one audit primitive a multi-agent stack
-  needs and the memory schema does not ship. It is a single table. Coordination is the reason to add
-  it; add it here.
+- **The task table ships, as `os_project_tasks`.** It has exactly the pair this queue needs:
+  `status TEXT CHECK (status IN ('done','todo','in_progress','blocked'))` and a nullable
+  `assigned_to TEXT`, already indexed for the null case. That pair is the entire claim-and-lock
+  primitive, and everything correct about this queue rides on those two columns.
+
+  > Read the table name carefully. This doctrine was extracted from a system where it was called
+  > `tasks`, and the depersonalized schema prefixes it `os_`. Every `tasks` in the SQL below means
+  > `os_project_tasks`. A cloner who pasted the old name got `relation "tasks" does not exist`.
+
+- **There is a second task table, and it is not this one.** `os_agent_tasks` also ships, with
+  `agent_id`, `parent_task_id`, `handoff_to` and a `task_type` in (`execute`, `research`, `review`,
+  `handoff`, `qa`). It looks like the right home for this queue and is not: its `status` vocabulary
+  is `pending / running / completed / failed / cancelled`, which does not carry `blocked`, and
+  `blocked` is the state two of the six lanes below depend on. Use `os_project_tasks` for the queue
+  and treat `os_agent_tasks` as the dispatch record it is, or reconcile the two vocabularies
+  deliberately before you build. What you must not do is discover the overlap halfway through and
+  end up with two half-queues.
+- **The ledger is one table you extend or add.** `activity_log` ships, but only as
+  (`action`, `details_json`, `created_at`) — enough to append to, missing every column that makes a
+  receipt readable: agent, target task, autonomy rung, result. Either widen it or add a purpose-built
+  log beside it. Do not stuff the receipt into `details_json`; the whole value of a receipt is that a
+  human can scan the column, not parse the blob. `tool_audit` is a different concern (per-call
+  telemetry) and is not the ledger.
 - **The kill-switch is one row you add.** A single global flag the runner reads before it does
   anything. One boolean, one table, or a single well-known row in a settings table you already have.
 
-No queue table. No claim service. No runtime. The queue is a *reading* of these three, and the six
-lanes below are encodings, not new columns.
+No queue table. No claim service. No runtime. The queue is a *reading* of these, and the six lanes
+below are encodings, not new columns.
+
+## 0. Autonomy rungs
+
+The receipt schema and the per-task off-ramp both key off an **autonomy rung**, so define it before
+either. Three rungs, and they describe what the agent is permitted to do without a human in the loop:
+
+| Rung | Meaning | Typical work |
+|---|---|---|
+| **green** | Act alone, report afterwards | Reads, analysis, local edits on a branch, anything trivially reversible |
+| **yellow** | Act, then actively notify | Commits, non-destructive writes to shared state, anything a human should see the same day |
+| **red** | Do not act; hold for a human | Spend, destructive migrations, outward-facing sends, credential use, anything hard to reverse |
+
+The rung is a property of the *task*, assigned when the task is created, not something an agent
+decides about itself mid-run. Store it as a column on the task table (`rung TEXT CHECK (rung IN
+('green','yellow','red'))`) and stamp it on every receipt so the log shows what authority each act
+was taken under.
+
+Red is the per-task off-ramp in rule 6: runners skip red rows, and only a human moves one back to
+`todo`. That is how you quarantine one dangerous task without stopping the swarm.
 
 ## 1. The four failures a queue exists to prevent
 
@@ -49,7 +84,7 @@ sentences made precise.
 
 ## 2. The status lane: six lanes over four states
 
-The tasks table has four states. Coordination needs six lanes. You get the extra two by pairing state
+`os_project_tasks` has four states. Coordination needs six lanes. You get the extra two by pairing state
 with the ledger and with the `assigned_to` lock, not by adding columns.
 
 | Lane        | Encoding                                                                    |
@@ -70,6 +105,14 @@ Review is a lane, not a flag. When work needs a second set of eyes, the builder 
 "reviewed"; it **creates a review task that depends on the build task.** Review is then just more
 queued work another agent (or a human) drains, and the dependency stops the build task from reading as
 done while review is outstanding.
+
+> **This is the one lane that needs a column.** The claim above that the six lanes are "encodings, not
+> new columns" holds for five of them. Review does not: `os_project_tasks` has no dependency field
+> (`os_agent_tasks` has `parent_task_id`; the queue table does not). Add
+> `depends_on TEXT REFERENCES os_project_tasks(task_id)` and have step 2 skip any row whose
+> dependency is not `done`. Without it, "the dependency stops the build task from reading as done" is
+> a sentence with nothing behind it, and the review lane degrades into a convention that the first
+> busy afternoon breaks.
 
 ## 3. Receipt grammar: the jewel
 
@@ -100,9 +143,9 @@ This is the one place a queue is easy to get subtly, silently wrong, so lead wit
 is correct by construction. **Claim with a conditional update in a single statement:**
 
 ```sql
-UPDATE tasks
-SET    assigned_to = :me, status = 'in_progress'
-WHERE  id = :task AND assigned_to IS NULL AND status = 'todo'
+UPDATE os_project_tasks
+SET    assigned_to = :me, status = 'in_progress', updated_at = NOW()::TEXT
+WHERE  task_id = :task AND assigned_to IS NULL AND status = 'todo'
 RETURNING *;
 ```
 
@@ -147,9 +190,11 @@ agent provably owns.
 
 A swarm without a stop button is a liability, so the queue ships two off-ramps and one liveness signal.
 
-- **Global off-ramp: the kill-switch.** One flag halts every runner at the top of the loop. This is the
-  same switch the operations docs already describe for autonomy; the queue simply agrees to read it
-  first, every iteration, and to fail closed if the read errors.
+- **Global off-ramp: the kill-switch.** One flag halts every runner at the top of the loop. The queue
+  reads it first, every iteration, and fails closed if the read errors. Nothing else in this template
+  defines that switch, so it is yours to create along with the queue; `030_agents/patrol/patrol.sh`
+  ships the same idea at single-agent scale (`touch $STATE_DIR/DISABLED`) if you want the shape
+  before you have a database to put it in.
 - **Per-task off-ramp: the red rung.** A single task can be frozen without stopping the swarm by
   setting its rung to red and its status to blocked. Runners skip red-rung rows; only a human moves it
   back to todo. This is how you quarantine one risky task (a spend, a destructive migration, an

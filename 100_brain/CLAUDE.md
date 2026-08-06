@@ -107,9 +107,17 @@ folder.
 ## How the brain stays fed (the two jobs)
 
 - **Gardener** (extract + distill): pulls new signal out of the cold corpora and turns it into
-  cards. Generous on intake; a second pass decides what is kept.
+  cards. Generous on intake; a second pass decides what is kept. Ships as
+  `../030_agents/defs/gardener.md`.
 - **Curator** (enforce + prevent rot): polices structure against the laws above. Does not generate
   knowledge; keeps it clean.
+
+  > **The curator has no agent definition in this template.** Gardener ships; curator does not, even
+  > though this document names it eleven times and hands it the laws to enforce. That is a real gap,
+  > not an omission you should read past: the laws above have no enforcer until you write one. Two
+  > honest ways to close it — write a `curator.md` def against the rot list above (the list *is* the
+  > spec, which is why it reads like one), or run the rot list yourself on a schedule and accept that
+  > the brain is hand-curated. What does not work is assuming something is already policing it.
 
 The initial bulk seed is a one-shot fan-out job, not the curator. The curator is the ongoing pass
 that runs after.

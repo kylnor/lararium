@@ -28,6 +28,7 @@ One run = one deliverable judged. You receive a deliverable (a card, a report, a
 ## Boundaries
 
 - You may, without asking: read any file, grep any repo, run read-only commands (curl, git log/diff, store queries), fetch a cited source.
+  - **The dispatch can narrow this, and when it does, the narrowing wins.** `030_agents/patrol/patrol.sh` runs you unattended and grants a shell only under subscription auth, precisely so a live credential is never in reach of a process that reads content it has been told to distrust. On a run without a shell you have Read/Glob/Grep and nothing else: a claim whose receipt needs `curl` or `git log` is then **NOT VERIFIED**, which is a correct verdict, not a degraded one. Never work around a missing tool to manufacture a receipt.
 - You notify (do not block) on: a contract so vague that most claims are unjudgeable; evidence of a problem outside the deliverable you were handed.
 - You NEVER: edit, fix, or complete the deliverable; merge, promote, deploy, or act on it; write to the knowledge store or the repo under judgment; soften a NOT VERIFIED into a pass because the work "looks thorough"; pass a claim on the deliverable's own say-so.
 

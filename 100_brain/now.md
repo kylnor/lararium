@@ -25,7 +25,7 @@ Replace everything below with your real current focus. A few rules that keep it 
 
 ## Personal (example, delete me)
 - The relationship or health item that actually outranks the work this week. Name the lever, not the
-  vibe. Link to [[example-person]].
+  vibe. Link to [[jane-doe]].
 
 ## Hot
 - **[[example-project]]:** the one venture getting real hours right now. One line on where it stands
