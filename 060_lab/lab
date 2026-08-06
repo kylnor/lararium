@@ -19,6 +19,9 @@
 #                            then tear down. This is what the /in-the-lab skill calls.
 #   lab --check <source>     validate the source only: report what would be refused or
 #                            excluded, copy nothing, start nothing. No docker required.
+#   lab --rebuild <source>   rebuild the image from the pinned base first. The image is
+#                            built once and cached forever otherwise, so this is how the
+#                            box gets security updates. Re-pin the digest first.
 #
 # Exit the interactive shell with `exit`. The box and everything in it is gone.
 # Portable to bash 3.2 (macOS default): no mapfile, no associative arrays.
@@ -28,6 +31,7 @@ IMAGE="lab:latest"
 NET="none"
 MODE="shell"
 SRC=""
+REBUILD="0"
 
 usage() { grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
@@ -36,6 +40,7 @@ while [ $# -gt 0 ]; do
     --net) NET="on"; shift ;;
     --analyze) MODE="analyze"; shift ;;
     --check) MODE="check"; shift ;;
+    --rebuild) REBUILD="1"; shift ;;
     -h|--help) usage ;;
     -*) echo "unknown flag: $1" >&2; usage ;;
     *) SRC="$1"; shift ;;
@@ -121,10 +126,20 @@ while [ -h "$SOURCE" ]; do
   [ "${SOURCE#/}" = "$SOURCE" ] && SOURCE="$DIR/$SOURCE"
 done
 SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
-docker image inspect "$IMAGE" >/dev/null 2>&1 || {
-  echo "building $IMAGE (first run only)…"
-  docker build -t "$IMAGE" "$SCRIPT_DIR"
-}
+# Build once, then reuse. That is fast, and it also means the box you analyze in
+# today is the box you built months ago: the Dockerfile pin makes runs
+# reproducible, but nothing here ever refreshes it, so a pinned base with no
+# refresh path is just a stale base with better paperwork. --rebuild is that
+# path. Re-pin the digest in the Dockerfile first (instructions are in it).
+if [ "$REBUILD" = "1" ]; then
+  echo "rebuilding $IMAGE from the pinned base…"
+  docker build --pull --no-cache -t "$IMAGE" "$SCRIPT_DIR"
+else
+  docker image inspect "$IMAGE" >/dev/null 2>&1 || {
+    echo "building $IMAGE (first run only; refresh later with lab --rebuild)…"
+    docker build --pull -t "$IMAGE" "$SCRIPT_DIR"
+  }
+fi
 
 # Hardening flags for the analysis container, built into the global array HARDEN.
 # Root inside, but every capability dropped. First arg = network, second = "it" for a TTY.

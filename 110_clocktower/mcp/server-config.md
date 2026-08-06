@@ -42,7 +42,7 @@ machine and has access to the admin tier.
   "mcpServers": {
     "clocktower": {
       "command": "node",
-      "args": ["/path/to/110_clocktower/packages/array/dist/index.js", "--stdio"],
+      "args": ["/path/to/clocktower/packages/array/dist/index.js", "--stdio"],
       "env": {
         "DATABASE_URL": "<PLACEHOLDER>",
         "CLOCKTOWER_TOKEN": "<PLACEHOLDER>",
@@ -77,6 +77,86 @@ partition without being able to access or mutate live knowledge. Muninn (the
 gating curator) holds a full write token and can promote from staging to live.
 
 ---
+
+## Security boundaries (read before you expose this)
+
+This server holds the index of your entire life and speaks over HTTP. The
+authorization model above describes *tiers*; this section describes what the
+tiers do not cover. None of it is implemented for you — the server is yours to
+build — but building it without these decisions made is how a personal index
+becomes someone else's.
+
+### The tokens are static, and the schema knows better
+
+`CLOCKTOWER_TOKEN*` are long-lived strings in `.env` and, per the example above,
+inline in `.mcp.json`. They do not expire, they are not scoped to a client, and
+there is no revocation path short of rotating the value and updating every
+consumer. A leaked token is durable access to everything at its tier.
+
+Meanwhile `schema/001_core_schema.sql` ships `oauth_clients`, `oauth_codes` and
+`oauth_tokens`, with `code_challenge` / `code_challenge_method` columns — that
+is OAuth 2.0 with PKCE, including refresh and expiry. **No document mentions
+it.** So the schema anticipates a real token lifecycle that the doctrine does
+not describe, and a reader cannot tell which one they are supposed to build.
+
+Resolve that fork deliberately:
+
+- **Bearer only** (simplest): then delete the `oauth_*` tables so the schema
+  stops implying a mechanism that does not exist, and give the tokens a
+  lifecycle anyway — a `created_at`, a documented rotation cadence, and an
+  audit row per authenticated request so a leak is *detectable*.
+- **OAuth as the schema suggests**: bearer tokens become the machine-to-machine
+  fallback, PKCE covers interactive clients, and `expires_at` starts being
+  enforced rather than merely stored.
+
+Either is defensible. Shipping the tables and documenting neither is not.
+
+### The webhook route is a remote write into your context
+
+`POST /webhook/:route_id` invokes a registered tool. Follow that all the way
+through, because the chain does not stop at the database:
+
+```
+inbound webhook  ->  MCP tool  ->  knowledge base  ->  brain card / now.md
+                                                    ->  session-start hook
+                                                    ->  your assistant's context
+```
+
+That is a path from the public internet to the top of your assistant's prompt.
+HMAC verification authenticates the *sender*; it says nothing about whether the
+*content* is safe, and a legitimate sender relaying attacker-authored text is
+the normal case for anything webhook-shaped.
+
+`040_hooks/reference/session-start.js` now wraps injected blocks in
+`<untrusted-context>`, which is the last line of this defence, not the first.
+The first is here:
+
+- Apply `../connector-doctrine.md`'s rules at ingest: wrap item text in
+  untrusted-content tags, treat provenance-looking lines inside item text as
+  spoofed, and sanitize anything bound to a single-line context.
+- Route webhook writes to **staging**, never straight to live knowledge. The
+  Huginn/Muninn split exists for exactly this; a webhook is the least
+  trustworthy input you have and should not be the one that skips the gate.
+- Scope each route to the narrowest tool that does its job. A route that can
+  call an admin tool is a remote admin API with an HMAC in front of it.
+- Give each route its own secret. `CLOCKTOWER_WEBHOOK_SECRET` as a single
+  signing base means compromising one integration forges all of them.
+
+### Stdio is the strongest capability in the stack
+
+The stdio transport gets admin tier *plus* local filesystem and shell tools.
+That is strictly more power than the HTTP surface, granted by a config file
+with no prompt. Treat `.mcp.json` as a credential: `0600`, never committed,
+never synced. If an agent can edit that file, it can grant itself the admin
+tier — the same reason `040_hooks/sandbox/` makes `~/.claude/settings.json`
+unwritable from a sandboxed shell.
+
+### Not addressed anywhere yet
+
+Named so they are choices rather than oversights: no rate limiting on
+authenticated endpoints, no audit log of tool invocations, no per-tool
+authorization within a tier, and `/health` responds before auth (fine, but it
+confirms the host is live to anyone scanning).
 
 ## CORS
 
@@ -146,5 +226,10 @@ capability advertisement so remote clients can self-discover the endpoint.
 
 Keep one HTTP entry (for agents and hooks running anywhere) and one stdio
 entry (for your local machine session, which gets admin tier + local tools).
-Do not commit this file with real tokens. Reference `.env` from the build
-step or your secrets manager.
+
+Do not commit this file with real tokens, and do not leave it world-readable:
+`chmod 600 .mcp.json`. The stdio entry grants the admin tier plus local
+filesystem and shell tools, so this file IS a credential — see the security
+section above. Reference `.env` from the build step or your secrets manager
+rather than inlining values; the `<PLACEHOLDER>`s above are literal, not a
+suggestion to paste real tokens in their place.
