@@ -44,8 +44,9 @@ WHAT IT STILL IS NOT
   need that, the enforcement has to move under the shell rather than in front of
   it — a sandbox where the dangerous capability does not exist, credentials that
   are not in the environment, a filesystem that is not mounted. `060_lab/` is
-  that shape, pointed at other people's code. See `040_hooks/README.md` for the
-  tiering and `sandbox/` for the profile that applies it to your own agent.
+  that shape pointed at other people's code; `040_hooks/sandbox/` is the same
+  shape pointed at your own agent, and it blocks by resolved path rather than
+  by spelling. See `040_hooks/README.md` for the tiering.
 
 DECISION TIERS
 

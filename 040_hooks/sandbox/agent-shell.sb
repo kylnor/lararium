@@ -1,0 +1,87 @@
+;; agent-shell.sb — a capability wall for the assistant's own shell (macOS).
+;;
+;; WHY THIS EXISTS
+;;
+;; 040_hooks/reference/bash-deny-guard.py reads a command string and guesses at
+;; its effect. That is a fence: it cannot resolve $VAR, aliases, functions, or
+;; the contents of a script it invokes, because those are runtime facts and the
+;; guard runs before runtime. No amount of parsing fixes that.
+;;
+;; This file does not read commands at all. It removes the capability, and the
+;; KERNEL enforces it. `rm -rf ~/.ssh`, `/bin/rm -rf ~/.ssh`, `python3 -c
+;; "shutil.rmtree(...)"`, and a spelling nobody has thought of yet all fail the
+;; same way, because the path is not reachable from inside the sandbox. That
+;; difference — enforcement below the shell rather than in front of it — is the
+;; difference between a fence and a wall.
+;;
+;; HONEST SCOPE (read this before trusting it)
+;;
+;;   * This is `allow default` plus targeted denials, which is a blocklist, the
+;;     same shape criticized elsewhere in this stack. The difference that makes
+;;     it worth shipping: it is enforced by the kernel on the PATH, not by a
+;;     regex on the SPELLING. An unlisted path is still reachable, but no
+;;     amount of clever quoting reaches a listed one.
+;;   * `sandbox-exec` is deprecated by Apple. It still works and has for many
+;;     releases; if it is ever removed, the same shape is available from a
+;;     container (see 060_lab/) at the cost of a much heavier setup.
+;;   * It protects paths, not intent. A process inside can still corrupt files
+;;     it is legitimately allowed to write.
+;;
+;; USAGE
+;;   040_hooks/sandbox/sandboxed-bash <command>
+;; or wire it as your shell for agent sessions. See sandboxed-bash for how the
+;; parameters are supplied.
+
+(version 1)
+(allow default)
+
+;; ── Credentials: unreadable, so they cannot be exfiltrated ──────────────────
+;; Read denial is the important half. A command that cannot READ your keys
+;; cannot mail them anywhere, no matter what it talks the model into running.
+(deny file-read* file-write*
+  (subpath (string-append (param "HOME") "/.ssh"))
+  (subpath (string-append (param "HOME") "/.aws"))
+  (subpath (string-append (param "HOME") "/.gnupg"))
+  (subpath (string-append (param "HOME") "/.config/gcloud"))
+  (subpath (string-append (param "HOME") "/.kube"))
+  (subpath (string-append (param "HOME") "/.docker"))
+  (subpath (string-append (param "HOME") "/Library/Keychains"))
+  (subpath (string-append (param "HOME") "/Library/Application Support/Google/Chrome"))
+  (subpath (string-append (param "HOME") "/Library/Cookies"))
+  (literal (string-append (param "HOME") "/.netrc"))
+  (literal (string-append (param "HOME") "/.env"))
+  (literal (string-append (param "HOME") "/.npmrc"))
+  (literal (string-append (param "HOME") "/.pypirc"))
+  (literal (string-append (param "HOME") "/.git-credentials")))
+
+;; ── The assistant's own auth and config ─────────────────────────────────────
+;; A shell spawned by the assistant has no business reading the assistant's
+;; credentials or rewriting its own hooks and permission list. Blocking the
+;; write side is what stops a guard from being edited out from under you.
+(deny file-read* file-write*
+  (subpath (string-append (param "HOME") "/.claude/.credentials.json")))
+(deny file-write*
+  (subpath (string-append (param "HOME") "/.claude/hooks"))
+  (literal (string-append (param "HOME") "/.claude/settings.json"))
+  (literal (string-append (param "HOME") "/.claude/settings.local.json")))
+
+;; ── Shell startup files: a durable foothold if writable ─────────────────────
+(deny file-write*
+  (literal (string-append (param "HOME") "/.zshrc"))
+  (literal (string-append (param "HOME") "/.zshenv"))
+  (literal (string-append (param "HOME") "/.zprofile"))
+  (literal (string-append (param "HOME") "/.bashrc"))
+  (literal (string-append (param "HOME") "/.bash_profile"))
+  (literal (string-append (param "HOME") "/.profile"))
+  (subpath (string-append (param "HOME") "/Library/LaunchAgents"))
+  (subpath "/Library/LaunchDaemons")
+  (subpath "/Library/LaunchAgents"))
+
+;; ── System integrity ────────────────────────────────────────────────────────
+(deny file-write*
+  (subpath "/System")
+  (subpath "/usr/bin")
+  (subpath "/usr/sbin")
+  (subpath "/bin")
+  (subpath "/sbin")
+  (subpath "/etc"))

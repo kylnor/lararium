@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# sandboxed-bash — run a command with the agent-shell capability wall applied.
+#
+# This is the Tier 1 control in this stack: it does not read the command, it
+# removes the capability. The kernel enforces the profile on the PATH, so every
+# spelling of a blocked access fails the same way:
+#
+#   $ sandboxed-bash 'cat ~/.ssh/id_ed25519'
+#   cat: /Users/you/.ssh/id_ed25519: Operation not permitted
+#   $ sandboxed-bash 'python3 -c "print(open(os.path.expanduser(\"~/.ssh/id_ed25519\")).read())"'
+#   PermissionError: [Errno 1] Operation not permitted
+#
+# The regex guard could be talked past by either of those. This cannot, because
+# there is nothing to talk past.
+#
+# usage:
+#   sandboxed-bash <command string>     run one command under the profile
+#   sandboxed-bash                      interactive sandboxed shell
+#   SANDBOX_PROFILE=/path/to.sb sandboxed-bash ...   use a different profile
+#
+# FAILS CLOSED. If sandbox-exec is missing (non-macOS, or Apple finally removed
+# it), this refuses to run rather than silently executing unsandboxed. A wall
+# that quietly stops being a wall is worse than no wall, because you keep
+# trusting it. On Linux, use 060_lab/ (containers) for the same shape.
+set -euo pipefail
+
+# Resolve this script's real directory, following symlinks (bash 3.2 safe).
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [ "${SOURCE#/}" = "$SOURCE" ] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+
+PROFILE="${SANDBOX_PROFILE:-$SCRIPT_DIR/agent-shell.sb}"
+
+if ! command -v sandbox-exec >/dev/null 2>&1; then
+  echo "sandboxed-bash: sandbox-exec not available on this system." >&2
+  echo "  Refusing to run unsandboxed. On Linux use 060_lab/ instead." >&2
+  exit 1
+fi
+
+if [ ! -f "$PROFILE" ]; then
+  echo "sandboxed-bash: profile not found at $PROFILE" >&2
+  exit 1
+fi
+
+if [ $# -eq 0 ]; then
+  exec sandbox-exec -D HOME="$HOME" -f "$PROFILE" /bin/bash
+fi
+
+exec sandbox-exec -D HOME="$HOME" -f "$PROFILE" /bin/bash -c "$*"
