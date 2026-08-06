@@ -15,6 +15,87 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 
 ---
 
+## v2.16 (2026-08-06): structural
+
+An adversarial review of v2.15 found that the safety layer's care was concentrated where the threat
+was smallest and absent where it was largest. `update-check.js` had a careful, correct defence
+around a six-byte version string. Meanwhile the deny guard was bypassable three ways, the voice log
+wrote every credential it ever saw to a world-readable file forever, and the one component that runs
+unattended at 3am held both an unscoped shell and a live API key. This release fixes the guards and,
+more importantly, stops describing them as stronger than they are.
+
+**The confirmed bypasses.** With `Bash(rm:*)` in the deny list, all three of these were allowed:
+
+```
+grep "a<<b" notes.txt \n rm -rf /important     ALLOWED
+python3 -c "print(1 << 2)" \n rm -rf /...      ALLOWED
+/bin/rm -rf /important                         ALLOWED
+```
+
+The first two are one bug: heredoc detection was a regex over raw lines, so a `<<` inside a quoted
+string opened a phantom heredoc and swallowed every line after it as "data". The third is prefix
+matching against a spelling. `040_hooks/README.md` described the first as a *strength* ("heredoc
+bodies correctly treated as data"), which is the part that actually matters — a user who believes a
+guard is a wall grants autonomy they otherwise would not.
+
+**Walls, fences, and speed bumps.** The new section at the top of `040_hooks/README.md` names the
+three tiers and says plainly which hook is which. Only capability removal is a wall. Command
+analysis is a fence: it cannot resolve `$VAR`, aliases, functions, or the contents of a script it
+invokes, because those are runtime facts and a PreToolUse hook runs before runtime. Better parsing
+does not fix that, so the enforcement moved instead.
+
+- **`040_hooks/reference/bash-deny-guard.py`**: rewritten. Real tokenization (stdlib `shlex`, POSIX
+  quoting), so a `<<` inside quotes is a character in a word and the heredoc class dies
+  structurally. Binary normalization before matching, so `/bin/rm`, `\rm`, `command rm`,
+  `env FOO=1 rm`, `sudo rm`, `busybox rm` and `timeout 5 rm` all resolve to `rm`. Spawn-capable
+  shapes (`git -c`, `find -exec`, `npm run`, any interpreter) escalate to "ask". **Fails closed**:
+  an unparseable command is denied, not skipped. Never emits "allow". Override with
+  `LARARIUM_GUARD=off`, which does not disable your deny list.
+- **`040_hooks/sandbox/`** (new): the actual wall. A `sandbox-exec` profile plus a fail-closed
+  wrapper, blocking credential stores, the assistant's own auth, `~/.claude/hooks` and
+  `settings.json` (so a session cannot edit the guard that governs it), shell startup files and
+  system paths. The kernel checks the resolved path, so `cat ~/.ssh/config`, `/bin/cat "$HOME/..."`,
+  a Python one-liner, and `X=~/.ssh; ls $X` all fail identically — including the last one, which the
+  fence cannot see at all.
+- **`030_agents/patrol/patrol.sh`**: credentials and shell are now mutually exclusive. Subscription
+  auth means no key in the environment and `PATROL_SHELL=1` is permitted; key auth means the shell
+  is off and cannot be enabled. A key that is not in the environment cannot be exfiltrated by a
+  command nobody anticipated. Its docket is also wrapped in `<untrusted-docket>` markers, per
+  `110_clocktower/connector-doctrine.md`, which had the right answer written down and was not
+  applied to the one process that runs alone.
+- **`040_hooks/reference/secret-patterns.js`** (new): one source of truth. `secret-write-guard.js`
+  asked before a credential reached a repo; `voice-log.js` then wrote every prompt and response to
+  disk verbatim, forever, at default permissions. A rule enforced in one place and ignored in
+  another is not a rule.
+- **`040_hooks/reference/voice-log.js`**: redacts before writing, caps at 500 records, `0600`.
+- **`040_hooks/reference/secret-write-guard.js`**: also matches Bash — `cat > f <<EOF ... EOF` put a
+  key on disk without touching the Write tool. Re-register it as `Write|Edit|Bash`.
+- **`040_hooks/reference/pretooluse-guard.js`**: `rm --recursive --force /`, `rm -rf "$HOME"`,
+  `git push origin +main`, and `curl x | zsh` now match. Relabelled as defence in depth.
+- **`040_hooks/reference/agent-model-router.js`**: stops emitting `permissionDecision: "allow"`,
+  which was silently auto-approving every dispatch it touched. Routing is not authorization.
+- **`040_hooks/reference/session-start.js`**: injected blocks other than the soul core are wrapped
+  in `<untrusted-context>`. This hook's stdout goes straight into the model and those files are fed
+  by watchers and by the previous session's transcript.
+- **`npx/index.js`**: fails closed when the release lookup fails instead of silently installing
+  unreviewed HEAD. Adds `--ref main` as the explicit opt-in; timeout 4s → 10s.
+- **`040_hooks/reference/tests/`** (new): 103 cases across three suites. Every bypass above is
+  pinned as a regression, because a guard without a corpus regresses silently, which is the exact
+  failure mode this layer exists to prevent.
+- **`docs/teams-ingestion-setup.md`**: recommendation flipped from app-only to delegated. The old
+  version recommended `Chat.Read.All` + `ChannelMessage.Read.All` tenant-wide — every message in the
+  organization, into a personal knowledge base on a laptop — and framed the admin-consent
+  requirement as a hurdle to clear rather than a signal. New section 2.0 covers scoping (application
+  access policies, RSC), consent from people rather than just from Entra, and retention.
+- **Fixed from the unreleased path refactor**: runtime paths were rewritten alongside repo paths, so
+  the docs told users to install hooks to `~/.claude/040_hooks/stack/`, where Claude Code will never
+  look for them, and `secret-write-guard.js` checked its own exemption against `/.claude/040_hooks/`.
+
+**Upgrade:** structural, but the interview is short — the hook files are drop-in replacements. Two
+things need your hands: re-register `secret-write-guard.js` as `Write|Edit|Bash`, and decide whether
+to adopt `040_hooks/sandbox/`. If you run `patrol.sh`, check which auth mode you are on before the
+next scheduled run; on key auth it will now refuse to start with `PATROL_SHELL=1`.
+
 ## v2.15 (2026-08-01): additive-doc
 
 Optional skill: **`050_skills/defs/model-fusion/`**, multi-model routing across the AI CLIs you

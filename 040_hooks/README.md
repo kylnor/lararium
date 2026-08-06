@@ -33,12 +33,55 @@ UserPromptSubmit **inject** their stdout into the conversation. PreToolUse can *
 tool call via a JSON decision on stdout. The rest are observers: they act on the world (write a file,
 hit a DB), but their stdout is not fed back into the model.
 
+## Walls, fences, and speed bumps
+
+Read this before you trust anything below it. Some hooks here are safety rails, and a safety rail
+you believe is stronger than it is will get you to grant autonomy you would not otherwise grant.
+That is the failure mode this section exists to prevent.
+
+Three tiers, and they are not interchangeable:
+
+| Tier | What it is | What it does | What defeats it |
+|---|---|---|---|
+| **Wall** | Capability removal, OS-enforced | The dangerous thing is *not reachable*. `040_hooks/sandbox/`, `060_lab/`, a credential that is not in the environment. | Nothing you can type. You have to change the sandbox. |
+| **Fence** | Structural analysis of a command | Real tokenization, binary normalization, fail-closed on anything it cannot parse. `bash-deny-guard.py`. | Runtime facts it cannot see: `$VAR`, aliases, functions, the contents of a script it invokes. |
+| **Speed bump** | Pattern matching a string | Catches the shape you thought of. `pretooluse-guard.js`. | A different spelling of the same command. |
+
+**Only the wall is a wall.** The fence stops accidents and confused models; it does not stop an
+adversary who controls the prompt, because it reads a command *before* the shell resolves any of
+it. No amount of better parsing changes that — the information is not there yet.
+
+This matters concretely. Through v2.15, `bash-deny-guard.py` was a speed bump described as a wall
+("what makes your deny list hold for autonomous agents"). Three bypasses were confirmed against it
+with a `Bash(rm:*)` deny list active:
+
+```
+grep "a<<b" notes.txt \n rm -rf /important     ALLOWED
+python3 -c "print(1 << 2)" \n rm -rf /...      ALLOWED
+/bin/rm -rf /important                         ALLOWED
+```
+
+The first two were one bug: heredoc detection was a regex over raw lines, so a `<<` inside a quoted
+string started a phantom heredoc and everything after it was swallowed as "data". The third was
+prefix matching against a spelling. All three are now regression tests in
+`reference/tests/test-bash-deny-guard.py`, and the guard is a fence rather than a speed bump.
+
+If you want an actual wall, it does not live in this file. It lives in `040_hooks/sandbox/` (the
+kernel enforces the path, so every spelling fails identically) and in not putting credentials where
+an unsupervised process can reach them (see `030_agents/patrol/patrol.sh`).
+
 ## The loops this layer implements
 
 Each loop below maps to one reference hook. Together they are the difference between a stateless
 assistant and one that remembers yesterday and sounds like itself.
 
 ### a. Session-start briefing (`session-start.js`, SessionStart)
+> Injected blocks other than the soul core are wrapped in `<untrusted-context>` with a standing
+> data-not-instructions preamble. `now.md`, brain cards, and the heartbeat are fed by watchers and by
+> the previous session's transcript, so their text is not necessarily yours — and this hook's stdout
+> goes straight into the model. See `110_clocktower/connector-doctrine.md`, which prescribed exactly
+> this and was not applied here until v2.16.
+
 Loads the soul core, the heartbeat, `now.md`, and any pending handoff file, and prints them as a
 briefing block that gets injected into context. The assistant opens the session already knowing who
 it is, what it did last time, what you are focused on, and where the last session told it to pick up.
@@ -52,11 +95,17 @@ comment in the file marks exactly where you upgrade it to an LLM-written paragra
 own voice.
 
 ### c. Voice integrity (`voice-log.js`, Stop)
-Appends every response (with its prompt and a timestamp) to a local JSONL. On its own that is just a
+Appends each response (with its prompt and a timestamp) to a local JSONL. On its own that is just a
 log. The value comes from a separate scheduled job you write: it samples a handful of recent
 responses, scores them against the soul core, and alerts you if the assistant is drifting away from
 its own voice. The hook is the cheap capture; the scoring is deliberately out of band, because a Stop
 hook cannot afford to think.
+
+It **redacts before writing**, through the same patterns `secret-write-guard.js` uses
+(`reference/secret-patterns.js`), keeps only the most recent 500 records, and writes `0600`. This
+hook sees every response, which means it sees every credential the assistant was shown or generated;
+an unbounded, world-readable, verbatim transcript of your entire working life is a liability with no
+upside. Drift scoring never needed the whole history.
 
 ### d. Context injection (UserPromptSubmit)
 Fail-soft, per-turn enrichment. stdout is injected before the model sees the turn, so this is where
@@ -73,11 +122,17 @@ lose the thread mid-task. Think of it as a heartbeat for the middle of a session
 of one. Same shape as the heartbeat writer, different trigger.
 
 ### f. Safety rail (`pretooluse-guard.js`, PreToolUse)
-Pattern-matches dangerous commands and blocks them with an explanation the assistant can act on. The
-starter set covers `rm -rf` against broad paths and unscoped globs, force-pushes to main/master,
-curl-piped-to-shell, echoing secrets into files, and `chmod 777`. It denies only unconditional
-destruction and leans on "ask" for anything ambiguous, because falsely blocking real work is worse
-than missing an edge case.
+**Tier: speed bump.** Pattern-matches dangerous commands and blocks them with an explanation the
+assistant can act on. The starter set covers `rm -rf` against broad paths and unscoped globs,
+force-pushes to main/master (including the `+main` refspec spelling), fetch-piped-to-any-interpreter,
+echoing secrets into files, and `chmod 777`. It denies only unconditional destruction and leans on
+"ask" for anything ambiguous, because falsely blocking real work is worse than missing an edge case.
+
+Know what this is: it matches the literal word `rm`, so `/bin/rm` and `busybox rm` are not its job —
+they are `bash-deny-guard.py`'s (loop i). Keep it as a fast, readable first pass and let the fence
+behind it do the structural work. `reference/tests/test-pretooluse-guard.mjs` holds the corpus,
+including the spellings that walked past the v2.15 version (`rm --recursive --force /`,
+`rm -rf "$HOME"`, `git push origin +main`, `curl x | zsh`).
 
 That starter set is the floor, not the point. The top of the `RULES` array is a block reserved for
 **your own working protocol**, and it ships empty. This is the only place a personal rule can fire
@@ -98,6 +153,12 @@ Rewrites subagent dispatch parameters by policy: some agents should always run o
 nobody should have to remember that. The hook injects the model when policy matches and the caller did
 not already pin one. An explicit choice on the dispatch always wins; the router only fills the gap.
 
+It emits `updatedInput` and **no `permissionDecision`**. That is load-bearing: this hook used to send
+`permissionDecision: "allow"` alongside the rewrite, which is not a no-op — "allow" bypasses the
+permission system for that call, so a hook whose entire job is "pick a model" was also silently
+auto-approving every dispatch it touched. Routing is not authorization. If you add a hook that
+rewrites input, check that you are not granting permission as a side effect.
+
 ### h. Update check (`update-check.js`, SessionStart)
 A clone is a detached copy; nothing tells you an upstream release exists. This hook is that signal,
 delivered into the session instead of relying on you to watch the repo. At most once a day it fetches
@@ -115,31 +176,62 @@ settings block, or the `STACK_UPDATE_CHECK=off` env var. Privacy: an enabled che
 to GitHub per day, exposing your IP the same way visiting the repo would; turn it off if that matters.
 
 ### i. Deny-list depth (`bash-deny-guard.py`, PreToolUse on Bash)
-The settings `deny` list matches command strings whole, so `git status && rm -rf ~/.ssh` sails past
-a `rm -rf ~/.ssh` deny because the string starts with `git`. This hook decomposes compound commands
-(`&&`, `||`, `;`, pipes, `$()` subshells, backticks, env-var prefixes; heredoc bodies correctly
-treated as data) and checks every sub-command against your merged deny patterns, plus the raw
-string for pipe-shaped patterns like `curl * | sh`. Deny-only by design: it never auto-approves,
-so it can only make the system stricter. Because hook denies fire even in bypass-permissions
-sessions, this is what makes your deny list hold for autonomous agents. Derived from
-liberzon/claude-hooks smart-approve.py (MIT) with the allow path removed.
+**Tier: fence.** The settings `deny` list matches command strings whole, so `git status && rm -rf
+~/.ssh` sails past a `rm -rf ~/.ssh` deny because the string starts with `git`. This hook tokenizes
+the command properly (stdlib `shlex`, POSIX quoting), splits it into real sub-commands across `&&`,
+`||`, `;`, pipes, newlines, `$()`, `<()`, and backticks, normalizes each binary before matching
+(`/bin/rm`, `\rm`, `command rm`, `env FOO=1 rm`, `sudo rm`, `busybox rm` all resolve to `rm`), and
+checks the result against your merged deny patterns.
 
-### j. Secret-write guard (`secret-write-guard.js`, PreToolUse on Write|Edit)
+Three properties worth stating precisely, because the v2.15 description of this hook was wrong
+about the first two:
+
+- **Quoting is handled by the tokenizer, not a regex.** A `<<` inside a quoted string is a character
+  in a word, not a heredoc marker. This is the fix for the bypass class described at the top of this
+  file, and it is structural rather than patched.
+- **It fails CLOSED.** A command that cannot be tokenized is denied, with a reason. The previous
+  version wrapped everything in `except: pass` and allowed on error. A guard that fails open is a
+  door.
+- **It never emits "allow".** deny / ask / silent only, where silent falls through to Claude Code's
+  normal permission prompting. It can make the system stricter, never looser.
+
+What it is *not*: it cannot resolve `$VAR`, aliases, shell functions, or the contents of a script it
+invokes, because those are runtime facts and this runs before runtime. Spawn-capable shapes
+(`git -c core.pager=...`, `find -exec`, `npm run`, any interpreter) escalate to "ask" rather than
+being judged. Unknown binaries escalate too, configurable via `bashGuard.unknownBinaryPolicy`.
+Override with `LARARIUM_GUARD=off`, which disables the structural tiers but *not* your deny list.
+
+Corpus: `reference/tests/test-bash-deny-guard.py`, 51 cases. Derived from liberzon/claude-hooks
+smart-approve.py (MIT) for the settings-merging and pattern syntax; the analysis engine is a rewrite.
+
+### j. Secret-write guard (`secret-write-guard.js`, PreToolUse on Write|Edit|Bash)
 Scans the content about to be written (not the file on disk) for credential patterns: cloud keys,
 API tokens, private-key blocks, DB URLs with passwords, JWTs. On a hit it returns "ask" with line
 numbers, never "deny", because a matched pattern can be a test fixture. Files named `.env*` are
-exempt; that is where secrets are supposed to live. This is the enforcement half of a "no secrets
-in repos" rule: the rule in prose catches nothing at 2am, the hook does.
+exempt; that is where secrets are supposed to live.
+
+**Bash is in the matcher deliberately.** A write is a write: `cat > config.py <<EOF ... EOF` puts a
+key on disk without ever touching the Write tool, so matching `Write|Edit` alone left the obvious
+hole open. Patterns live in `reference/secret-patterns.js`, shared with `voice-log.js` so the two
+hooks cannot drift into disagreeing about what a secret is — they used to, and the log won.
 
 ## The laws
 
 These are not style preferences. Break one and you will eventually wedge a session or leak a slow hook
 into every turn.
 
-- **Fail soft, always.** A hook that throws must exit 0 and inject nothing. Never block a session on
-  infrastructure failure. Every reference hook wraps its body in try/catch and swallows the error. A
-  briefing is a nice-to-have; a working session is not negotiable. The correct failure mode is
-  "silently do nothing," never "crash the turn."
+- **Fail soft — except where soft means open.** An *observer* hook that throws must exit 0 and inject
+  nothing: a briefing is a nice-to-have, a working session is not negotiable, and the correct failure
+  mode is "silently do nothing," never "crash the turn." That covers session-start, the heartbeat,
+  voice-log, and the update check, all of which swallow errors on purpose.
+
+  A *guard* is the opposite, and conflating the two is how this layer shipped a bypass. If
+  `bash-deny-guard.py` cannot parse a command, "silently do nothing" means the command runs
+  unchecked — the guard has failed **open**, which is the one outcome it exists to prevent. So it
+  denies instead, with a reason and a documented override (`LARARIUM_GUARD=off`). Note that a hook
+  can only ever fail closed on its *own* logic: it still exits 0 and still cannot wedge the session.
+  The rule is: **observers fail soft, guards fail closed.** Decide which one you are writing before
+  you write the try/catch.
 - **Be fast.** Hooks run synchronously, in the critical path of the thing that triggered them. A slow
   hook is felt as a slow assistant. Keep the hook itself to file reads and quick string work; push any
   heavy work (an LLM call, a network round-trip) to a background worker the hook spawns and does not
