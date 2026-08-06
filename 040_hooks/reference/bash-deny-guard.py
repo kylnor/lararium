@@ -61,10 +61,25 @@ DECISION TIERS
 
 OVERRIDE
 
-  Deliberate, visible, and per-invocation:
-      LARARIUM_GUARD=off   disables the structural tiers for one command
-  Your deny patterns still fire with the override set. Turning off a guard
-  should never turn off the list you wrote by hand.
+      LARARIUM_GUARD=off
+
+  Downgrades structural DENIES to ASKS. It does not silence anything, and it
+  does not touch your deny patterns - turning off a guard should never turn off
+  the list you wrote by hand.
+
+  Two things follow, both deliberate:
+
+  1. You still see every decision. An escape hatch that suppresses silently is
+     indistinguishable, from inside a session, from a guard that has crashed or
+     been misconfigured. Downgrade-and-show keeps you unblocked without ever
+     leaving you unsure whether the guard is running.
+  2. It only helps with hard blocks. If what you want gone is the
+     unknown-binary ask, the right tools are bashGuard.unknownBinaryPolicy or
+     bashGuard.safeExtra below. Noise and blocks are different problems.
+
+  Note it must be set in the environment that launches your assistant. Typing
+  it as a prefix inside a command does nothing: a hook is a separate process
+  and never sees the command's environment. Pinned in the corpus.
 
 CONFIG (all optional, under "bashGuard" in settings.json)
   enabled              bool,  default true
@@ -556,6 +571,27 @@ def resolve_config(settings):
     }
 
 
+def _tier(override, decision, reason):
+    """Apply the override: a structural DENY becomes an ASK, never silence.
+
+    The override exists so a wrong guard cannot stop you working. It does not
+    exist to make the guard invisible, and those are different things. An
+    escape hatch that silently suppresses is indistinguishable, from inside a
+    session, from a guard that has crashed or been misconfigured - which is
+    exactly the confusion this hook was rewritten to end.
+
+    So: with the override set you still see every decision, and you can approve
+    past it. If the noise you are escaping is the unknown-binary ask rather than
+    a hard block, the right tool is bashGuard.unknownBinaryPolicy or
+    bashGuard.safeExtra, not this.
+    """
+    if not override:
+        return decision, reason
+    if decision == "deny":
+        return "ask", f"[LARARIUM_GUARD=off, downgraded from deny] {reason}"
+    return decision, reason
+
+
 def decide(command, settings):
     """Return (decision, reason) where decision is "deny", "ask", or None."""
     if not command or not command.strip():
@@ -576,13 +612,14 @@ def decide(command, settings):
                 split_commands(strip_heredoc_bodies(strip_comments(tokenize(inner))))
             )
     except Unparseable as exc:
-        if override:
-            return None, None
-        return "deny", (
+        # With the override set this DOWNGRADES to "ask" rather than going
+        # silent. See the OVERRIDE note in the header: an escape hatch you
+        # cannot see is indistinguishable from a guard that stopped working.
+        return _tier(override, "deny", (
             f"Command could not be parsed ({exc}), so it could not be checked. "
             "Rewrite it, or split it into separate calls. "
             "This guard fails closed on purpose."
-        )
+        ))
 
     # ── Deny patterns, against BOTH raw and normalized forms. ──
     # Normalizing is what makes `/bin/rm -rf /` match a `Bash(rm:*)` deny.
@@ -605,15 +642,12 @@ def decide(command, settings):
                     "pattern in your settings"
                 )
 
-    if override:
-        return None, None
-
     # ── Structural denies. Kept tight on purpose. ──
     if piped_download_into_interpreter(command_lists):
-        return "deny", (
+        return _tier(override, "deny", (
             "A download is piped straight into an interpreter, which runs "
             "unreviewed remote code. Save it to a file, read it, then run it."
-        )
+        ))
 
     # ── Structural asks. ──
     unknowns = []

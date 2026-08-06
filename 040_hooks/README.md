@@ -199,7 +199,13 @@ What it is *not*: it cannot resolve `$VAR`, aliases, shell functions, or the con
 invokes, because those are runtime facts and this runs before runtime. Spawn-capable shapes
 (`git -c core.pager=...`, `find -exec`, `npm run`, any interpreter) escalate to "ask" rather than
 being judged. Unknown binaries escalate too, configurable via `bashGuard.unknownBinaryPolicy`.
-Override with `LARARIUM_GUARD=off`, which disables the structural tiers but *not* your deny list.
+`LARARIUM_GUARD=off` **downgrades** structural denies to asks. It does not silence anything and it
+does not touch your deny list. That shape is deliberate: an escape hatch that suppresses silently is
+indistinguishable, from inside a session, from a guard that has crashed or been misconfigured, which
+is the confusion this rewrite exists to end. It also must be set in the environment that launches
+your assistant — typing it as a command prefix does nothing, since a hook is a separate process that
+never sees the command's environment. If the noise you want gone is the unknown-binary ask rather
+than a hard block, reach for `bashGuard.unknownBinaryPolicy` or `bashGuard.safeExtra` instead.
 
 Corpus: `reference/tests/test-bash-deny-guard.py`, 59 cases, plus
 `reference/tests/test-hook-chain.sh`, which runs the guards the way Claude Code runs them and
