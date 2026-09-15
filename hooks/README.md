@@ -231,3 +231,12 @@ query would happen is stubbed behind a file read with a comment saying so. That 
 pattern is identical whether the read hits a JSONL on disk or a vector index over your whole life. Get
 the loop working against files first, then swap the stub for your index when the file layer outgrows
 it. Start simple; the shape does not change.
+
+## Diagnose memory without changing it
+
+Run `node hooks/memory-check.mjs .` from the installed template root. This read-only diagnostic
+reports missing, empty, or unreadable standard brain files without printing their contents.
+It does not inspect hook registration or claim that capture works. Follow
+[the memory acceptance check](../docs/memory-check.md) for fresh-session recall and corrections.
+
+Developer checks: `node --test hooks/memory-check.test.mjs`.

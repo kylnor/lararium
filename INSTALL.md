@@ -2,8 +2,7 @@
 
 This is not a script. It is a prompt. An agentic stack is installed by an agent.
 
-**How to run it:** open this freshly-cloned template in any capable assistant (Claude Code, or paste
-this file into a chat) and say: *"Run the install interview in INSTALL.md against this repo."* The
+**How to run it:** open this freshly-cloned template in a coding assistant with local file access (Claude Code is the reference setup) and say: *"Run the install interview in INSTALL.md against this repo."* The
 assistant interviews you and writes your files. You answer questions; it does the typing.
 
 **The rules the assistant follows during the interview:**
@@ -32,7 +31,18 @@ The goal of this phase is a brain the user could start using today.
 4. **`now.md`.** From what they just told you, write a real `now.md`: the one or two hot things,
    ranked by life not by project. Delete the template scaffolding inside it.
 
-At the end of Phase 1 the user has a working brain. Offer to stop here. Everything below is leverage.
+At the end of Phase 1, verify the saved files before offering to stop:
+
+1. Read back `brain/now.md` and one real card from disk. Summarize what they actually contain and let the user correct mistakes.
+2. Give the user this prompt to try in a fresh conversation opened in the same folder: "Read brain/CLAUDE.md and brain/now.md, then summarize my current priorities and name the files you used."
+3. Explain that this checks explicit file retrieval. Automatic loading across sessions needs the optional hooks configured and tested separately. Do not claim that every conversation is being saved.
+4. If the fresh conversation cannot read the files, check its working folder and file access before adding more layers.
+
+Run `node hooks/memory-check.mjs .` from the template root for a read-only file diagnostic.
+Offer the save, fresh-session recall, and correction test in `docs/memory-check.md`.
+Report untested automatic loading as unverified.
+
+Offer to stop here. Everything below is optional. A browser-only chat can help draft content, but the user must save it themselves.
 
 ## Phase 2: The soul (optional: do this when they want a consistent voice)
 The goal is a `soul/core.md` that sounds like a specific someone.

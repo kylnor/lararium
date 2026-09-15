@@ -15,6 +15,17 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 
 ---
 
+## v2.16 (2026-09-15): additive-doc
+
+Memory verification: `docs/memory-check.md` walks through saving a synthetic preference,
+retrieving it in a fresh conversation, correcting it, and checking uncertainty. The optional
+zero-dependency `hooks/memory-check.mjs` reports standard file readiness without printing contents
+or changing files. Its tests live in `hooks/memory-check.test.mjs`.
+
+README, INSTALL, and hooks/README now distinguish readable files, explicit recall, and automatic
+capture. Copy in the new check and guide if useful; no hook registration or existing memory paths
+change. The check uses standard template paths, so adapted layouts need their own path inspection.
+
 ## v2.15 (2026-08-01): additive-doc
 
 Optional skill: **`skills/defs/model-fusion/`**, multi-model routing across the AI CLIs you

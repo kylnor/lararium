@@ -115,8 +115,17 @@ Then open the folder in Claude Code (`claude` from inside it) and say:
 Run the install interview in INSTALL.md
 ```
 
-That is the whole install. The brain and soul layers need nothing else. The index (clocktower) is
+The interview is the setup step; downloading alone does not configure your assistant. Before adding optional layers, open a fresh conversation in the same folder and ask: "Read brain/CLAUDE.md and brain/now.md, then summarize my current priorities and name the files you used." This checks that your saved context can be read. Automatic session loading requires the hooks to be configured and tested.
+
+The brain and soul layers use plain files. The index (clocktower) is
 optional and wants your own database and embedding key, the day you decide you want search at scale.
+
+## Verify your memory
+
+Run `node hooks/memory-check.mjs .` from your installed folder to check the standard memory files.
+Then follow [the memory check](docs/memory-check.md): save a test preference, retrieve it in a fresh
+conversation, correct it, and retrieve the correction. File checks alone do not prove automatic
+loading or conversation capture.
 
 ## Setup order (if you would rather do it by hand)
 
