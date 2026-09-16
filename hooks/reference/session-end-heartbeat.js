@@ -19,7 +19,7 @@
  * { type: "user", message: { content: "..." }, userType: "external" }. Assistant
  * turns are { type: "assistant", message: { content: [ { type: "text", text } ] } }.
  *
- * Test standalone (no transcript file needed: it degrades to a stamp):
+ * Test standalone (missing transcript preserves the previous heartbeat):
  *   echo '{"session_id":"test","transcript_path":"/nonexistent","cwd":"/tmp"}' | node session-end-heartbeat.js
  */
 'use strict'
@@ -28,9 +28,11 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
-const STACK_HOME = path.join(os.homedir(), '.assistant')
+const ROOT = process.env.LARARIUM_ROOT
+if (ROOT && !path.isAbsolute(ROOT)) { console.error('Lararium memory: LARARIUM_ROOT must be absolute.'); process.exit(0) }
+const STACK_HOME = ROOT || path.join(os.homedir(), '.assistant')
 const HEARTBEAT = path.join(STACK_HOME, 'soul', 'heartbeat.md')
-const MIN_EXCHANGES = 3 // sessions thinner than this are not worth a heartbeat
+const MIN_EXCHANGES = 1 // a single completed exchange can carry useful context
 
 /** Pull plain text out of an assistant content array (or a bare string). */
 function extractText(content) {
@@ -56,17 +58,22 @@ function parseExchanges(transcriptPath) {
 
     if (entry.type === 'user') {
       const msg = entry.message || {}
-      const isHuman = typeof msg.content === 'string' &&
-        msg.content.trim() && entry.userType === 'external' && !entry.toolUseResult
+      const userText = extractText(msg.content).trim()
+      const isHuman = userText &&
+        (entry.userType === undefined || entry.userType === 'external') &&
+        !entry.toolUseResult && !entry.isMeta && !entry.isSidechain
       if (isHuman) {
         if (pendingUser && pendingAssistant) {
           exchanges.push({ user: pendingUser, assistant: pendingAssistant })
         }
-        pendingUser = msg.content.trim()
+        pendingUser = userText
         pendingAssistant = ''
       }
-    } else if (entry.type === 'assistant') {
-      const text = extractText((entry.message || {}).content)
+    } else if (entry.type === 'assistant' && !entry.isSidechain && !entry.isApiErrorMessage) {
+      const message = entry.message || {}
+      // Modern transcripts identify final answers; do not save an interrupted tool turn.
+      if ('stop_reason' in message && message.stop_reason !== 'end_turn' && message.stop_reason !== 'stop_sequence') continue
+      const text = extractText(message.content)
       if (text.trim()) pendingAssistant += (pendingAssistant ? '\n' : '') + text.trim()
     }
   }
@@ -80,10 +87,10 @@ function parseExchanges(transcriptPath) {
 function cheapSummary(exchanges) {
   const tail = exchanges.slice(-4)
   const lines = tail.map((ex) => {
-    const ask = ex.user.replace(/\s+/g, ' ').slice(0, 120)
+    const ask = ex.user.replace(/\s+/g, ' ').slice(0, 600)
     const firstReplyLine = ex.assistant.split('\n').find((l) => l.trim()) || ''
-    const did = firstReplyLine.replace(/\s+/g, ' ').slice(0, 120)
-    return `- you: ${ask}\n  reply: ${did}`
+    const did = firstReplyLine.replace(/\s+/g, ' ').slice(0, 600)
+    return `- User excerpt: ${ask}\n  Assistant excerpt (unverified): ${did}`
   })
   return lines.join('\n')
 
@@ -109,10 +116,16 @@ process.stdin.on('end', () => {
     if (exchanges.length < MIN_EXCHANGES) return
 
     const stamp = new Date().toISOString().slice(0, 19).replace('T', ' ')
-    const body = `_Last updated ${stamp} UTC: ${exchanges.length} exchanges_\n\n${cheapSummary(exchanges)}\n`
+    const body = `_Last updated ${stamp} UTC: ${exchanges.length} completed exchanges_\n\nRecent conversation excerpts only. Earlier statements may be superseded; assistant replies are not verified facts.\n\n${cheapSummary(exchanges)}\n`
 
     fs.mkdirSync(path.dirname(HEARTBEAT), { recursive: true })
-    fs.writeFileSync(HEARTBEAT, body) // overwrite: the heartbeat is "latest", not a log
+    const temporary = HEARTBEAT + '.' + process.pid + '.tmp'
+    try {
+      fs.writeFileSync(temporary, body, { mode: 0o600, flag: 'wx' })
+      fs.renameSync(temporary, HEARTBEAT) // atomic replacement: readers see a complete file
+    } finally {
+      try { fs.unlinkSync(temporary) } catch {}
+    }
   } catch {
     // Never break session shutdown on a heartbeat failure.
   }

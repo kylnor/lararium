@@ -64,6 +64,26 @@ session ended and inspect its contents. The reference heartbeat keeps a short me
 it is not a complete transcript archive or a verified list of facts. Keep user statements separate
 from assistant suggestions when turning that tail into durable notes.
 
+## Automatic loop acceptance test
+
+Configure only the memory SessionStart and SessionEnd hooks in a disposable installation, using
+the settings example with `env.LARARIUM_ROOT` set to that installation's absolute path. Use
+synthetic information. These instructions are for Claude Code; other assistants need their own
+verified lifecycle integration.
+
+1. Start a session and state a harmless project choice, such as selecting a terracotta pot for basil.
+2. Wait for a completed response, then exit normally. Verify `soul/heartbeat.md` exists below
+   the configured root and contains that exchange with separate user and assistant labels.
+3. Start a genuinely new session, not a resumed one. Ask which pot was selected without naming
+   a file or repeating the choice. Verify the startup hook injected the heartbeat.
+4. Correct the choice, exit normally, and repeat the fresh-session question.
+5. Record failure honestly if hooks do not fire. A manually executed hook is a component test,
+   not proof of lifecycle wiring. Missing transcripts should preserve the previous heartbeat.
+
+For diagnostics from a separate shell, set the same `LARARIUM_ROOT` environment variable before
+running the file check. The CLI settings env block does not set variables in your parent shell.
+A mismatching root is reported as needing attention.
+
 ## Finish
 
 Remove only the temporary brain/memory-check.md file you created for this test. Record which checks

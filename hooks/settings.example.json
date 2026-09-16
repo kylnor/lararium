@@ -10,22 +10,34 @@
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "node ~/.claude/hooks/stack/session-start.js" },
-          { "type": "command", "command": "node ~/.claude/hooks/stack/update-check.js" }
+          {
+            "type": "command",
+            "command": "node ~/.claude/hooks/stack/session-start.js"
+          },
+          {
+            "type": "command",
+            "command": "node ~/.claude/hooks/stack/update-check.js"
+          }
         ]
       }
     ],
     "SessionEnd": [
       {
         "hooks": [
-          { "type": "command", "command": "node ~/.claude/hooks/stack/session-end-heartbeat.js" }
+          {
+            "type": "command",
+            "command": "node ~/.claude/hooks/stack/session-end-heartbeat.js"
+          }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "node ~/.claude/hooks/stack/voice-log.js" }
+          {
+            "type": "command",
+            "command": "node ~/.claude/hooks/stack/voice-log.js"
+          }
         ]
       }
     ],
@@ -33,22 +45,40 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "node ~/.claude/hooks/stack/pretooluse-guard.js" },
-          { "type": "command", "command": "python3 ~/.claude/hooks/stack/bash-deny-guard.py", "timeout": 10 }
+          {
+            "type": "command",
+            "command": "node ~/.claude/hooks/stack/pretooluse-guard.js"
+          },
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/stack/bash-deny-guard.py",
+            "timeout": 10
+          }
         ]
       },
       {
         "matcher": "Agent",
         "hooks": [
-          { "type": "command", "command": "node ~/.claude/hooks/stack/agent-model-router.js" }
+          {
+            "type": "command",
+            "command": "node ~/.claude/hooks/stack/agent-model-router.js"
+          }
         ]
       },
       {
         "matcher": "Write|Edit",
         "hooks": [
-          { "type": "command", "command": "node ~/.claude/hooks/stack/secret-write-guard.js", "timeout": 10 }
+          {
+            "type": "command",
+            "command": "node ~/.claude/hooks/stack/secret-write-guard.js",
+            "timeout": 10
+          }
         ]
       }
     ]
-  }
+  },
+  "env": {
+    "LARARIUM_ROOT": "/absolute/path/to/your/lararium"
+  },
+  "// memory": "Set env.LARARIUM_ROOT to one absolute installed-stack path for both memory hooks. They read soul/core.md, soul/heartbeat.md, brain/now.md and handoff.md below it. Merge env keys with your existing settings."
 }

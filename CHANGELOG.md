@@ -15,6 +15,24 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 
 ---
 
+## v2.17 (2026-09-15): structural
+
+Automatic memory: the startup and session-end reference hooks now share an optional absolute
+`LARARIUM_ROOT`. Configure it through the settings `env` block to use your installed stack's
+`soul/heartbeat.md` and `brain/now.md`. Existing defaults remain when it is unset; other hooks
+retain their own path configuration. Merge the settings change rather than replacing your settings.
+
+The writer saves even one completed exchange, accepts text-array prompts and transcripts without
+`userType`, ignores API-error replies, and replaces the heartbeat atomically. Missing transcripts or transcripts with no completed exchange preserve the previous useful heartbeat. Excerpts retain user/assistant labels and are
+not verified facts. This is a short latest-session summary, not a transcript archive. Concurrent
+sessions sharing a root are last-writer-wins; a hard kill can skip SessionEnd.
+
+Upgrade both `hooks/reference/session-start.js` and `session-end-heartbeat.js`, review
+`hooks/settings.example.json`, and run the automatic-loop test in `docs/memory-check.md`.
+`hooks/memory-check.mjs` now reports root mismatches and heartbeat availability.
+`hooks/memory-loop.test.mjs` covers capture, corrections, partial input, and failure preservation.
+INSTALL also requires the top-level brain map to match any sphere changes.
+
 ## v2.16 (2026-09-15): additive-doc
 
 Memory verification: `docs/memory-check.md` walks through saving a synthetic preference,

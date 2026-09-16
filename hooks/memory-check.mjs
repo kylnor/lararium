@@ -14,9 +14,19 @@ const checks = [
   ['brain/CLAUDE.md', true, 'Restore the brain instructions or point this check at your installed folder.'],
   ['brain/now.md', true, 'Run Phase 1 of INSTALL.md to write your current priorities.'],
   ['soul/core.md', false, 'Optional: run Phase 2 if you want a persona.'],
+  ['soul/heartbeat.md', false, 'No readable heartbeat here. End a completed test session with the capture hook enabled, then check again.'],
 ];
 let missing = false;
 console.log('Memory file check');
+const configured = process.env.LARARIUM_ROOT;
+if (!configured) {
+  console.log('Hook root: not set in this process. Hooks use legacy paths unless their launcher supplies LARARIUM_ROOT.');
+} else if (!path.isAbsolute(configured) || path.resolve(configured) !== root) {
+  console.log('NEEDS ATTENTION: LARARIUM_ROOT differs from the absolute folder being checked.');
+  missing = true;
+} else {
+  console.log('Hook root matches the checked folder. Hook registration is still unverified.');
+}
 for (const [relative, required, remedy] of checks) {
   try {
     const file = path.join(root, relative);

@@ -213,8 +213,11 @@ alongside the `hooks` block.
 
 The reference hooks read from a stack home at `~/.assistant/` (soul core, heartbeat, voice log,
 handoff, and the update-check state file) and a `brain/now.md`. Those are conventions, not
-requirements: every path is a named constant at the top of each file. Point them at wherever your
-soul, brain, and working files actually live before you wire anything in.
+requirements: the two memory hooks accept `LARARIUM_ROOT`, one absolute path to your installed stack. Set it
+through the `env` block in the settings example. Both hooks then use `soul/heartbeat.md` under
+that root; startup also reads `soul/core.md`, `brain/now.md`, and `handoff.md` there. Without it,
+existing legacy paths remain unchanged. Other reference hooks keep their own path settings.
+Do not infer that all hooks are configured just because memory is configured.
 
 One path is deliberately NOT in `~/.assistant/`: your installed `STACK_VERSION` stamp. The install and
 upgrade interviews write it at your stack's repo **root** (the folder you cloned the template into),
@@ -240,3 +243,18 @@ It does not inspect hook registration or claim that capture works. Follow
 [the memory acceptance check](../docs/memory-check.md) for fresh-session recall and corrections.
 
 Developer checks: `node --test hooks/memory-check.test.mjs`.
+
+## Automatic memory contract
+
+The heartbeat keeps excerpts from the last four completed exchanges in the session. It is not a
+full archive, a fact extractor, or a replacement for curated project notes. User and assistant
+excerpts remain labeled. Corrections remain conversation text and need interpretation.
+
+One completed exchange is enough. Missing transcripts, malformed lines, sessions with no completed
+exchange, and API-error-only sessions do not replace the last useful heartbeat. Atomic replacement
+prevents partially written files from being loaded. If several sessions share a root, the last
+writer wins; use separate roots for separate projects. A process killed before SessionEnd runs
+cannot save its latest turn. This release does not add a per-turn checkpoint.
+
+Run `node --test hooks/memory-check.test.mjs hooks/memory-loop.test.mjs` to test the file contracts.
+The live assistant test in `docs/memory-check.md` is still needed to verify hook registration.

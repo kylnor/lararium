@@ -24,7 +24,10 @@ The goal of this phase is a brain the user could start using today.
 2. **The spheres.** The template ships `ventures / work / personal / infrastructure`. Confirm or
    rename them to fit the user's life (a student is not a founder; a freelancer is not an employee).
    Rename the sphere folders and rewrite each `CONTEXT.md` opening line to match. Delete a sphere
-   they do not need; add one they do. Apply the shape only where populated.
+   they do not need; add one they do. Update the sphere map and routing references in
+   `brain/CLAUDE.md` to match the folders that actually remain. Apply the shape only where populated.
+   If a required file operation is unavailable, name the unfinished step and do not claim Phase 1
+   is complete.
 3. **First real cards.** Ask for the two or three things actually on their plate right now (a project,
    a key person). Turn the `example-project.md` / `jane-doe.md` templates into those real cards.
    **Delete the leftover example files** once at least one real card exists in that folder.
@@ -68,7 +71,12 @@ The goal is a `soul/core.md` that sounds like a specific someone.
    sell hard: it needs zero infrastructure and compounds from day one. Help them copy the document
    into their global config (`CLAUDE.md` or equivalent) and delete the example steering rules that
    are not theirs.
-2. **Hooks.** Read `hooks/README.md` for the loop catalog. Ask which loops they want first (the
+2. **Hooks.** Before wiring memory, set `env.LARARIUM_ROOT` in the chosen assistant settings to
+   the absolute path of this installed stack. Merge existing env keys. Both memory hooks use this
+   root for soul/heartbeat.md and brain/now.md; do not move user files into legacy default paths.
+   Verify one completed test session writes a heartbeat and a fresh session receives it through
+   SessionStart. See `docs/memory-check.md`.
+   Read `hooks/README.md` for the loop catalog. Ask which loops they want first (the
    honest default: session-start briefing + heartbeat + the update checker, all three on plain files;
    skip voice-drift until the voice exists). The update checker rides the same `SessionStart` event as
    the briefing, so wire it in the same phase: copy `update-check.js` in alongside `session-start.js`,

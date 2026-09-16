@@ -1,0 +1,20 @@
+name: memory-checks
+on:
+  push:
+    paths: ['hooks/**', '.github/workflows/memory-checks.yml']
+  pull_request:
+    paths: ['hooks/**', '.github/workflows/memory-checks.yml']
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [18, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: node --test hooks/memory-check.test.mjs hooks/memory-loop.test.mjs
