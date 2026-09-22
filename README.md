@@ -115,7 +115,7 @@ Then open the folder in Claude Code (`claude` from inside it) and say:
 Run the install interview in INSTALL.md
 ```
 
-The interview is the setup step; downloading alone does not configure your assistant. Before adding optional layers, open a fresh conversation in the same folder and ask: "Read brain/CLAUDE.md and brain/now.md, then summarize my current priorities and name the files you used." This checks that your saved context can be read. Automatic session loading requires the hooks to be configured and tested.
+The interview is the setup step; downloading alone does not configure your assistant. Before adding optional layers, open a fresh conversation in the same folder and ask: "Read brain/CLAUDE.md and brain/now.md, then summarize my current priorities and name the files you used." This checks that your saved context can be read. Memory is on from the first conversation: the folder ships two hooks that save the end of each conversation and hand it, with `brain/now.md`, to the next one opened in the same folder. Say yes when Claude Code asks whether you trust the folder, or they do not run. It remembers the last conversation, not every conversation; anything worth keeping longer goes on a card.
 
 The brain and soul layers use plain files. The index (clocktower) is
 optional and wants your own database and embedding key, the day you decide you want search at scale.
@@ -130,8 +130,9 @@ loading or conversation capture.
 ## Setup order (if you would rather do it by hand)
 
 Start with the brain: useful immediately, zero infrastructure, just markdown and the laws. Add the
-soul when you want a consistent voice, its rules half with it. Wire the hooks when you want the
-assistant to remember yesterday; the reference implementations run on plain files. Add clocktower
+soul when you want a consistent voice, its rules half with it. The two memory hooks come wired
+(`.claude/settings.json`); wire the others when you want them. The reference implementations run on
+plain files. Add clocktower
 when the file layer outgrows grep-and-read and you want semantic search at scale. Agents and skills
 last: leverage on top of a system that already works.
 

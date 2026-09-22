@@ -1,9 +1,9 @@
 name: memory-checks
 on:
   push:
-    paths: ['hooks/**', '.github/workflows/memory-checks.yml']
+    paths: ['hooks/**', '.claude/**', 'brain/now.md', 'soul/core.md', '.github/workflows/memory-checks.yml']
   pull_request:
-    paths: ['hooks/**', '.github/workflows/memory-checks.yml']
+    paths: ['hooks/**', '.claude/**', 'brain/now.md', 'soul/core.md', '.github/workflows/memory-checks.yml']
 permissions:
   contents: read
 jobs:

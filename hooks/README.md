@@ -177,6 +177,13 @@ throws or exits non-zero, fix that before wiring it in.
 
 ## The wiring
 
+**Memory ships wired.** The template's `.claude/settings.json` registers the two memory hooks as
+project hooks, `node "$CLAUDE_PROJECT_DIR/hooks/reference/session-start.js"` and the heartbeat
+writer in the same shape. Claude Code runs them in any conversation opened in the stack folder once
+the folder is trusted. No absolute path, no env var, nothing to set. Add more hooks to that file in
+the same shape. The rest of this section is for wiring hooks globally, so they also run in
+conversations opened elsewhere.
+
 Copy the reference hooks to wherever you keep hook scripts (the example uses `~/.claude/hooks/stack/`)
 and add the `hooks` block from `settings.example.json` to your Claude Code `settings.json`. The block
 registers all six reference hooks against their events: two on `SessionStart` (the briefing and the
@@ -213,11 +220,13 @@ alongside the `hooks` block.
 
 The reference hooks read from a stack home at `~/.assistant/` (soul core, heartbeat, voice log,
 handoff, and the update-check state file) and a `brain/now.md`. Those are conventions, not
-requirements: the two memory hooks accept `LARARIUM_ROOT`, one absolute path to your installed stack. Set it
-through the `env` block in the settings example. Both hooks then use `soul/heartbeat.md` under
-that root; startup also reads `soul/core.md`, `brain/now.md`, and `handoff.md` there. Without it,
-existing legacy paths remain unchanged. Other reference hooks keep their own path settings.
-Do not infer that all hooks are configured just because memory is configured.
+requirements. The two memory hooks find their stack in this order: `LARARIUM_ROOT` if it is set
+(one absolute path), else the stack they ship in (they live at `hooks/reference/` inside it, so
+moving or renaming the folder moves the memory with it), else the legacy `~/.assistant/` layout
+for copies kept elsewhere. Either way they use `soul/heartbeat.md` under that root; startup also
+reads `soul/core.md`, `brain/now.md`, and `handoff.md` there. A `core` or `now.md` still holding
+the shipped template is announced in one line instead of injected. Other reference hooks keep
+their own path settings. Do not infer that all hooks are configured just because memory is.
 
 One path is deliberately NOT in `~/.assistant/`: your installed `STACK_VERSION` stamp. The install and
 upgrade interviews write it at your stack's repo **root** (the folder you cloned the template into),

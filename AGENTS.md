@@ -36,6 +36,14 @@ file are here for one of two jobs, and they need opposite instincts:
 4. The site renders from this repo (`elorati-landing/lararium/blog/build.mjs` in the private
    site repo reads `docs/blog/`); if you cannot run it, say so rather than skipping silently.
 
+## The shipped memory hooks run here too
+
+`.claude/settings.json` registers the memory hooks for anyone who opens this folder, contributors
+included. They write `soul/heartbeat.md`, which `.gitignore` keeps out of commits; never force-add
+it. Keep that file's hook commands relative to `$CLAUDE_PROJECT_DIR`. `hooks/memory-loop.test.mjs`
+fails on an absolute path. The template markers in `soul/core.md` and `brain/now.md` are what the
+startup hook uses to tell a blank template from the user's own file; change them in both places.
+
 ## Verification
 
 - `node --check` any `.mjs` you touch (`skills/defs/*/`, `npx/`).

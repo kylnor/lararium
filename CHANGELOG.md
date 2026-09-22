@@ -15,6 +15,32 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 
 ---
 
+## v2.18 (2026-09-22): structural
+
+Memory is on from the first conversation. A stranger-path test found the promise behind an
+optional step: a new user finished the interview without it, and turning it on meant approving a
+settings write full of absolute paths that broke the day the folder moved.
+
+The template now ships `.claude/settings.json`, which registers the startup and session-end memory
+hooks as project hooks with commands relative to `$CLAUDE_PROJECT_DIR`. The memory hooks and the
+update checker find their stack from their own location (`hooks/reference/` inside it), so moving
+or renaming the folder keeps memory working. `LARARIUM_ROOT` still wins when set and is now only
+for global wiring. A `soul/core.md` or `brain/now.md` still holding the blank template is announced
+in one line instead of injected as if it were yours. `soul/heartbeat.md` and `handoff.md` are
+gitignored.
+
+INSTALL: memory is explained in Phase 0 as the point, not offered later. Phase 1 ends with an
+honest statement of how deep memory goes (the last conversation plus `now.md`) and an exit-and-
+reopen test. A new interview rule bans shell walls: file tools for edits, one short relative
+command at a time for renames and deletes, never a chain or a loop.
+`hooks/memory-check.mjs` now reports whether `.claude/settings.json` registers both memory hooks.
+
+Upgrading: copy `.claude/settings.json` and the three changed hooks (`session-start.js`,
+`session-end-heartbeat.js`, `update-check.js`) into your stack, merging with any project settings
+you already have there. If you wired the memory hooks globally in v2.17, remove that global copy
+or keep it and skip the project file; both at once run each hook twice. Then run the automatic
+loop test in `docs/memory-check.md`, including the new move-the-folder step.
+
 ## v2.17 (2026-09-15): structural
 
 Automatic memory: the startup and session-end reference hooks now share an optional absolute

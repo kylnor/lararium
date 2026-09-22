@@ -90,10 +90,14 @@ const DEFAULT_ENABLED = true
 const STACK_HOME = path.join(os.homedir(), '.assistant')
 const STATE_FILE = path.join(STACK_HOME, '.update-check-state.json')
 const SETTINGS_FILE = path.join(os.homedir(), '.claude', 'settings.json')
-// Fallback ONLY. The real path is stackUpdateCheck.localVersionFile, written by
-// the install interview (which knows your stack's repo root, where STACK_VERSION
-// is actually stamped). This default almost never exists; absent = v1 = behind.
-const DEFAULT_LOCAL_VERSION_FILE = path.join(os.homedir(), 'lararium', 'STACK_VERSION')
+// Default: the STACK_VERSION of the stack this file ships in (hooks/reference/
+// inside the installed folder), so a hook wired from the project settings needs
+// no path and survives the folder moving. stackUpdateCheck.localVersionFile
+// overrides it, for hooks copied elsewhere. Absent everywhere = v1 = behind.
+const SHIPPED_VERSION_FILE = path.resolve(__dirname, '..', '..', 'STACK_VERSION')
+const DEFAULT_LOCAL_VERSION_FILE = fs.existsSync(SHIPPED_VERSION_FILE)
+  ? SHIPPED_VERSION_FILE
+  : path.join(os.homedir(), 'lararium', 'STACK_VERSION')
 
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000 // one network check per 24h
 const FETCH_TIMEOUT_MS = 2500 // short: a briefing must not wait on the network

@@ -20,7 +20,20 @@ let missing = false;
 console.log('Memory file check');
 const configured = process.env.LARARIUM_ROOT;
 if (!configured) {
-  console.log('Hook root: not set in this process. Hooks use legacy paths unless their launcher supplies LARARIUM_ROOT.');
+  // The shipped .claude/settings.json registers both memory hooks by path relative
+  // to the project, and the hooks find this folder from their own location.
+  let registered = [];
+  try {
+    const settings = JSON.parse(fs.readFileSync(path.join(root, '.claude/settings.json'), 'utf8'));
+    registered = Object.values(settings.hooks || {}).flat().flatMap(g => (g && g.hooks) || []).map(h => String(h.command || ''));
+  } catch {}
+  const wired = ['session-start.js', 'session-end-heartbeat.js'].filter(name => registered.some(c => c.includes(name)));
+  if (wired.length === 2) {
+    console.log('Hook registration: .claude/settings.json registers both memory hooks for this folder. Whether they fire is still unverified.');
+  } else {
+    console.log(`NEEDS ATTENTION: .claude/settings.json registers ${wired.length} of 2 memory hooks. Restore it from the template.`);
+    missing = true;
+  }
 } else if (!path.isAbsolute(configured) || path.resolve(configured) !== root) {
   console.log('NEEDS ATTENTION: LARARIUM_ROOT differs from the absolute folder being checked.');
   missing = true;

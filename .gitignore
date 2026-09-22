@@ -3,3 +3,8 @@
 node_modules/
 *.log
 SESSION_STATUS.md
+# Memory written by the session hooks: conversation excerpts, never committed.
+soul/heartbeat.md
+soul/heartbeat.md.*.tmp
+handoff.md
+handoff.md.consumed

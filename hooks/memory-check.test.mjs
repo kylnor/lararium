@@ -23,6 +23,16 @@ test('reports missing files, accepts readable files, and never prints their cont
     assert.match(result.stdout, /Fresh-session recall: unverified/);
     assert.doesNotMatch(result.stdout, /PRIVATE_FIXTURE_TEXT/);
     assert.equal(fs.readFileSync(path.join(root, 'brain/now.md'), 'utf8'), 'PRIVATE_FIXTURE_TEXT');
+    const bare = { encoding: 'utf8', env: { ...process.env } };
+    delete bare.env.LARARIUM_ROOT;
+    const unwired = spawnSync(process.execPath, [script, root], bare);
+    assert.equal(unwired.status, 1);
+    assert.match(unwired.stdout, /registers 0 of 2 memory hooks/);
+    fs.mkdirSync(path.join(root, '.claude'));
+    fs.copyFileSync(fileURLToPath(new URL('../.claude/settings.json', import.meta.url)), path.join(root, '.claude/settings.json'));
+    const wired = spawnSync(process.execPath, [script, root], bare);
+    assert.equal(wired.status, 0);
+    assert.match(wired.stdout, /registers both memory hooks/);
     fs.writeFileSync(path.join(root, 'brain/now.md'), '  ');
     assert.equal(run().status, 1);
     fs.unlinkSync(path.join(root, 'brain/now.md'));

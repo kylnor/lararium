@@ -28,8 +28,12 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
-const ROOT = process.env.LARARIUM_ROOT
-if (ROOT && !path.isAbsolute(ROOT)) { console.error('Lararium memory: LARARIUM_ROOT must be absolute.'); process.exit(0) }
+// Same root resolution as session-start.js: LARARIUM_ROOT, else the stack this
+// file ships in, else the legacy ~/.assistant layout.
+const ENV_ROOT = process.env.LARARIUM_ROOT
+if (ENV_ROOT && !path.isAbsolute(ENV_ROOT)) { console.error('Lararium memory: LARARIUM_ROOT must be absolute.'); process.exit(0) }
+const SHIPPED_ROOT = path.resolve(__dirname, '..', '..')
+const ROOT = ENV_ROOT || (fs.existsSync(path.join(SHIPPED_ROOT, 'brain', 'CLAUDE.md')) ? SHIPPED_ROOT : '')
 const STACK_HOME = ROOT || path.join(os.homedir(), '.assistant')
 const HEARTBEAT = path.join(STACK_HOME, 'soul', 'heartbeat.md')
 const MIN_EXCHANGES = 1 // a single completed exchange can carry useful context

@@ -54,35 +54,38 @@ Pass: it says the test file does not establish a font preference. It must not in
 
 ## 6. Test automatic loading separately
 
-If you enabled startup hooks, repeat a fresh-session question about a harmless fact in the actual
+The template ships its startup and session-end hooks switched on for conversations opened in
+the installed folder (`.claude/settings.json`). Repeat a fresh-session question about a harmless fact in the actual
 configured briefing files without naming the file. Inspect the hook output as well as the answer.
 The reference startup hook reads a small set of files; it does not search every card. A fact in
 another file will still need retrieval. Hook installation is specific to your assistant.
 
-If you enabled session-end capture, verify that the expected output file changed after a real
+For session-end capture, verify that the expected output file changed after a real
 session ended and inspect its contents. The reference heartbeat keeps a short mechanical tail;
 it is not a complete transcript archive or a verified list of facts. Keep user statements separate
 from assistant suggestions when turning that tail into durable notes.
 
 ## Automatic loop acceptance test
 
-Configure only the memory SessionStart and SessionEnd hooks in a disposable installation, using
-the settings example with `env.LARARIUM_ROOT` set to that installation's absolute path. Use
-synthetic information. These instructions are for Claude Code; other assistants need their own
+Use a disposable installation, opened in Claude Code from inside its folder and trusted when
+asked. Its shipped `.claude/settings.json` already registers the memory SessionStart and
+SessionEnd hooks. Use synthetic information. These instructions are for Claude Code; other assistants need their own
 verified lifecycle integration.
 
 1. Start a session and state a harmless project choice, such as selecting a terracotta pot for basil.
 2. Wait for a completed response, then exit normally. Verify `soul/heartbeat.md` exists below
-   the configured root and contains that exchange with separate user and assistant labels.
+   the installed folder and contains that exchange with separate user and assistant labels.
 3. Start a genuinely new session, not a resumed one. Ask which pot was selected without naming
    a file or repeating the choice. Verify the startup hook injected the heartbeat.
 4. Correct the choice, exit normally, and repeat the fresh-session question.
-5. Record failure honestly if hooks do not fire. A manually executed hook is a component test,
+5. Move or rename the folder, open it again, and repeat the fresh-session question. It must still
+   answer: the hooks find the folder from their own location.
+6. Record failure honestly if hooks do not fire. A manually executed hook is a component test,
    not proof of lifecycle wiring. Missing transcripts should preserve the previous heartbeat.
 
-For diagnostics from a separate shell, set the same `LARARIUM_ROOT` environment variable before
-running the file check. The CLI settings env block does not set variables in your parent shell.
-A mismatching root is reported as needing attention.
+The file check reports whether `.claude/settings.json` registers both memory hooks. If you wired
+the hooks globally with `LARARIUM_ROOT` instead, set the same variable in the shell that runs the
+check; a mismatching root is reported as needing attention.
 
 ## Finish
 

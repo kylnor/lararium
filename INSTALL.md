@@ -10,6 +10,11 @@ assistant interviews you and writes your files. You answer questions; it does th
 - Ask only what changes the output. Infer the rest and state what you inferred so the user can correct it.
 - Write files as you go, show the user each one, move on. Do not wait until the end to produce everything.
 - When a phase is optional, say so and let the user skip it. The brain layer alone is useful on day one.
+- **No shell walls.** Every command the user must approve is one they have to judge, and most users
+  cannot read a loop or a chain. Write and edit files with the file tools. When a shell command is
+  unavoidable (renaming a folder, deleting one), run one short command at a time with paths relative
+  to this folder, and say in plain words what it does before the approval appears. Never chain
+  commands with `&&`, `;` or a loop, never `cd` first, never use `git mv` or `git rm`.
 
 ---
 
@@ -17,13 +22,22 @@ assistant interviews you and writes your files. You answer questions; it does th
 Before any question, read `brain/CLAUDE.md` (the laws) and `README.md` (the six layers). Tell the
 user, in two sentences, what they are about to set up. Then begin.
 
+Memory is already switched on, and it is the point: this folder ships `.claude/settings.json`, which
+registers two hooks. When a conversation opened here ends, `session-end-heartbeat.js` saves the last
+few exchanges to `soul/heartbeat.md`; when the next one starts, `session-start.js` hands the assistant
+that heartbeat plus `brain/now.md` (and `soul/core.md` once Phase 2 writes one). The hooks find this
+folder on their own, so the user can move or rename it later without breaking anything. Tell the user
+this in plain words: the brain you build in Phase 1 is what gets remembered. Do not offer memory as a
+later or optional step, and do not rewrite `.claude/settings.json` unless the user asks.
+
 ## Phase 1: The brain (required, do this first)
 The goal of this phase is a brain the user could start using today.
 1. **Whose system is this, and what do they do?** One or two questions. Enough to name the owner and
    their main lanes.
 2. **The spheres.** The template ships `ventures / work / personal / infrastructure`. Confirm or
    rename them to fit the user's life (a student is not a founder; a freelancer is not an employee).
-   Rename the sphere folders and rewrite each `CONTEXT.md` opening line to match. Delete a sphere
+   Rename the sphere folders (one plain `mv brain/spheres/old brain/spheres/new` per folder, per the
+   no-shell-walls rule) and rewrite each `CONTEXT.md` opening line to match. Delete a sphere
    they do not need; add one they do. Update the sphere map and routing references in
    `brain/CLAUDE.md` to match the folders that actually remain. Apply the shape only where populated.
    If a required file operation is unavailable, name the unfinished step and do not claim Phase 1
@@ -34,16 +48,21 @@ The goal of this phase is a brain the user could start using today.
 4. **`now.md`.** From what they just told you, write a real `now.md`: the one or two hot things,
    ranked by life not by project. Delete the template scaffolding inside it.
 
-At the end of Phase 1, verify the saved files before offering to stop:
+At the end of Phase 1, verify the saved files and the memory before offering to stop:
 
 1. Read back `brain/now.md` and one real card from disk. Summarize what they actually contain and let the user correct mistakes.
-2. Give the user this prompt to try in a fresh conversation opened in the same folder: "Read brain/CLAUDE.md and brain/now.md, then summarize my current priorities and name the files you used."
-3. Explain that this checks explicit file retrieval. Automatic loading across sessions needs the optional hooks configured and tested separately. Do not claim that every conversation is being saved.
-4. If the fresh conversation cannot read the files, check its working folder and file access before adding more layers.
+2. Tell the user exactly how deep the memory goes, in plain words. Every new conversation here opens
+   knowing `now.md` and the last few exchanges of the previous conversation, and nothing older. The
+   heartbeat is replaced each time. Anything worth keeping longer goes on a card or into `now.md`,
+   and the assistant should offer to put it there. Do not claim that every conversation is saved.
+3. Give them the test: exit this conversation (type `/exit`), open a new one in the same folder, and
+   ask "What did we set up last time, and what am I focused on right now?" Pass: it answers from the
+   heartbeat and `now.md` without being told which files to read.
+4. If the new conversation does not know, the hooks did not run. The usual cause is declining the
+   "trust this folder" question; open the folder again and accept it. Check before adding more layers.
 
-Run `node hooks/memory-check.mjs .` from the template root for a read-only file diagnostic.
-Offer the save, fresh-session recall, and correction test in `docs/memory-check.md`.
-Report untested automatic loading as unverified.
+Run `node hooks/memory-check.mjs .` from the template root for a read-only file diagnostic, and
+offer the longer save, recall, and correction test in `docs/memory-check.md`.
 
 Offer to stop here. Everything below is optional. A browser-only chat can help draft content, but the user must save it themselves.
 
@@ -63,33 +82,27 @@ The goal is a `soul/core.md` that sounds like a specific someone.
 4. Write `soul/core.md` from the answers using the dimensions in `soul/character-craft.md`: trait
    tensions, the register gap, the anti-list, and at least three tone proofs (sample responses to
    real scenarios from their life). The samples are the spec. Name the persona's failure mode.
-4. Note what they still need to wire themselves: the session-start hook that loads `core`, the
-   session-end hook that writes `heartbeat`, the drift monitor. Point them at `soul/README.md`.
+4. Tell them the session-start hook already loads `core` from the next conversation on. What they
+   still wire themselves is the drift monitor. Point them at `soul/README.md`.
 
 ## Phase 3: The rules and the loops (optional, but the cheapest leverage here)
 1. **Rules.** Walk `rules/OPERATING.md` with them. The miss-capture protocol is the one section to
    sell hard: it needs zero infrastructure and compounds from day one. Help them copy the document
    into their global config (`CLAUDE.md` or equivalent) and delete the example steering rules that
    are not theirs.
-2. **Hooks.** Before wiring memory, set `env.LARARIUM_ROOT` in the chosen assistant settings to
-   the absolute path of this installed stack. Merge existing env keys. Both memory hooks use this
-   root for soul/heartbeat.md and brain/now.md; do not move user files into legacy default paths.
-   Verify one completed test session writes a heartbeat and a fresh session receives it through
-   SessionStart. See `docs/memory-check.md`.
-   Read `hooks/README.md` for the loop catalog. Ask which loops they want first (the
-   honest default: session-start briefing + heartbeat + the update checker, all three on plain files;
-   skip voice-drift until the voice exists). The update checker rides the same `SessionStart` event as
-   the briefing, so wire it in the same phase: copy `update-check.js` in alongside `session-start.js`,
-   register both `SessionStart` commands, and copy the `stackUpdateCheck` config block from
-   `hooks/settings.example.json` (it defaults the upstream to this template; a forker re-points it).
-   **Set `localVersionFile` to the absolute path of this stack's `STACK_VERSION`** (the repo root you
-   are installing against, the same file you stamp in the closing step). You know that path, it is the
-   folder you are working in, so fill it in explicitly rather than leaving the placeholder. If it is
-   wrong or unset the hook reads v1 and nudges every session forever, the one way this hook annoys
-   instead of helps.
-   Copy the chosen reference hooks into their assistant config, wire them per
-   `hooks/settings.example.json`, and run each once standalone with a fake payload to prove it
-   exits clean. The reference hooks run on plain files; no database needed yet.
+2. **Hooks.** The two memory hooks are already running from `.claude/settings.json` (Phase 0). Add
+   the others there too, with commands relative to `$CLAUDE_PROJECT_DIR` in the same shape, never an
+   absolute path. `LARARIUM_ROOT` is only for a user who wants this stack's memory in conversations
+   opened in other folders, which means copying the hooks into their global settings.
+   Read `hooks/README.md` for the loop catalog. Ask which loops they want next (the
+   honest default: the update checker; skip voice-drift until the voice exists). The update checker
+   rides `SessionStart` like the briefing: add `node "$CLAUDE_PROJECT_DIR/hooks/reference/update-check.js"`
+   as a second command in the existing `SessionStart` entry. It reads the `STACK_VERSION` in this
+   folder on its own, so it needs no path. Its optional `stackUpdateCheck` block (toggle, upstream,
+   see `hooks/settings.example.json`) is read from the user's global `~/.claude/settings.json`; skip
+   it unless they want to switch the check off or re-point it at a fork.
+   Run each new hook once standalone with a fake payload to prove it exits clean. The reference
+   hooks run on plain files; no database needed yet.
 3. **Skills.** Copy `skills/defs/` into their skills directory. Adapt the paths the skills mention
    (handoff file location, index tool names) to what actually exists in their install; a skill that
    references infrastructure they skipped should have that step cut, not left to error.
@@ -117,4 +130,4 @@ As your **last act**, stamp the version: copy this template's `STACK_VERSION` fi
 the user's stack unchanged. It is a one-line file naming the template version they just installed
 from. It is what the upgrade interview reads later to know which changelog deltas apply, so a stack
 without it reads as v1. Then end the interview with a short checklist of what is done and what the
-user still owns (hooks to wire, infra to stand up), and get out of the way. The system is theirs now.
+user still owns (optional hooks, infra to stand up), and get out of the way. The system is theirs now.
