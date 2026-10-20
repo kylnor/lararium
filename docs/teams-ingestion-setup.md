@@ -2,7 +2,7 @@
 
 This is a step-by-step guide for wiring Microsoft Teams chats and meeting transcripts into a
 Lararium stack as a new watcher, so the assistant sees Teams conversations the same way it already
-sees email, calendar, or brain edits. Written for Brittany's setup; assumes Lararium is already
+sees email, calendar, or brain edits. Assumes Lararium is already
 installed and running (brain + clocktower + an assistant session).
 
 ## 1. How Lararium ingestion already works (read this first)
