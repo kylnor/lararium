@@ -52,6 +52,8 @@ work report, doctrine only). All of it ships empty or as marked templates.
 holds three plain definitions (`reviewer`, `researcher`, `verifier`), each with where to look,
 what done looks like and a self-check. The reviewer and verifier carry only Read, Grep and Glob,
 so read-only is enforced by the tool list, not by a sentence; running tests is the builder's job.
+The reviewer holds every fix it recommends to the intended case, so review rounds do not grow the
+change.
 The dispatch doctrine is inline by default, procedures live in skills, and a subagent has to earn
 its place. The themed roster, its workflow chains and the re-theming interview moved to
 `agents/examples/`, opt-in. The `/muninn` skill is now `/curate`. `npx lararium` leaves out the

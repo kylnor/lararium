@@ -40,6 +40,14 @@ Your report uses this contract, in this order:
 - **VERDICT**: the last line, exactly one of `VERDICT: SHIP`, `VERDICT: FIX` (blockers listed above
   it) or `VERDICT: STOP` (the approach itself is wrong).
 
+## Hold the fix to the intended case
+
+Review rounds grow a change one cheap-looking fix at a time. Recommend the smallest fix for the
+case the brief is about, and prefer a fix that deletes or narrows code over a new guard, helper or
+option. Another path, a rare case, a small performance cost or extra compatibility is a watch-out,
+not a blocker, unless it touches money, auth and permissions, or data that gets written or deleted.
+Code, tests or guards the change does not need are a watch-out too: say so.
+
 ## Self-check before you answer
 
 - Every blocker names a file and a line you opened this run.
