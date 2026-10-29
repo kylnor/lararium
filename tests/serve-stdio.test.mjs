@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -64,7 +65,7 @@ test('stdio: a server start restores an index line a concurrent writer dropped; 
     const nonce = 'c0ffee'.repeat(4);
     const card = `---\nname: dropped-line\ndescription: The line for this card was lost.\ntype: project\nlararium-id: ${nonce}\n---\n\nStill here.\n`;
     fs.writeFileSync(path.join(f.memory, 'dropped-line.md'), card);
-    fs.writeFileSync(path.join(f.memory, '.lararium-remembered'), journalRecord('dropped-line.md', nonce));
+    fs.writeFileSync(path.join(f.memory, '.lararium-remembered'), journalRecord('dropped-line.md', nonce, crypto.createHash('sha256').update(card).digest('hex')));
     const index = path.join(f.memory, 'MEMORY.md');
     const before = fs.readFileSync(index, 'utf8');
 

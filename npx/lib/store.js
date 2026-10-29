@@ -12,12 +12,17 @@
 // card, which memory-check reports as orphaned and repair does not adopt (it cannot tell it from a
 // hand-written one).
 //
-// Provenance is bound to the card the server wrote, not to a name. Each remember call draws a random
-// nonce, writes it into the card's frontmatter (`lararium-id`) and into a self-validating journal
-// record. Repair and the identical-bytes retry adopt a card only when its nonce matches a valid record
-// for that name, so a hand-written card of the same name is never taken for ours, and a torn, short or
-// failed journal append (which the caller sees as a failed remember) cannot be completed into a record
-// by whatever is appended later.
+// Provenance is bound to the bytes the server wrote, not to a name or a readable id. Each remember
+// call draws a random nonce, writes it into the card's frontmatter (`lararium-id`) and records, in a
+// self-validating journal record, the name, the nonce and the sha-256 of the card file's exact bytes.
+// Repair and the identical-bytes retry adopt a card only when a valid record exists for its name whose
+// nonce AND content hash both match what is on disk. `read` shows the nonce, so the nonce alone proves
+// nothing; any edit to the card, or new content under a copied nonce, fails the hash and the card is
+// left alone. Every journal append starts with a byte that can never end a line (`#`), so a torn,
+// short or failed append (which the caller sees as a failed remember) cannot be completed into a
+// record by anything appended later. The threat model trusts a local process that can write the memory
+// folder; this code is exact about what the SERVER wrote, and promises nothing about what a trusted
+// local writer can do with raw appends to the journal.
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -25,10 +30,13 @@ const { GuardError, resolveInside, openNoFollow, readFileNoFollow, writeFileAtom
 const { createLock, LockBusy, LockLost } = require('./lock');
 
 const CARD_TYPES = ['user', 'feedback', 'project', 'reference'];
-const JOURNAL_NAME = '.lararium-remembered'; // one `\nL1 <name>.md <nonce> <check>\n` record per card this server wrote
+const JOURNAL_NAME = '.lararium-remembered'; // one `#\nL1 <name>.md <nonce> <sha256> <check>\n` append per card this server wrote
 const NOT_CARDS = new Set(['MEMORY.md', 'DEMOTED.md', 'README.md', 'pointer-block.md', JOURNAL_NAME]);
-const JOURNAL_RECORD_RE = /^L1 ([a-z0-9]+(?:-[a-z0-9]+)*\.md) ([0-9a-f]{24}) ([0-9a-f]{16})$/;
+const JOURNAL_RECORD_RE = /^L1 ([a-z0-9]+(?:-[a-z0-9]+)*\.md) ([0-9a-f]{24}) ([0-9a-f]{64}) ([0-9a-f]{16})$/;
+const JOURNAL_LINE_MAX = 256;
+const JOURNAL_LEAD = '#\n'; // the first byte of every append is not a newline, so it can never complete a torn line
 const CARD_ID_KEY = 'lararium-id';
+const CARD_ID_RE = /^[0-9a-f]{24}$/;
 // An index entry line: `- name.md` or `- [text](path/name.md)`, followed by anything (usually ` - hook`).
 // Names are kept loose so hand-written cards still show as indexed. hooks/memory-check.mjs carries the
 // same parser (it ships standalone); tests/serve-store.test.mjs runs both against one fixture table.
@@ -50,6 +58,8 @@ const STOPWORDS = new Set((
   'that the this to was we what when where which who why with you your about remember know tell'
 ).split(' '));
 
+const stderrLog = line => process.stderr.write(`${line}\n`);
+
 class InputError extends Error {
   constructor(message) {
     super(message);
@@ -57,16 +67,19 @@ class InputError extends Error {
   }
 }
 
+// Frontmatter is `---` on a line of its own, fields, then `---` on a line of its own: a line such as
+// `---not-a-delimiter` closes nothing. The id is provenance, so it is read strictly: exactly one
+// `lararium-id:` line whose value is 24 bare hex characters; a duplicate, a quoted or any other value
+// means the card carries no id.
 function parseCard(file, text) {
   const card = { name: file.slice(0, -3), description: '', type: '', id: '', body: text };
-  if (!text.startsWith('---\n')) return card;
-  const end = text.indexOf('\n---', 4);
-  if (end === -1) return card;
-  const front = text.slice(4, end);
+  const m = text.match(/^---\n(?:([\s\S]*?)\n)?---(?:\n|$)/);
+  if (!m) return card;
+  const front = m[1] || '';
   const field = key => {
-    const m = front.match(new RegExp(`^${key}:[ \\t]*(.*)$`, 'm'));
-    if (!m) return '';
-    const raw = m[1].trim();
+    const found = front.match(new RegExp(`^${key}:[ \\t]*(.*)$`, 'm'));
+    if (!found) return '';
+    const raw = found[1].trim();
     if (raw.startsWith('"')) { // written by yamlLine below: a JSON string is a YAML double-quoted scalar
       try { return String(JSON.parse(raw)); } catch { /* fall through to the loose reader */ }
     }
@@ -74,8 +87,12 @@ function parseCard(file, text) {
   };
   card.description = field('description');
   card.type = field('type');
-  card.id = field(CARD_ID_KEY);
-  card.body = text.slice(end + 4).replace(/^\r?\n/, '');
+  const ids = front.match(new RegExp(`^${CARD_ID_KEY}:.*$`, 'gm')) || [];
+  if (ids.length === 1) {
+    const value = ids[0].slice(CARD_ID_KEY.length + 1).trim();
+    if (CARD_ID_RE.test(value)) card.id = value;
+  }
+  card.body = text.slice(m[0].length).replace(/^\r?\n/, '');
   return card;
 }
 
@@ -146,32 +163,36 @@ function withEntry(indexText, entry) {
 }
 
 // ---- journal records ----------------------------------------------------------------------------
-// A record is `\nL1 <name>.md <nonce> <check>\n`: <nonce> is 24 hex characters, <check> is the first 16 hex
-// characters of the sha-256 of everything before it (`L1 <name>.md <nonce>`). Two rules make a record
-// self-validating, and neither depends on what is appended later:
-//   1. The line must match the format and its checksum, so no torn prefix of it is a record.
-//   2. The line must end in a newline and the next line must be empty (end of file, or the leading
-//      newline of the next record). A record missing only its final newline, with the next record's
-//      leading newline completing it, would pass rule 1; it fails here because the next record's
-//      content follows directly.
-function journalRecord(file, nonce) {
-  const body = `L1 ${file} ${nonce}`;
-  return `\n${body} ${journalCheck(body)}\n`;
+// An append is `#\nL1 <name>.md <nonce> <sha256> <check>\n`: <nonce> is 24 hex characters, <sha256> is
+// the hex sha-256 of the card file's exact bytes, <check> is the first 16 hex characters of the sha-256
+// of everything before it (`L1 <name>.md <nonce> <sha256>`). A line is a record only when it matches the
+// format exactly, its checksum holds and a newline ends it. Nothing depends on what is appended later:
+//   - no torn prefix of a record is one (format and checksum);
+//   - the append opens with `#`, never a newline, so no later append, whole or cut short at any length,
+//     can supply the newline a torn record is missing: the torn line just grows a `#` and stays invalid.
+// A trusted local writer appending raw bytes to this file is outside the threat model.
+function journalRecord(file, nonce, hash) {
+  const body = `L1 ${file} ${nonce} ${hash}`;
+  return `${JOURNAL_LEAD}${body} ${journalCheck(body)}\n`;
 }
 
 function journalCheck(body) {
   return crypto.createHash('sha256').update(body).digest('hex').slice(0, 16);
 }
 
+function contentHash(bytes) {
+  return crypto.createHash('sha256').update(bytes).digest('hex');
+}
+
 function parseJournal(text) {
   const lines = text.split('\n');
   const records = [];
   for (let at = 0; at < lines.length - 1; at += 1) { // the last element has no newline after it: unterminated
-    if (lines[at + 1] !== '' || lines[at].length > 200) continue;
+    if (lines[at].length > JOURNAL_LINE_MAX) continue;
     const m = lines[at].match(JOURNAL_RECORD_RE);
     if (!m || m[1].length > MAX_CARD_NAME + 3) continue;
-    if (journalCheck(`L1 ${m[1]} ${m[2]}`) !== m[3]) continue;
-    records.push({ file: m[1], nonce: m[2] });
+    if (journalCheck(`L1 ${m[1]} ${m[2]} ${m[3]}`) !== m[4]) continue;
+    records.push({ file: m[1], nonce: m[2], hash: m[3] });
   }
   return records;
 }
@@ -201,14 +222,22 @@ function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT
       if (error instanceof LockBusy) throw new InputError(error.message);
       throw error;
     }
+    let result;
     try {
-      return await fn(held);
+      result = await fn(held);
     } catch (error) {
+      // The call is already failing, and its error is the one the caller needs (it may carry recovery
+      // guidance for a residual card). A lock that will not release must not replace it.
+      try {
+        held.release();
+      } catch (releaseError) {
+        stderrLog(`lararium: could not release the memory index lock (${releaseError && releaseError.code ? releaseError.code : 'error'}); it is taken over once it goes stale`);
+      }
       if (error instanceof LockLost) throw new InputError('the memory index changed while saving; send the same request again');
       throw error;
-    } finally {
-      held.release();
     }
+    held.release(); // the body succeeded, so a release failure is the news
+    return result;
   }
 
   function cardFiles() {
@@ -218,9 +247,10 @@ function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT
   }
 
   function loadCard(file) {
-    const text = readFileNoFollow(resolveInside(folder, file));
-    if (text === null) throw new GuardError(`${file} is no longer there`);
-    return { file, text, ...parseCard(file, text) };
+    const bytes = readFileNoFollow(resolveInside(folder, file), null);
+    if (bytes === null) throw new GuardError(`${file} is no longer there`);
+    const text = bytes.toString('utf8');
+    return { file, text, hash: contentHash(bytes), ...parseCard(file, text) };
   }
 
   function pointered() {
@@ -235,8 +265,8 @@ function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT
   // separate processes land one after another on a local disk. Not atomic on network disks. A short
   // write or a failed close throws: the record may be torn or half-trusted, so the caller must treat the
   // card as not remembered (journalRecord and parseJournal say why that is safe).
-  function journalAppend(file, nonce) {
-    const record = Buffer.from(journalRecord(file, nonce));
+  function journalAppend(file, nonce, hash) {
+    const record = Buffer.from(journalRecord(file, nonce, hash));
     const fd = openNoFollow(path.join(realFolder(), JOURNAL_NAME), fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT, 0o644);
     let failure = null;
     try {
@@ -254,17 +284,21 @@ function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT
     if (failure) throw failure;
   }
 
-  // The valid journal records, oldest first, as a Map of card file to the nonces recorded for it (a name
-  // can be remembered, deleted and remembered again). See parseJournal for what counts as valid.
+  // The valid journal records, oldest first, as a Map of card file to the { nonce, hash } pairs recorded
+  // for it (a name can be remembered, deleted and remembered again). See parseJournal for what counts.
   function journaled() {
     const text = readFileNoFollow(path.join(realFolder(), JOURNAL_NAME));
     const out = new Map();
-    for (const { file, nonce } of text === null ? [] : parseJournal(text)) {
-      if (!out.has(file)) out.set(file, new Set());
-      out.get(file).add(nonce);
+    for (const { file, nonce, hash } of text === null ? [] : parseJournal(text)) {
+      if (!out.has(file)) out.set(file, []);
+      out.get(file).push({ nonce, hash });
     }
     return out;
   }
+
+  // True when a valid record for `file` names this nonce and this content hash: the server wrote exactly
+  // these bytes. A nonce alone is readable through `read`, so it is never enough.
+  const vouches = (known, file, id, hash) => Boolean(id) && (known.get(file) || []).some(r => r.nonce === id && r.hash === hash);
 
   // Cards listed in DEMOTED.md: pull-tier on purpose, never given a pointer back.
   function demotedFiles() {
@@ -287,20 +321,22 @@ function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT
   }
 
   // Index lines for the journaled cards that exist, have no pointer in `indexText` and were not
-  // demoted. A card counts only if it carries a nonce the journal recorded for its name: cards written
-  // by hand, and hand-written cards that reuse a journaled name, are never touched.
+  // demoted. A card counts only if its nonce and its exact bytes are what the journal recorded for its
+  // name: cards written by hand, hand-written cards that reuse a journaled name, and journaled cards
+  // edited since are never touched.
   function missingLines(indexText) {
     const pointers = pointersOf(indexText);
     const demoted = demotedFiles();
     const lines = [];
-    for (const [file, nonces] of journaled()) {
+    const known = journaled();
+    for (const file of known.keys()) {
       if (pointers.has(file) || demoted.has(file)) continue;
       let card;
       try { card = loadCard(file); } catch (error) {
         if (error instanceof GuardError) continue; // gone, or a link: nothing to point at
         throw error;
       }
-      if (!card.id || !nonces.has(card.id)) continue;
+      if (!vouches(known, file, card.id, card.hash)) continue;
       lines.push(`- ${file} - ${hookFor(card)}`);
     }
     return lines;
@@ -427,10 +463,10 @@ function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT
 
   // Writes one card, journals it, and prepends its index line, under the index lock. Never
   // overwrites: a name that exists is refused, with one exception that makes a retry safe. If the
-  // card on disk carries a nonce the journal recorded for that name (so this server made it; a
-  // hand-written card cannot), is otherwise byte for byte what this call would write, has no index
-  // line and was not demoted, an earlier call wrote the card and stopped before the index; this call
-  // finishes that line and writes no second record.
+  // card on disk carries a nonce and has exact bytes that one valid journal record holds for that name
+  // (so this server wrote these bytes; a hand-written or edited card cannot match), is byte for byte
+  // what this call would write, has no index line and was not demoted, an earlier call wrote the card
+  // and stopped before the index; this call finishes that line and writes no second record.
   // The index and the journal are read (through no-follow descriptors) before the card is written,
   // so a refused aux file leaves no orphan card. The card is created first, then journaled; if the
   // journal append fails (an error, a short write, a failed close) the call fails and the card this
@@ -445,6 +481,7 @@ function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT
       const file = `${card.name}.md`;
       const nonce = crypto.randomBytes(12).toString('hex');
       const text = cardText(card, nonce);
+      const hash = contentHash(Buffer.from(text, 'utf8'));
       const entry = `- ${file} - ${card.description}`;
       const current = readFileNoFollow(indexPath);
       const indexText = current === null ? '# Memory\n\n' : current;
@@ -457,16 +494,17 @@ function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT
         created = true;
       } catch (error) {
         if (error.code !== 'EEXIST') throw error;
-        const onDisk = readFileNoFollow(target);
+        const bytes = readFileNoFollow(target, null);
+        const onDisk = bytes === null ? null : bytes.toString('utf8');
         const id = onDisk === null ? '' : parseCard(file, onDisk).id;
-        const serverMade = Boolean(id) && Boolean(known.get(file) && known.get(file).has(id));
+        const serverMade = bytes !== null && vouches(known, file, id, contentHash(bytes));
         if (!serverMade || alreadyIndexed || onDisk !== cardText(card, id) || demotedFiles().has(file)) {
           throw new InputError(`a card named ${card.name} already exists; choose a different name`);
         }
       }
       if (created) {
         try {
-          journalAppend(file, nonce);
+          journalAppend(file, nonce, hash);
         } catch (error) {
           const why = error && error.code ? error.code : 'write error';
           let removed = true;
@@ -517,4 +555,4 @@ function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT
   return { folder, list, read, searchText, remember, heal, cardFiles, loadCard };
 }
 
-module.exports = { createStore, InputError, GuardError, CARD_TYPES, tokenize, journalRecord, parseJournal };
+module.exports = { createStore, InputError, GuardError, CARD_TYPES, tokenize, journalRecord, parseJournal, contentHash };

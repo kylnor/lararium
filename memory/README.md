@@ -110,8 +110,9 @@ destroyed by a bad edit. Now a card is in exactly one of three states:
 
 If the memory server (`npx lararium serve`) is in use, it also keeps `.lararium-remembered` in this
 folder: one self-checking record per card it wrote (the card carries a matching `lararium-id` line in
-its frontmatter), so it can restore an index line that a concurrent writer dropped. Leave the
-`lararium-id` line in place; a card without it is yours, and the server never touches it. It is not a card and not an index; leave it alone (it may be committed or
+its frontmatter and the record holds a hash of the card's exact bytes), so it can restore an index
+line that a concurrent writer dropped. Leave the `lararium-id` line in place. A card you wrote or
+edited by hand is yours: once its bytes differ from what the server wrote, the server never touches it. It is not a card and not an index; leave it alone (it may be committed or
 ignored, as you prefer).
 
 `node hooks/memory-check.mjs .` reports all three, plus dangling pointers (a line for a file that

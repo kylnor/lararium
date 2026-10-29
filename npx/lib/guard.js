@@ -77,7 +77,7 @@ function openNoFollow(file, flags, mode = 0o644) {
 
 // The text of a regular file read through a no-follow descriptor, or null when it is not there.
 // A symbolic link (even a dangling one) is a GuardError, never an empty file.
-function readFileNoFollow(file) {
+function readFileNoFollow(file, encoding = 'utf8') { // encoding null returns the exact bytes as a Buffer
   let fd;
   try {
     fd = openNoFollow(file, fs.constants.O_RDONLY | O_NONBLOCK); // O_NONBLOCK: a FIFO must not hang the open
@@ -87,7 +87,7 @@ function readFileNoFollow(file) {
   }
   try {
     if (!fs.fstatSync(fd).isFile()) throw new GuardError(`${path.basename(file)} is not a regular file`);
-    return fs.readFileSync(fd, 'utf8');
+    return encoding === null ? fs.readFileSync(fd) : fs.readFileSync(fd, encoding);
   } finally {
     fs.closeSync(fd);
   }

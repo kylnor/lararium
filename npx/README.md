@@ -82,14 +82,20 @@ lock file (`.memory-index.lock`), and a symbolic link in place of `MEMORY.md` or
 The cards are canonical and the index line is derived: every card the server writes is also recorded
 in `memory/.lararium-remembered` (an append-only journal, one self-checking record per card), and the
 index is brought back in line with it. Each call also stamps its card with a random `lararium-id` in the
-frontmatter; a record is `\nL1 <name>.md <id> <check>\n`, where `<check>` is a sha-256 prefix of the rest
-of the line. The journal only vouches for a card whose id matches a valid record for its name.
+frontmatter, which `read` shows. A journal append is `#\nL1 <name>.md <id> <sha256> <check>\n`: `<sha256>`
+is the hash of the card file's exact bytes and `<check>` is a sha-256 prefix of the rest of the line.
+The journal only vouches for a card whose id AND exact bytes match one valid record for its name. The id
+alone proves nothing, since anyone who can `read` the card sees it; it is the hash that binds the record
+to what the server wrote. Edit a card and the server stops vouching for it (repair no longer restores
+its index line), which is the safe direction.
 
 **Threat model.** The server defends against the callers of its tools: HTTP and stdio clients,
 including cloud apps reaching it over a tunnel. They get a token tier, names that can only be plain
 card files in the memory folder, errors with no local paths in them (the full error goes to the
 server's own log), and a read tier that has no `remember` at all. A local process that can already
-write into the memory folder is trusted, because it can edit the cards directly. Inside that model the
+write into the memory folder is trusted, because it can edit the cards directly, and that includes
+appending raw bytes to the journal: that is out of scope, and nothing here claims to defeat it. What
+the server is exact about is what it wrote itself. Inside that model the
 server avoids following symbolic links it did not create: the index, the lock file and the vector
 cache are opened without following a link and read or written through the open file, and the cache
 folder is checked again before anything is committed. It does not try to win a race against a hostile
@@ -112,11 +118,14 @@ fails is not retried until the next `remember` or start. Until a line is restore
 `node hooks/memory-check.mjs .` shows the card as orphaned. The repair only touches cards the server
 itself wrote: a card you wrote by hand is never given a pointer, and a card you demoted (line removed
 from `MEMORY.md` and listed in `DEMOTED.md`) is never given one back. A `remember` that names a card
-already on disk finishes that card's index line only when the card carries an id that a valid journal
-record recorded for that name and its bytes match what the call would write; a hand-written card of
-the same name, even a byte-for-byte copy without the id, is refused and never adopted. A torn or short
-journal append can never be completed into a record by what is appended later: a record needs its
-checksum and must be followed by a blank line or the end of the file. Descriptions with an HTML
+already on disk finishes that card's index line only when one valid journal record for that name holds
+the card's id and the hash of its exact bytes, and those bytes match what the call would write. A
+hand-written card of the same name is refused and never adopted, and so is a card that kept a copied
+id but has other content, a duplicate or quoted id, or a frontmatter whose closing line is not exactly
+`---`. A torn or short journal append is never completed into a record by what the server appends
+later: a record needs its checksum and a final newline, and every append opens with a `#`, so the
+first byte of a later append, whole or cut short at any length, lands on the torn line and keeps it
+invalid. Descriptions with an HTML
 comment marker (`<!--`, `-->`) or a control character (C0, DEL or C1) are refused, so a caller cannot
 hide or inject index lines. The index parser counts `- name.md` and `- [text](path/name.md)` lines
 (anything may follow) outside `<!-- -->` blocks, and `memory-check` uses the same rules.
@@ -128,10 +137,14 @@ orphaned, and the fix is to add its index line by hand or delete the file. If th
 written and the server then also cannot remove the card it just created (a permissions problem, say),
 the tool error says the call failed and that a residual card may remain at `<name>.md` in the memory
 folder. Recover by deleting that file, after which the same `remember` works; or keep it by adding its
-line to `MEMORY.md` by hand. The residual card is not adopted by repair and an identical retry is
-refused, unless the journal record was written in full and only the close failed: that card is the
-server's own, and a retry finishes its index line. Local disks only: appends to
-the journal are not atomic on network filesystems, and the lock needs hard links.
+line to `MEMORY.md` by hand. A residual card is not adopted by repair and an identical retry is
+refused, unless a valid journal record for it exists and holds the hash of its exact bytes. That
+happens when the record was written in full and only the close failed. A residual card adopted that
+way is byte for byte what the server wrote, so a retry or the next repair finishing its index line is
+the intended outcome, not a gap. If the lock also fails to release while the call is already failing,
+the tool error stays the residual-card message and the lock failure is logged to the server's stderr
+(without a path); a lock failure on a call that otherwise succeeded is reported as the error. Local
+disks only: appends to the journal are not atomic on network filesystems, and the lock needs hard links.
 One accepted gap: rotating the tokens does not cancel a request that was already
 authenticated and is still in flight; it finishes, and every request after it is refused.
 
