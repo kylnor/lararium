@@ -29,10 +29,10 @@ the next call, no restart. (Tokens you set in environment variables are the exce
 and restart.)
 
 Once the server says a card is saved, the card is on disk. If two apps write at the same instant, the
-worst case is a card that drops off the map for a moment, and the next write or the next start puts it
-back. The memory check shows it in between. To take a card off the map on purpose, list it in
-DEMOTED.md and the server leaves it alone. It's built for a folder on your own disk, not a network
-share.
+worst case is a card that drops off the map for a moment. The server tries to put it back on its next
+write, and again each time it starts with write access. The memory check shows the gap in between. To
+take a card off the map on purpose, delete its line from the map and list it in DEMOTED.md, so the
+server leaves it alone. It's built for a folder on your own disk, not a network share.
 
 Search is plain text by default. If you want it to find things by meaning, the server can use a small
 embedding model running on your own machine. It's off until you turn it on, it never sends your cards
