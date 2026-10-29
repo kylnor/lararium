@@ -91,7 +91,10 @@ test('the default read-only agents grant no shell and no write tools', () => {
 });
 
 const py = spawnSync('python3', ['-c', 'import yaml'], { encoding: 'utf8' });
-test('every frontmatter block parses with a real YAML parser (PyYAML)', { skip: py.status !== 0 && 'python3 with PyYAML not available' }, () => {
+// Local runs may skip without PyYAML; CI installs it, and CI=true turns a missing parser into a failure.
+const needPy = py.status !== 0 && process.env.CI !== 'true';
+test('every frontmatter block parses with a real YAML parser (PyYAML)', { skip: needPy && 'python3 with PyYAML not available (CI requires it)' }, () => {
+  assert.equal(py.status, 0, 'CI=true needs python3 with PyYAML (pip install pyyaml)');
   const script = [
     'import sys, yaml',
     'bad = []',

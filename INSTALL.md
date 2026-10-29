@@ -100,7 +100,8 @@ install the shared pointer block so each reads the same files. Ask which CLIs th
    repository itself; make the user's own stack first.
 4. Without `node`, do it by hand: copy `memory/pointer-block.md`, replace `{{STACK_ROOT}}` with
    this folder's full path and `{{STACK_ROOT_SHELL}}` with the same path wrapped in single quotes,
-   and append it to each file. Check the file for an existing
+   where every single quote inside the path is written as `'\''` (so `/home/it's/stack` becomes
+   `'/home/it'\''s/stack'`), and append it to each file. Check the file for an existing
    `lararium:shared-memory:start` marker first.
 5. Test each CLI the user has, in a new session, with no hints: "In one line: where does my memory
    live and how do I search it?" It should name this folder's map and a grep. If it does not,

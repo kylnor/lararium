@@ -49,7 +49,9 @@ startup hook uses to tell a blank template from the user's own file; change them
 
 - `tests/` holds the contributor tests (persona scrub, frontmatter, scaffold). The scaffolder drops
   `tests/`, so a stranger's stack never carries them. Run `node --test hooks/*.test.mjs tests/*.test.mjs`;
-  the scaffold test packs the git index, so stage new files first.
+  the scaffold test packs the git index, so stage new files first. The suite needs a git checkout
+  (it runs `git ls-files` and `git archive`), not a source export. To audit one specific commit,
+  set `LARARIUM_ARCHIVE_REF=HEAD` (or a SHA) so the scaffold test packs that ref instead of the index.
 - Anything a stranger should not receive is listed in `CONTRIBUTOR_ONLY` in `npx/index.js`.
 
 - `node --check` any `.mjs` you touch (`skills/defs/*/`, `npx/`).

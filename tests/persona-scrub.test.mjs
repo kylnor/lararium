@@ -7,6 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -75,4 +76,37 @@ test('private data is flagged in every place, fictional examples included', () =
   assert.ok(privateHits('docs/blog/x.md', 'write to jane@corp.io').length >= 1);
   assert.equal(privateHits('docs/blog/x.md', 'path /Users/yourname/brain and jane@example.com').length, 0);
   assert.ok(NAMES.length > 40);
+});
+
+// The fake credential is built at run time so this file never carries a real-looking secret itself.
+const fakePat = () => 'ghp_' + 'a'.repeat(30);
+
+test('the repo slug is exempt by itself: a credential or another name in the same URL is still caught', () => {
+  const url = `https://x-access-token:${fakePat()}@github.com/kylnor/lararium.git`;
+  assert.ok(privateHits('docs/x.md', `git clone ${url}`).some(h => h.includes('api key')), 'a token inside a clone URL must be caught');
+  assert.ok(privateHits('docs/x.md', fakePat()).length >= 1, 'control: the bare token is caught');
+  assert.ok(nameHits('docs/x.md', 'see github.com/kylnor/lararium?owner=Kyle').some(h => h.includes('"Kyle"')), 'a name beside the slug must be caught');
+  assert.ok(nameHits('docs/x.md', 'github.com/kylnor/lararium-of-kyle').length >= 1);
+  assert.equal(nameHits('docs/x.md', 'https://github.com/kylnor/lararium/blob/main/SCRUB.md').length, 0, 'the slug alone stays exempt');
+  assert.equal(nameHitsInPath('docs/kylnor/lararium.md').length, 0);
+  assert.ok(nameHitsInPath('docs/kylnor/lararium/Kyle.md').length >= 1);
+});
+
+test('tests/ is scanned for private data too; the only exemptions are exact strings in named files', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scrub-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'tests'));
+    const put = (f, t) => fs.writeFileSync(path.join(dir, f), t);
+    put('tests/leak.txt', `token ${fakePat()}\n`);
+    put('tests/other.test.mjs', "const p = '/home/alice/.ssh';\n");
+    put('tests/persona-scrub.test.mjs', `const p = '/home/alice/.ssh';\nconst t = '${fakePat()}';\n`);
+    const hits = f => scan(dir, [f], () => true);
+    assert.ok(hits('tests/leak.txt').some(h => h.includes('api key')), 'a credential in a tests/ file is caught');
+    assert.ok(hits('tests/other.test.mjs').length >= 1, 'a listed fixture is exempt in its own file only');
+    const own = hits('tests/persona-scrub.test.mjs');
+    assert.equal(own.length, 1, 'the named fixture passes, the real-looking token in the same file does not');
+    assert.ok(own[0].includes('api key'));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

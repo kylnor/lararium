@@ -44,7 +44,7 @@ Plain definitions, no backstory, in `defs/`:
 | agent | use it for | tools |
 |---|---|---|
 | `reviewer` | adversarial review of a finished branch, ending in a `VERDICT` line | Read, Grep, Glob only; the builder supplies test output |
-| `researcher` | read-heavy questions that return a compact answer with `file:line` or URL evidence | no edit tools; Bash and web for reading, by instruction |
+| `researcher` | read-heavy questions that return a compact answer with `file:line` or URL evidence | no edit tools; Bash and web for reading, trusted by instruction and not permission-enforced |
 | `verifier` | re-proving a non-code deliverable against ground truth before it is trusted | Read, Grep, Glob only; the caller supplies command output |
 
 Each one says where to look, what done looks like, and a self-check. That is deliberate: a persona

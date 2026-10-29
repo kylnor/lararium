@@ -17,4 +17,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # the frontmatter test parses with real PyYAML and fails (not skips) when CI cannot find it
+      - run: pip install pyyaml
       - run: node --test hooks/memory-check.test.mjs hooks/memory-loop.test.mjs hooks/memory-pointers.test.mjs hooks/memory-cards.test.mjs tests/persona-scrub.test.mjs tests/agent-defs.test.mjs tests/scaffold.test.mjs

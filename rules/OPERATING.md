@@ -182,6 +182,9 @@ trusted, merged, or acted on.
   homework, and the grader does not rewrite the homework.
 - **No contract, nothing to judge against.** The dispatch names the contract (the brief, the task,
   the ship-definition) and the ground-truth sources. A missing contract is itself the finding.
+- **The gate is optional.** Nothing here makes per-deliverable dispatch the default. It is one
+  instance of the separate-permissions reason to dispatch (the Judge holds no write tools), so adopt
+  it only for output you would otherwise trust unchecked.
 - **Two triggers, one capability.** The gate (dispatch per deliverable, synchronous) and the
   patrol (`agents/patrol/`, a daily sweep re-proving work already claimed done, max 3
   receipt-backed findings to a persistent queue). Build the gate first; the patrol is nearly free

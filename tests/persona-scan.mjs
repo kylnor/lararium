@@ -31,9 +31,11 @@ export const GENERIC = ['mirror', 'signal', 'spoiler'];
 const NAME_RE = new RegExp(`(?<![a-z])(?:${NAMES.join('|')})(?![a-z])`, 'gi');
 const splitCamel = text => text.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
 
-// The GitHub slug is the one name that must stay. Anything shaped like a URL or remote to it is
-// removed before scanning.
-const REPO_TOKEN = /\S*kylnor\/lararium\S*/gi;
+// The GitHub slug is the one name that must stay, and only the literal slug is exempt. The text
+// around it is still scanned, so `github.com/kylnor/lararium?owner=Kyle` still flags "Kyle". The
+// private-data scan never removes anything of the sort (a token inside a clone URL is still a token).
+export const REPO_SLUG = 'kylnor/lararium';
+const withoutSlug = text => text.split(REPO_SLUG).join(' ');
 
 // Narrow, named exceptions. Each strips one exact string from one file before the scan, so the
 // same file can still leak anything else.
@@ -46,6 +48,16 @@ export const EXACT_STRIPS = {
 
 // Where the repo tree (not a scaffolded stack) may carry names: the opt-in roster, the blog and the
 // release history tell the story, and the contributor tests have to spell the list out.
+// The same idea for private data: one exact synthetic string in one named file, for the contributor
+// tests that have to spell a fake leak out to prove the scanner catches it. Anything else in the file,
+// and the same string anywhere else, still counts. Prefer building a fixture at run time instead.
+const SCRUB_TEST_FIXTURES = ['/home/alice/.ssh', 'box.tail1234.ts.net', 'sk-abcdefghijklmnopqrstuvwxyz0123', 'jane@corp.io'];
+export const PRIVATE_EXACT_STRIPS = {
+  // the scrub test spells fake leaks out to prove the scanner catches them; this file lists them
+  'tests/persona-scrub.test.mjs': SCRUB_TEST_FIXTURES,
+  'tests/persona-scan.mjs': SCRUB_TEST_FIXTURES,
+};
+
 export const NAME_ALLOWED_PREFIXES = ['agents/examples/', 'docs/blog/', 'tests/'];
 export const NAME_ALLOWED_FILES = new Set(['CHANGELOG.md']);
 
@@ -54,7 +66,7 @@ export function nameHits(file, text) {
   for (const s of EXACT_STRIPS[file] || []) body = body.split(s).join(' ');
   const found = [];
   body.split('\n').forEach((line, i) => {
-    const clean = splitCamel(line.replace(REPO_TOKEN, ' '));
+    const clean = splitCamel(withoutSlug(line));
     for (const m of clean.matchAll(NAME_RE)) found.push(`${file}:${i + 1}: name "${m[0]}"  ${line.trim().slice(0, 100)}`);
   });
   return found;
@@ -62,7 +74,7 @@ export function nameHits(file, text) {
 
 export function nameHitsInPath(file) {
   const found = [];
-  for (const m of splitCamel(file.replace(REPO_TOKEN, ' ')).matchAll(NAME_RE)) found.push(`${file}: name "${m[0]}" in the path`);
+  for (const m of splitCamel(withoutSlug(file)).matchAll(NAME_RE)) found.push(`${file}: name "${m[0]}" in the path`);
   return found;
 }
 
@@ -77,13 +89,16 @@ const PRIVATE = [
 // Fictional or documented placeholders, exempted by the exact matched string wherever they appear.
 const PRIVATE_PLACEHOLDERS = new Set([
   '/Users/yourname', '/home/you', '/home/it', 'AKIAIOSFODNN7EXAMPLE', '0.0.0.0', '127.0.0.1',
+  'git@github.com', // the ssh user every GitHub remote uses, not an address
 ]);
 const PLACEHOLDER_EMAIL = /@(?:example\.(?:com|org|net)|users\.noreply\.github\.com)$/i;
 
 export function privateHits(file, text) {
+  let body = text;
+  for (const s of PRIVATE_EXACT_STRIPS[file] || []) body = body.split(s).join(' ');
   const found = [];
-  text.split('\n').forEach((line, i) => {
-    const clean = line.replace(REPO_TOKEN, ' ');
+  body.split('\n').forEach((line, i) => {
+    const clean = line;
     for (const [kind, re] of PRIVATE) {
       for (const m of clean.matchAll(re)) {
         if (PRIVATE_PLACEHOLDERS.has(m[0]) || (kind === 'email' && PLACEHOLDER_EMAIL.test(m[0]))) continue;
@@ -127,8 +142,7 @@ export function scan(root, files, namesAllowedHere = () => false) {
     const text = readText(root, file);
     if (text === null) continue;
     if (!namesAllowedHere(file)) found.push(...nameHitsInPath(file), ...nameHits(file, text));
-    // the contributor tests carry the banned lists as data, so private patterns skip them only
-    if (!file.startsWith('tests/')) found.push(...privateHits(file, text));
+    found.push(...privateHits(file, text));
   }
   return found;
 }
