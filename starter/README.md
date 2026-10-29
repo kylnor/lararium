@@ -86,6 +86,8 @@ one-line pointer to `memory/MEMORY.md` (the card format is in `memory/README.md`
 startup hook loads that index at the start of each Claude Code session, so a lesson learned once
 stays learned. Check any time with `node hooks/memory-check.mjs .`.
 
+Want your apps to share this memory too? Ask your AI to run Phase 5.
+
 ## When you outgrow the starter
 
 Everything else is optional and you add it when the pain shows up, not before:
@@ -98,6 +100,7 @@ Everything else is optional and you add it when the pain shows up, not before:
 | Your instruction file keeps growing and agents skip it | governance and a constitution | `governance/README.md` |
 | You hand builds to agents and they guess what you meant | the forge | `forge/README.md` |
 | One project needs its own space | a workspace, once it has earned one | `workspaces/README.md` |
+| Claude Desktop, the Claude app or ChatGPT should share this memory | the memory server | `INSTALL.md`, Phase 5 |
 | Grep stops finding things at your scale | the index | `clocktower/README.md` |
 | A machine fills its disk or loses unpushed work | the ops guards | `docs/ops-guards.md` |
 

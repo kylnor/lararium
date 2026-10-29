@@ -15,6 +15,47 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 
 ---
 
+## v3.1 (2026-10-28): additive-doc
+
+Memory for the apps that cannot read your folder. v3.0 pointed every coding CLI at the same files;
+the Claude app, Claude Desktop and ChatGPT could not follow. v3.1 adds a small local MCP server over
+the memory folder, so they search, read and add to the same cards.
+
+**`npx lararium serve`** (npm package `0.3.0`). Four tools: `search`, `read`, `list`, `remember`.
+`remember` writes exactly the v3 card format, one fact per file plus its index line. Stdio and
+streamable HTTP; HTTP always needs a bearer token, with a read tier that has no `remember` and a write
+tier. A small OAuth 2.1 sign-in covers ChatGPT (OAuth only) and the Claude app. Node 20+, the official
+MCP SDK, no database. Optional semantic search with a local EmbeddingGemma 2, off by default, falling
+back to full-text whenever the model is missing. Details in `npx/README.md`. Rotating the tokens
+revokes on a server that is already running, the index and vector cache refuse symbolic links, the
+vector cache carries a model fingerprint, and several servers on one folder take turns on the index;
+if a race still drops an index line, the card is safe and the server tries to restore the line on its next write or when a writable server starts
+(best effort: `--read-only` never repairs, repair stops at an unclosed `<!--` comment, an edited card is never re-adopted, and a crash between creating a card and journaling it leaves a card repair cannot adopt).
+Journal records are self-checking (`L1 <name>.md <id> <sha256> <check>`, each append opening with a
+`#`) and each card carries the matching `lararium-id`; the record holds the hash of the card's exact
+bytes, so a torn or failed append can never become a record later, and a hand-written or edited card
+of the same name is never adopted, even one that copied the id. If cleanup after a failed `remember` cannot remove the card, the
+error names it. The pointer rules in `hooks/memory-check.mjs` now match the server's, and C1 control
+characters are refused in descriptions. A `remember` is flushed to disk (card, journal, index and the
+folder entry) before it is acknowledged, a failed flush counts as a failed write, and repeating a
+`remember` for a card the server already made and indexed succeeds instead of asking for a new name.
+Reserved names such as `pointer-block` are refused, and an unavailable-model message never shows the
+model, path or endpoint to the caller (the local log keeps them).
+
+**INSTALL.md Phase 5 is rewritten.** It used to describe the Postgres index. It is now the guided,
+local-first setup: start the server, add it to each tool, prove a round trip, then optionally add
+local semantic search and, last, a public HTTPS address for cloud apps (Tailscale Funnel or
+Cloudflare Tunnel), with a dated "where it is right now" box for the Claude app and ChatGPT. The
+database index is now a closing pointer inside Phase 5 and still lives in `clocktower/README.md`.
+
+**To adopt:** copy the new Phase 5 from `INSTALL.md` and the one-line invitation at the end of the
+"What your assistant does after that" section of `starter/README.md` (plus its matching row in the
+"When you outgrow the starter" table), then ask your assistant to run Phase 5. Nothing else in your
+stack changes. If you maintain your own copy of the scaffolder: `npx lararium serve` used to scaffold
+a folder named `serve`; write `npx lararium ./serve` for that.
+
+---
+
 ## v3.0 (2026-10-28): structural
 
 Memory that follows you across agents. The one problem people keep naming is that memory lives in

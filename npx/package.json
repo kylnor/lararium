@@ -1,16 +1,18 @@
 {
   "name": "lararium",
-  "version": "0.2.0",
-  "description": "One-line scaffolder for the lararium template: fetches the latest release and unpacks it into a new folder.",
+  "version": "0.3.0",
+  "description": "The lararium template scaffolder, plus `lararium serve`: your memory folder as a small MCP server for Claude, ChatGPT and your coding agents.",
   "bin": {
     "lararium": "./index.js"
   },
   "files": [
     "index.js",
+    "serve.js",
+    "lib/",
     "README.md"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "license": "MIT",
   "repository": {
@@ -18,9 +20,16 @@
     "url": "https://github.com/kylnor/lararium.git"
   },
   "keywords": [
-    "scaffold",
-    "template",
+    "agentic",
     "claude-code",
-    "agentic"
-  ]
+    "mcp",
+    "memory",
+    "model-context-protocol",
+    "scaffold",
+    "template"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "zod": "3.25.76"
+  }
 }

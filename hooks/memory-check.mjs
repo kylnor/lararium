@@ -58,9 +58,34 @@ for (const [relative, required, remedy] of checks) {
 // dangling pointers and broken frontmatter, and never adds a pointer (re-adding one would silently
 // undo a considered demotion).
 const CARD_TYPES = new Set(['user', 'feedback', 'project', 'reference']);
-const NOT_CARDS = new Set(['MEMORY.md', 'DEMOTED.md', 'README.md', 'pointer-block.md']);
+const NOT_CARDS = new Set(['MEMORY.md', 'DEMOTED.md', 'README.md', 'pointer-block.md', '.lararium-remembered']);
 const INDEX_MAX_LINES = 200;
 const INDEX_MAX_BYTES = 24000;
+// Pointer detection mirrors the memory server's parser (npx/lib/store.js, parseIndex and ENTRY_RE) so
+// the checker and the server never disagree about what counts as a pointer. This file ships standalone,
+// so the logic is copied, not imported; tests/serve-store.test.mjs runs both against one fixture table.
+// A line is a pointer when it is `- name.md` or `- [text](path/name.md)` (anything may follow) outside a
+// comment block. A comment block starts with a line that begins with `<!--` and runs to the first line
+// holding `-->`.
+const ENTRY_RE = /^- (?:\[[^\]]*\]\(([^)]+\.md)\)|([A-Za-z0-9][A-Za-z0-9._-]*\.md)(?![A-Za-z0-9._-]))/;
+function pointersOf(indexText) {
+  const found = new Set();
+  let inComment = false;
+  for (const raw of indexText.split('\n')) {
+    const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
+    if (inComment) {
+      if (line.includes('-->')) inComment = false;
+      continue;
+    }
+    if (line.startsWith('<!--')) {
+      if (!line.includes('-->', 4)) inComment = true;
+      continue;
+    }
+    const m = line.match(ENTRY_RE);
+    if (m) found.add(path.basename(m[1] || m[2]));
+  }
+  return found;
+}
 function cardFindings(memoryDir) {
   const out = { problems: [], notes: [] };
   let files;
@@ -69,11 +94,7 @@ function cardFindings(memoryDir) {
   const read = name => { try { return fs.readFileSync(path.join(memoryDir, name), 'utf8'); } catch { return null; } };
   const index = read('MEMORY.md');
   if (index === null) out.problems.push('memory/MEMORY.md is missing: the index is what pushes cards into context.');
-  const pointered = new Set();
-  for (const line of (index || '').replace(/<!--[\s\S]*?-->/g, '').split('\n')) {
-    const m = line.match(/^- (?:\[[^\]]*\]\(([^)]+\.md)\)|(\S+\.md))/);
-    if (m) pointered.add(path.basename(m[1] || m[2]));
-  }
+  const pointered = pointersOf(index || '');
   const demoted = new Set();
   for (const line of (read('DEMOTED.md') || '').replace(/<!--[\s\S]*?-->/g, '').split('\n')) {
     const m = line.match(/^- (\S+\.md)/);

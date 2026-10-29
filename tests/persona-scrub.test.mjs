@@ -3,7 +3,7 @@
 // half that matters (the scaffolded stack a stranger actually receives) is tests/scaffold.test.mjs.
 //
 // LARARIUM_SCRUB_ROOT points the scan at another git checkout, used to prove the test fails on an
-// older tree. Node 18 compatible.
+// older tree. Node 20 compatible.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

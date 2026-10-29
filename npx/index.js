@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
-// lararium scaffolder. Node stdlib only, zero dependencies.
+// lararium scaffolder. This file uses the Node stdlib only. The package does have dependencies (the MCP
+// SDK, see package.json), but only `serve` loads them, on demand, so scaffolding never touches them.
 // Fetches the latest release of the lararium template and unpacks it
 // into a new folder. See README.md in this package for the three-step story.
 
@@ -191,9 +192,18 @@ async function run() {
 }
 
 if (require.main === module) {
-  run().catch((err) => {
-    fail(err && err.message ? err.message : String(err));
-  });
+  // `serve` is the one subcommand: the memory server. It is loaded on demand so scaffolding never
+  // needs the MCP SDK. Everything else is the scaffolder, unchanged.
+  if (process.argv[2] === 'serve') {
+    require('./serve').main(process.argv.slice(3)).catch((err) => {
+      console.error(`lararium serve: ${err && err.message ? err.message : String(err)}`);
+      process.exit(1);
+    });
+  } else {
+    run().catch((err) => {
+      fail(err && err.message ? err.message : String(err));
+    });
+  }
 }
 
 module.exports = { unpack, CONTRIBUTOR_ONLY, EXAMPLES_DIR };

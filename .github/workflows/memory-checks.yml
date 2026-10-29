@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node: [18, 22]
+        node: [20, 22]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -25,4 +25,6 @@ jobs:
           python-version: '3.12'
       # the frontmatter test parses with real PyYAML and fails (not skips) when CI cannot find it
       - run: pip install pyyaml
-      - run: node --test hooks/memory-check.test.mjs hooks/memory-loop.test.mjs hooks/memory-pointers.test.mjs hooks/memory-cards.test.mjs tests/persona-scrub.test.mjs tests/agent-defs.test.mjs tests/scaffold.test.mjs tests/workflows.test.mjs tests/docs.test.mjs
+      # the memory server tests drive the real MCP SDK, installed from the lockfile
+      - run: npm ci --prefix npx
+      - run: node --test hooks/memory-check.test.mjs hooks/memory-loop.test.mjs hooks/memory-pointers.test.mjs hooks/memory-cards.test.mjs tests/persona-scrub.test.mjs tests/agent-defs.test.mjs tests/scaffold.test.mjs tests/workflows.test.mjs tests/docs.test.mjs tests/serve-guard.test.mjs tests/serve-store.test.mjs tests/serve-http.test.mjs tests/serve-stdio.test.mjs tests/serve-embed.test.mjs tests/serve-lock.test.mjs tests/serve-errors.test.mjs tests/serve-package.test.mjs
