@@ -231,7 +231,7 @@ function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT
       try {
         held.release();
       } catch (releaseError) {
-        stderrLog(`lararium: could not release the memory index lock (${releaseError && releaseError.code ? releaseError.code : 'error'}); it is taken over once it goes stale`);
+        stderrLog(`lararium: could not release the memory index lock (${releaseError && releaseError.code ? releaseError.code : 'error'}); other servers wait on it until this server stops, so restart it if writes stall`);
       }
       if (error instanceof LockLost) throw new InputError('the memory index changed while saving; send the same request again');
       throw error;

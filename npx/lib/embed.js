@@ -28,10 +28,13 @@ const BATCH = 16;
 const PROBE_TEXT = `${DOCUMENT_PREFIX}Lararium identity probe. The harbor lamp stays lit until the last boat is home.`;
 const PROBE_MIN_COSINE = 0.999;
 
+// `message` goes back to the tool caller, so it never names a model path or an endpoint.
+// `detail` carries those for the local log only.
 class SemanticUnavailable extends Error {
-  constructor(message) {
+  constructor(message, detail) {
     super(message);
     this.name = 'SemanticUnavailable';
+    if (detail) this.detail = detail;
   }
 }
 
@@ -89,10 +92,10 @@ function createSemantic({ store, backend = 'ollama', url, model, fetchImpl = glo
       if (/redirect/i.test(`${error.message} ${error.cause && error.cause.message}`)) {
         throw new SemanticUnavailable('the embedding server answered with a redirect; redirects are refused so card text stays on this machine');
       }
-      throw new SemanticUnavailable(`embedding server not reachable at ${endpoint} (${error.name})`);
+      throw new SemanticUnavailable(`embedding server not reachable (${error.name})`, `endpoint ${endpoint}`);
     }
     if (!response.ok) {
-      throw new SemanticUnavailable(`embedding server answered ${response.status}; is ${modelName} pulled?`);
+      throw new SemanticUnavailable(`embedding server answered ${response.status}; check that the configured model is pulled`, `model ${modelName} at ${endpoint}`);
     }
     const data = await response.json().catch(() => null);
     const rows = isOllama ? data && data.embeddings : data && Array.isArray(data.data) && data.data.map(d => d.embedding);
@@ -151,7 +154,8 @@ function createSemantic({ store, backend = 'ollama', url, model, fetchImpl = glo
       saved.identity.backend === identity.backend && saved.identity.model === identity.model && saved.identity.dims === identity.dims;
     if (!same) {
       throw new SemanticUnavailable(
-        `stored vectors were built with ${JSON.stringify(saved && saved.identity)}, not ${JSON.stringify(identity)}; run serve --reindex to rebuild`,
+        'stored vectors were built with a different model; run serve --reindex to rebuild',
+        `stored ${JSON.stringify(saved && saved.identity)}, configured ${JSON.stringify(identity)}`,
       );
     }
     return saved;

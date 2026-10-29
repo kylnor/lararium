@@ -29,8 +29,8 @@ MCP SDK, no database. Optional semantic search with a local EmbeddingGemma 2, of
 back to full-text whenever the model is missing. Details in `npx/README.md`. Rotating the tokens
 revokes on a server that is already running, the index and vector cache refuse symbolic links, the
 vector cache carries a model fingerprint, and several servers on one folder take turns on the index;
-if a race still drops an index line, the card is safe and the line is restored on the next write or on the start of a writable server
-(`--read-only` never repairs; a crash between creating a card and journaling it is the one case repair cannot adopt).
+if a race still drops an index line, the card is safe and the server tries to restore the line on its next write or when a writable server starts
+(best effort: `--read-only` never repairs, repair stops at an unclosed `<!--` comment, an edited card is never re-adopted, and a crash between creating a card and journaling it leaves a card repair cannot adopt).
 Journal records are self-checking (`L1 <name>.md <id> <sha256> <check>`, each append opening with a
 `#`) and each card carries the matching `lararium-id`; the record holds the hash of the card's exact
 bytes, so a torn or failed append can never become a record later, and a hand-written or edited card

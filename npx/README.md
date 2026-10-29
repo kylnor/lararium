@@ -108,8 +108,10 @@ does not claim otherwise, and does not depend on it.
 
 **What is guaranteed.** An acknowledged `remember` is never lost: the card file is created exclusively,
 then journaled, then its index line is written. If the journal record cannot be written in full (an
-error, a short write, or a failed close), the call fails and removes the card it just made. A failed
-`remember` leaves nothing behind unless that removal also fails; see below. If a
+error, a short write, or a failed close), the call fails and removes the card it just made. That
+cleanup covers journal failures only. A failure after journaling (the index write, or releasing the
+lock after the index landed) reports an error but leaves the journaled card, which repair can then
+index; see below. If a
 concurrent writer drops the index line, the line is restored on the next `remember` by any writable
 server on that folder, or when a writable server starts (a `--read-only` server never repairs), using
 the card's own description. Repair is best effort: it makes up to five passes per run and it gives up

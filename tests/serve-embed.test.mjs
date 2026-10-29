@@ -126,6 +126,21 @@ test('model not pulled (server answers an error): falls back to full-text', asyn
   } finally { ollama.close(); f.done(); }
 });
 
+test('a failing embedding server never shows the caller a model path or endpoint', async () => {
+  const f = folder();
+  const ollama = await fakeOllama({ status: 503 });
+  const model = '/home/example/models/embedding.gguf';
+  try {
+    const out = await toolSearch(f.store, createSemantic({ store: f.store, backend: 'llamacpp', url: ollama.url, model }), 'invoice');
+    assert.match(out, /semantic search unavailable: embedding server answered 503/);
+    assert.doesNotMatch(out, /example\/models|embedding\.gguf/);
+    assert.ok(!out.includes(ollama.url));
+    const down = await toolSearch(f.store, createSemantic({ store: f.store, url: 'http://127.0.0.1:9', model }), 'invoice');
+    assert.match(down, /embedding server not reachable/);
+    assert.ok(!down.includes('127.0.0.1:9') && !down.includes('embedding.gguf'));
+  } finally { ollama.close(); f.done(); }
+});
+
 test('a model that answers with the wrong dimensionality is refused, not stored, not mixed', async () => {
   const f = folder();
   const ollama = await fakeOllama({ dims: 512 });
@@ -143,7 +158,8 @@ test('vectors from a different model are never mixed in: refused until --reindex
   try {
     await createSemantic({ store: f.store, url: ollama.url }).sync();
     const other = createSemantic({ store: f.store, url: ollama.url, model: 'some-other-model:768' });
-    await assert.rejects(() => other.rank('cat'), /stored vectors were built with .*embeddinggemma-2:270m.*not .*some-other-model/);
+    await assert.rejects(() => other.rank('cat'), err => /stored vectors were built with a different model/.test(err.message)
+      && !/some-other-model/.test(err.message) && /embeddinggemma-2:270m.*some-other-model/.test(err.detail));
     assert.match(await toolSearch(f.store, other, 'invoice'), /full-text \(semantic search unavailable: stored vectors were built with/);
     other.reset();
     assert.deepEqual(await other.sync(), { embedded: 2, total: 2 });

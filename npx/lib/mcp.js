@@ -65,6 +65,7 @@ function createMcpServer({ store, semantic = null, role, version, log = stderrLo
         // Whatever went wrong on the semantic path (model down, cache unreadable, disk full), the
         // answer is full-text, not an error. Only the error code travels, never a local path.
         if (!(error instanceof SemanticUnavailable)) log(`semantic search failed, answering from full-text: ${error && error.stack ? error.stack : error}`);
+        else if (error.detail) log(`semantic search unavailable: ${error.message} (${error.detail})`);
         const why = error instanceof SemanticUnavailable ? error.message : `semantic index error (${error.code || error.name})`;
         mode = `full-text (semantic search unavailable: ${why})`;
       }
