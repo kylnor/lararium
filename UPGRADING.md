@@ -59,6 +59,28 @@ step 0 below establishes from your `STACK_VERSION` and `CHANGELOG.md`.
    or publish their own derivative, point them at SCRUB.md's new "Going public" section and its
    warning that commit author metadata leaks identity even when files grep clean.
 
+## From v2.18 to v3.0 (memory across agents)
+
+Run these in order. Every step only adds, so skip any the owner declines.
+
+1. **Copy the files in.** `memory/` (README, MEMORY, DEMOTED, pointer-block), `starter/`,
+   `hooks/memory-pointers.mjs` and its test, and the changed `hooks/memory-check.mjs` and
+   `hooks/reference/session-start.js`. If the owner edited either changed hook, show the diff
+   and merge by hand. Optional folders: `governance/`, `forge/`, `workspaces/`,
+   `docs/ops-guards.md`, offered in step 5.
+2. **Cards.** If the owner already keeps notes about how they work, offer to turn up to five into
+   cards (one fact per file, format in `memory/README.md`) and prepend a pointer line each to
+   `memory/MEMORY.md`. Never invent a card. If they have none, leave `MEMORY.md` empty.
+3. **Pointers.** Run `node hooks/memory-pointers.mjs . --check` and show the result. Then follow
+   the "Point every agent at the same memory" steps in `INSTALL.md`: project scope first, global
+   only on a clear yes, since global edits files outside the stack. Run the one-line test in each
+   CLI they use.
+4. **Check.** Run `node hooks/memory-check.mjs .`. It now reports dangling pointers, orphaned
+   cards and malformed frontmatter. Fix what it names; it never edits the index for you.
+5. **Optional operating shape.** Offer `governance/`, `forge/`, `workspaces/` and the ops guards
+   one at a time and only where the owner feels the pain. Never scaffold a workspace in advance.
+6. **Stamp** `STACK_VERSION` as v3.0 in the closing step, as always.
+
 ## Closing
 
 As your **last act**, update the version stamp: overwrite the owner's `STACK_VERSION` with the

@@ -16,6 +16,31 @@ shrine, and you bring your own gods.
 > structure, conventions, and hard-won patterns. It ships **none** of the original owner's data,
 > persona, or secrets. See `SCRUB.md` for exactly what was removed and how to verify nothing leaked.
 
+## Start here in five minutes
+
+You do not need the six layers below to get value. The starter is a map file, three folders
+(`notes/`, `people/`, `projects/`) and a memory index: one topic per file, lowercase-hyphen names,
+and an assistant that searches before it answers. Open the folder in Claude Code and say:
+
+```
+Run the starter in starter/README.md
+```
+
+It interviews you, writes your first three notes and proves the memory works. Everything after
+that is optional and labelled "when you outgrow the starter".
+
+## Memory across agents
+
+Files are the memory. Every agent CLI on your machine (Claude Code, Codex, Gemini CLI) is pointed
+at the same files, so what one learns the next already knows, and switching tools loses nothing.
+A short pointer block, installed into each CLI's instruction file by `hooks/memory-pointers.mjs`,
+says where the map is and how to search. Lessons live as one-fact cards in `memory/` with a
+one-line index. Two things fill it: the shipped hooks carry the last conversation forward without
+anyone asking (Claude Code today), and the pointer block tells every agent to write a card when
+it is corrected. Streams from your mail and calls can feed it too, once you stand up the index.
+A search miss is reported as "not found in X", never "it does not exist". Doctrine in
+`memory/README.md`, install steps in `INSTALL.md`.
+
 ## Why this instead of a prompt pack
 
 Everyone else hands you *their* context: their prompts, their personas, their ten hacks. Lararium
@@ -27,7 +52,11 @@ It also installs itself. You open it in an AI coding assistant and say *"run the
 An agentic stack is installed by an agent. It interviews you, one question at a time, and writes
 your files while you answer.
 
-## The six layers
+## When you outgrow the starter: the six layers
+
+Optional from here on. Add a layer when its pain shows up. Two more optional pieces sit beside them:
+`governance/` (a rule that retires old rules, plus a small constitution) and `forge/` (briefs for
+agents that build), with `workspaces/` for projects that have earned their own folder.
 
 1. **`brain/`**: a human-navigable markdown knowledge store, scoped by life sphere, governed by a
    small set of laws (`brain/CLAUDE.md`). Files are canonical; the database is an index on top. The

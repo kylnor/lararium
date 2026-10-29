@@ -44,6 +44,10 @@ briefing block that gets injected into context. The assistant opens the session 
 it is, what it did last time, what you are focused on, and where the last session told it to pick up.
 This is the single highest-leverage hook in the stack: without it, every session starts cold.
 
+The briefing also injects the pointer lines of `memory/MEMORY.md` (up to 200 lines or about 24KB,
+the cut a loader applies), so lessons recorded as cards are in context from the first turn. It
+injects nothing when the index has no pointers.
+
 ### b. Heartbeat (`session-end-heartbeat.js`, SessionEnd)
 Reads the session transcript, distills what happened into a short summary, and writes it to the
 heartbeat file. That file is what the next session's briefing reads back. This is the write half of
@@ -244,12 +248,25 @@ pattern is identical whether the read hits a JSONL on disk or a vector index ove
 the loop working against files first, then swap the stub for your index when the file layer outgrows
 it. Start simple; the shape does not change.
 
+## Pointing other agents at the same memory (`memory-pointers.mjs`)
+
+Not a lifecycle hook. A one-shot installer for the shared pointer block (`memory/pointer-block.md`)
+that tells Claude Code, Codex and Gemini CLI where the map and the memory cards live. Usage:
+`node hooks/memory-pointers.mjs <stack-folder> [--project] [--check] [--only claude,codex,gemini]`.
+It is idempotent, appends after any block another tool manages, writes through symlinks, refuses
+on unbalanced markers, and `--check` changes nothing. These hooks capture for Claude Code only;
+the other CLIs share the files, not the capture.
+
 ## Diagnose memory without changing it
 
 Run `node hooks/memory-check.mjs .` from the installed template root. This read-only diagnostic
 reports missing, empty, or unreadable standard brain files without printing their contents.
 It does not inspect hook registration or claim that capture works. Follow
 [the memory acceptance check](../docs/memory-check.md) for fresh-session recall and corrections.
+
+`memory-check.mjs` also reads `memory/`: it flags a card with no pointer (orphaned), a pointer to a
+missing card (dangling), bad frontmatter, and an index past the 200-line cut a loader applies. It
+never edits the index.
 
 Developer checks: `node --test hooks/memory-check.test.mjs`.
 
@@ -265,5 +282,6 @@ prevents partially written files from being loaded. If several sessions share a 
 writer wins; use separate roots for separate projects. A process killed before SessionEnd runs
 cannot save its latest turn. This release does not add a per-turn checkpoint.
 
-Run `node --test hooks/memory-check.test.mjs hooks/memory-loop.test.mjs` to test the file contracts.
+Run `node --test hooks/memory-check.test.mjs hooks/memory-loop.test.mjs hooks/memory-pointers.test.mjs hooks/memory-cards.test.mjs`
+to test the file contracts.
 The live assistant test in `docs/memory-check.md` is still needed to verify hook registration.

@@ -18,6 +18,20 @@ assistant interviews you and writes your files. You answer questions; it does th
 
 ---
 
+## Start here in five minutes (the starter tier)
+
+If the user wants value now and nothing else, do not run the phases below. Run the starter in
+`starter/README.md`: a root map file, three folders (`notes/`, `people/`, `projects/`), the memory
+index, one topic per file, lowercase-hyphen names. It takes about five minutes and needs none of
+the later layers. Everything from Phase 0 down is labelled **when you outgrow the starter**: it is
+the full interview, and none of it is required to get value. If the user did the starter first,
+the folders and the map already exist, so read them instead of recreating them, and skip the
+pointer step if they already ran it.
+
+## When you outgrow the starter: the full interview
+
+The phases below are the full install. Phase 1 is its base; every phase after it is optional.
+
 ## Phase 0: Read the map
 Before any question, read `brain/CLAUDE.md` (the laws) and `README.md` (the six layers). Tell the
 user, in two sentences, what they are about to set up. Then begin.
@@ -30,7 +44,7 @@ folder on their own, so the user can move or rename it later without breaking an
 this in plain words: the brain you build in Phase 1 is what gets remembered. Do not offer memory as a
 later or optional step, and do not rewrite `.claude/settings.json` unless the user asks.
 
-## Phase 1: The brain (required, do this first)
+## Phase 1: The brain (the base of the full interview, do this first)
 The goal of this phase is a brain the user could start using today.
 1. **Whose system is this, and what do they do?** One or two questions. Enough to name the owner and
    their main lanes.
@@ -63,6 +77,29 @@ At the end of Phase 1, verify the saved files and the memory before offering to 
 
 Run `node hooks/memory-check.mjs .` from the template root for a read-only file diagnostic, and
 offer the longer save, recall, and correction test in `docs/memory-check.md`.
+
+### Point every agent at the same memory
+
+Memory should not belong to one tool. If the user has Codex or Gemini CLI as well as Claude Code,
+install the shared pointer block so each reads the same files. Ask which CLIs they use, then:
+
+1. Run `node hooks/memory-pointers.mjs . --check` from this folder. It changes nothing and says
+   which instruction files would be written. Show the user.
+2. Ask whether they want it for this folder only or for every folder. For this folder only, run
+   `node hooks/memory-pointers.mjs . --project` (writes `AGENTS.md` and `GEMINI.md` here, nothing
+   outside). For every folder, run `node hooks/memory-pointers.mjs .` (writes to `~/.claude/CLAUDE.md`,
+   `~/.codex/AGENTS.md` and `~/.gemini/GEMINI.md`, for the CLIs that exist). The global form
+   edits files outside this folder: say that in plain words and get a yes first.
+3. The script puts a marked block at the end of each file, after any block another tool manages,
+   and never twice: running it again says `unchanged`. It refuses, and tells the user, when a file
+   has unbalanced markers or ends inside another tool's block. Do not edit around a refusal.
+   It writes through a symlinked file and leaves the link in place.
+4. Without `node`, do it by hand: copy `memory/pointer-block.md`, replace `{{STACK_ROOT}}` with
+   this folder's full path, and append it to each file. Check the file for an existing
+   `lararium:shared-memory:start` marker first.
+5. Test each CLI the user has, in a new session, with no hints: "In one line: where does my memory
+   live and how do I search it?" It should name this folder's map and a grep. If it does not,
+   tell the user which one failed and why you think so.
 
 Offer to stop here. Everything below is optional. A browser-only chat can help draft content, but the user must save it themselves.
 
@@ -122,6 +159,17 @@ The goal is a `soul/core.md` that sounds like a specific someone.
    credentials.**
 3. Point them at the schema and the watcher pattern. Standing up the actual database and watchers is
    their infrastructure to run; the interview hands them the map, not the keys.
+
+## Phase 6: The operating shape (optional: when instructions or builds outgrow a flat file)
+Offer only what hurts today, one at a time, and skip the rest.
+1. **Governance.** Their instruction file keeps growing or agents skip rules: walk
+   `governance/README.md`. Write their own constitution from `governance/constitution.template.md`:
+   it ships as examples, so keep an entry only if it is true of them, and cap it at five.
+2. **Workspaces.** A project keeps coming up: `workspaces/README.md`. Create a workspace only for
+   one that has earned it. Never scaffold folders in advance.
+3. **Forge.** They hand builds to agents: `forge/README.md` and `forge/CONSTITUTION.md`.
+4. **Ops guards.** Their machine fills its disk or holds unpushed work: `docs/ops-guards.md`.
+   Doctrine only; offer to write the scripts with them.
 
 ---
 
