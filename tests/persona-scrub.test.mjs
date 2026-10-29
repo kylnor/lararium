@@ -72,7 +72,7 @@ test('exceptions are exact strings in named files, not blanket passes', () => {
 // Every fake secret is built at run time, so no literal fixture ever appears in a file, this one
 // included: the scan of tests/ has no exemptions to hide behind.
 const fake = {
-  home: () => '/ho' + 'me/alice/.ssh',
+  home: () => '/ho' + 'me/ali' + 'ce/.ssh',
   host: () => 'box.tail1234.ts' + '.net',
   sk: () => 'sk' + '-abcdefghijklmnopqrstuvwxyz0123',
   email: () => 'jane@corp' + '.io',
