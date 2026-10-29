@@ -98,8 +98,8 @@ install the shared pointer block so each reads the same files. Ask which CLIs th
 1. Ask whether they want it for this folder only or for every folder.
 2. Run the read-only check for the scope they chose: `node hooks/memory-pointers.mjs . --project --check`
    for this folder only, or `node hooks/memory-pointers.mjs . --check` for every folder. It changes
-   nothing and says which instruction files would be written. Exit code 1 means "would write",
-   not failure. Show the user, then run the same command without `--check`. For this folder only
+   nothing and says which instruction files would be written. Exit code 1 means "would write"
+   or "refused"; read the output before going on. Show the user, then run the same command without `--check`. For this folder only
    that writes `CLAUDE.md`, `AGENTS.md` and `GEMINI.md` here, nothing outside. For every folder it
    writes to `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` and `~/.gemini/GEMINI.md`, for the CLIs
    that exist. The global form edits files outside this folder: say that in plain words and get a

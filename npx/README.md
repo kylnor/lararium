@@ -19,8 +19,9 @@ cd <folder>
 claude
 ```
 
-Then say: "Run the install interview in `INSTALL.md`". That interview is the actual install; this
-package only gets the files onto your disk.
+Then say: "Run the starter in `starter/README.md`". It interviews you, writes your first three
+notes and proves the memory works. When you outgrow it, the full install interview is in
+`INSTALL.md`. This package only gets the files onto your disk.
 
 **Note on versioning:** this package's own version (`0.2.0` and up) is unrelated to the template's
 `STACK_VERSION`. The scaffolder always fetches whatever the latest template release is at run time;
