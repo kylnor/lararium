@@ -106,12 +106,15 @@ a lock is only taken over when its holder is gone. Removing a file by name in No
 then an unlink, so a process paused at exactly the wrong moment can still overlap another. The server
 does not claim otherwise, and does not depend on it.
 
-**What is guaranteed.** An acknowledged `remember` is never lost: the card file is created exclusively,
-then journaled, then its index line is written. If the journal record cannot be written in full (an
-error, a short write, or a failed close), the call fails and removes the card it just made. That
-cleanup covers journal failures only. A failure after journaling (the index write, or releasing the
-lock after the index landed) reports an error but leaves the journaled card, which repair can then
-index; see below. If a
+**What is guaranteed.** On a local disk, an acknowledged `remember` is never lost, power loss
+included: the card file is created exclusively, written and flushed to disk (fsync), then the journal
+record is appended and flushed, then the index is replaced (written, flushed, renamed into place) and
+the memory folder is flushed so the rename itself holds. A failed flush fails the call and takes the
+same cleanup as a failed write. If the card or the journal record cannot be written in full (an error,
+a short write, a failed flush or a failed close), the call fails and removes the card it just made.
+That cleanup covers the card and journal steps only. A failure after journaling (the index write, or
+releasing the lock after the index landed) reports an error but leaves the journaled card, which repair
+can then index; see below. If a
 concurrent writer drops the index line, the line is restored on the next `remember` by any writable
 server on that folder, or when a writable server starts (a `--read-only` server never repairs), using
 the card's own description. Repair is best effort: it makes up to five passes per run and it gives up
@@ -120,8 +123,10 @@ fails is not retried until the next `remember` or start. Until a line is restore
 `node hooks/memory-check.mjs .` shows the card as orphaned. The repair only touches cards the server
 itself wrote: a card you wrote by hand is never given a pointer, and a card you demoted (line removed
 from `MEMORY.md` and listed in `DEMOTED.md`) is never given one back. A `remember` that names a card
-already on disk finishes that card's index line only when one valid journal record for that name holds
-the card's id and the hash of its exact bytes, and those bytes match what the call would write. A
+already on disk is a success, and finishes that card's index line if it is missing, only when one valid
+journal record for that name holds the card's id and the hash of its exact bytes, and those bytes match
+what the call would write. That is what makes a retry after a lost lock or a failed release safe: the
+card is saved, so the retry is not told to pick another name and nothing is written twice. A
 hand-written card of the same name is refused and never adopted, and so is a card that kept a copied
 id but has other content, a duplicate or quoted id, or a frontmatter whose closing line is not exactly
 `---`. A torn or short journal append is never completed into a record by what the server appends
@@ -146,7 +151,8 @@ way is byte for byte what the server wrote, so a retry or the next repair finish
 the intended outcome, not a gap. If the lock also fails to release while the call is already failing,
 the tool error stays the residual-card message and the lock failure is logged to the server's stderr
 (without a path); a lock failure on a call that otherwise succeeded is reported as the error. Local
-disks only: appends to the journal are not atomic on network filesystems, and the lock needs hard links.
+disks only: appends to the journal are not atomic on network filesystems, the lock needs hard links, and
+a network share may acknowledge a flush it has not made, so the durability above does not extend to one.
 One accepted gap: rotating the tokens does not cancel a request that was already
 authenticated and is still in flight; it finishes, and every request after it is refused.
 
@@ -154,9 +160,10 @@ authenticated and is still in flight; it finishes, and every request after it is
 Behavior change since `0.2.x`: `npx lararium serve` is now this command. To scaffold a folder that
 is literally named `serve`, write `npx lararium ./serve`.
 
-**Note on versioning:** this package's own version (`0.2.0` and up) is unrelated to the template's
-`STACK_VERSION`. The scaffolder always fetches whatever the latest template release is at run time;
-bumping this package is only for fixing the scaffolder itself.
+**Note on versioning:** this package's own version (`0.3.0` today) is unrelated to the template's
+`STACK_VERSION`. The scaffolder always fetches whatever the latest template release is at run time, so
+a template release never needs a package release. Bump this package when `index.js`, `serve.js` or
+anything in `lib/` changes: the memory server ships in it.
 
 ## Publishing (for the template's owner)
 
@@ -166,5 +173,5 @@ Requires an npm login with publish rights on the `lararium` package name. From t
 npm publish
 ```
 
-Bump `version` in `package.json` first if anything in `index.js` changed. The published package
+Bump `version` in `package.json` first if anything in `index.js`, `serve.js` or `lib/` changed. The published package
 version stays decoupled from `STACK_VERSION`; do not try to keep them in sync.

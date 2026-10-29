@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
-// lararium scaffolder. Node stdlib only, zero dependencies.
+// lararium scaffolder. This file uses the Node stdlib only. The package does have dependencies (the MCP
+// SDK, see package.json), but only `serve` loads them, on demand, so scaffolding never touches them.
 // Fetches the latest release of the lararium template and unpacks it
 // into a new folder. See README.md in this package for the three-step story.
 

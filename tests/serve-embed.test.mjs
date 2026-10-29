@@ -33,14 +33,14 @@ function fakeVector(text, dims = DIMS, swap = false) {
 
 async function fakeOllama({ dims = DIMS, status = 200 } = {}) {
   const seen = [];
-  const state = { swap: false, digest: 'sha256:aaaa' };
+  const state = { swap: false, digest: 'sha256:aaaa', tag: 'embeddinggemma-2:270m' };
   const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', c => { body += c; });
     req.on('end', () => {
       if (req.url === '/api/tags') { // where Ollama reports each model's digest
         res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ models: state.digest ? [{ name: 'embeddinggemma-2:270m', digest: state.digest }] : [] }));
+        res.end(JSON.stringify({ models: state.digest ? [{ name: state.tag, digest: state.digest }] : [] }));
         return;
       }
       const { model, input } = JSON.parse(body);
@@ -140,6 +140,33 @@ test('a failing embedding server never shows the caller a model path or endpoint
     assert.ok(!down.includes('127.0.0.1:9') && !down.includes('private-embedding'));
   } finally { ollama.close(); f.done(); }
 });
+
+// Shared by the two cases below: what a read-tier caller sees when the stored vectors are refused.
+async function leakCase(change, detailPattern) {
+  const f = folder();
+  const ollama = await fakeOllama();
+  const model = '/opt/models/private-embedding.gguf';
+  ollama.state.tag = model;
+  try {
+    const semantic = createSemantic({ store: f.store, url: ollama.url, model });
+    await semantic.sync();
+    change(ollama.state);
+    await assert.rejects(() => semantic.rank('cat'), err => err instanceof SemanticUnavailable
+      && /--reindex/.test(err.message)
+      && !/opt\/models|private-embedding|sha256|aaaa|bbbb/.test(err.message) && !err.message.includes(ollama.url)
+      && detailPattern.test(err.detail));
+    const out = await toolSearch(f.store, semantic, 'invoice');
+    assert.match(out, /semantic search unavailable: .*--reindex/);
+    assert.doesNotMatch(out, /opt\/models|private-embedding|sha256|aaaa|bbbb/);
+    assert.ok(!out.includes(ollama.url) && !out.includes('127.0.0.1'));
+  } finally { ollama.close(); f.done(); }
+}
+
+test('a probe mismatch never shows the caller a model path or endpoint; the local log gets them', () =>
+  leakCase(state => { state.swap = true; }, /private-embedding.*127\.0\.0\.1/));
+
+test('a digest change never shows the caller a model path or digest; the local log gets them', () =>
+  leakCase(state => { state.digest = 'sha256:bbbb'; }, /private-embedding.*bbbb.*aaaa|private-embedding.*aaaa.*bbbb/));
 
 test('a model that answers with the wrong dimensionality is refused, not stored, not mixed', async () => {
   const f = folder();

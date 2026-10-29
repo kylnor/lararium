@@ -93,19 +93,44 @@ function readFileNoFollow(file, encoding = 'utf8') { // encoding null returns th
   }
 }
 
-// Writes `data` to a new temp file beside `file` (exclusive create, never through a link) and
-// renames it into place. `beforeCommit` runs after the temp file is complete and just before the
-// rename, the last point at which the caller can still back out.
+// Platforms and filesystems that cannot fsync a directory say so with one of these; that is not a failure.
+const DIR_SYNC_REFUSED = new Set(['EISDIR', 'EINVAL', 'EPERM']);
+
+// Flushes a directory's entries (new files, renames) to disk. Best effort only where the platform
+// refuses to open or sync a directory (Windows, some network shares); any other error is real.
+function fsyncDir(dir) {
+  let fd;
+  try {
+    fd = fs.openSync(dir, fs.constants.O_RDONLY);
+  } catch (error) {
+    if (DIR_SYNC_REFUSED.has(error.code)) return;
+    throw error;
+  }
+  try {
+    fs.fsyncSync(fd);
+  } catch (error) {
+    if (!DIR_SYNC_REFUSED.has(error.code)) throw error;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+// Writes `data` to a new temp file beside `file` (exclusive create, never through a link), flushes it
+// to disk and renames it into place, then flushes the directory so the rename itself survives a power
+// cut. `beforeCommit` runs after the temp file is complete and just before the rename, the last point
+// at which the caller can still back out. A failed flush is a failed write.
 function writeFileAtomic(file, data, { mode = 0o644, beforeCommit } = {}) {
   const temp = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
   let fd;
   try {
     fd = openNoFollow(temp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, mode);
     fs.writeFileSync(fd, data);
+    fs.fsyncSync(fd);
     fs.closeSync(fd);
     fd = undefined;
     if (beforeCommit) beforeCommit();
     fs.renameSync(temp, file); // replaces whatever is at `file`, a link included, without following it
+    fsyncDir(path.dirname(file));
   } catch (error) {
     if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* already failing */ } }
     fs.rmSync(temp, { force: true });
@@ -143,4 +168,4 @@ function pinAuxDir(root, name, { create = false } = {}) {
   return { path: target, check };
 }
 
-module.exports = { GuardError, resolveInside, openNoFollow, readFileNoFollow, writeFileAtomic, pinAuxDir, toFileName };
+module.exports = { GuardError, resolveInside, openNoFollow, readFileNoFollow, writeFileAtomic, fsyncDir, pinAuxDir, toFileName };

@@ -36,7 +36,11 @@ Journal records are self-checking (`L1 <name>.md <id> <sha256> <check>`, each ap
 bytes, so a torn or failed append can never become a record later, and a hand-written or edited card
 of the same name is never adopted, even one that copied the id. If cleanup after a failed `remember` cannot remove the card, the
 error names it. The pointer rules in `hooks/memory-check.mjs` now match the server's, and C1 control
-characters are refused in descriptions.
+characters are refused in descriptions. A `remember` is flushed to disk (card, journal, index and the
+folder entry) before it is acknowledged, a failed flush counts as a failed write, and repeating a
+`remember` for a card the server already made and indexed succeeds instead of asking for a new name.
+Reserved names such as `pointer-block` are refused, and an unavailable-model message never shows the
+model, path or endpoint to the caller (the local log keeps them).
 
 **INSTALL.md Phase 5 is rewritten.** It used to describe the Postgres index. It is now the guided,
 local-first setup: start the server, add it to each tool, prove a round trip, then optionally add

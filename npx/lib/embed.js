@@ -122,7 +122,8 @@ function createSemantic({ store, backend = 'ollama', url, model, fetchImpl = glo
     } catch { return null; }
   }
 
-  const reindexHint = why => new SemanticUnavailable(`${why}; run serve --reindex to rebuild`);
+  // `why` goes to the caller; `detail` (model, endpoint, digests) goes to the local log only.
+  const reindexHint = (why, detail) => new SemanticUnavailable(`${why}; run serve --reindex to rebuild`, detail);
 
   // Refuses a cache whose vectors this server would no longer reproduce.
   async function checkFingerprint(saved) {
@@ -130,12 +131,18 @@ function createSemantic({ store, backend = 'ollama', url, model, fetchImpl = glo
     const [now] = await embed([PROBE_TEXT]);
     const similarity = dot(now, decode(saved.probe.v));
     if (!(similarity >= PROBE_MIN_COSINE)) {
-      throw reindexHint(`the identity probe no longer matches (similarity ${Number.isFinite(similarity) ? similarity.toFixed(3) : 'n/a'}, need ${PROBE_MIN_COSINE}): a different model is answering as ${modelName} at ${endpoint}`);
+      throw reindexHint(
+        `the identity probe no longer matches (similarity ${Number.isFinite(similarity) ? similarity.toFixed(3) : 'n/a'}, need ${PROBE_MIN_COSINE}): a different model is answering`,
+        `model ${modelName} at ${endpoint}`,
+      );
     }
     if (saved.digest) {
       const digest = await fetchDigest();
       if (digest && digest !== saved.digest) {
-        throw reindexHint(`${modelName} now reports digest ${digest.slice(0, 19)}, the stored vectors were built with ${String(saved.digest).slice(0, 19)}`);
+        throw reindexHint(
+          'the embedding model now reports a different digest than the stored vectors',
+          `model ${modelName} reports digest ${digest.slice(0, 19)}, the stored vectors were built with ${String(saved.digest).slice(0, 19)}`,
+        );
       }
     }
   }

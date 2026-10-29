@@ -26,7 +26,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
-const { GuardError, resolveInside, openNoFollow, readFileNoFollow, writeFileAtomic } = require('./guard');
+const { GuardError, resolveInside, openNoFollow, readFileNoFollow, writeFileAtomic, fsyncDir } = require('./guard');
 const { createLock, LockBusy, LockLost } = require('./lock');
 
 const CARD_TYPES = ['user', 'feedback', 'project', 'reference'];
@@ -263,8 +263,8 @@ function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT
 
   // Records a card this server just wrote. One write(2) on an O_APPEND descriptor, no lock: appends from
   // separate processes land one after another on a local disk. Not atomic on network disks. A short
-  // write or a failed close throws: the record may be torn or half-trusted, so the caller must treat the
-  // card as not remembered (journalRecord and parseJournal say why that is safe).
+  // write, a failed flush or a failed close throws: the record may be torn or half-trusted, so the caller
+  // must treat the card as not remembered (journalRecord and parseJournal say why that is safe).
   function journalAppend(file, nonce, hash) {
     const record = Buffer.from(journalRecord(file, nonce, hash));
     const fd = openNoFollow(path.join(realFolder(), JOURNAL_NAME), fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT, 0o644);
@@ -273,6 +273,7 @@ function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT
       if (!fs.fstatSync(fd).isFile()) throw new GuardError(`${JOURNAL_NAME} is not a regular file`);
       const written = fs.writeSync(fd, record);
       if (written !== record.length) throw Object.assign(new Error(`the memory journal write was short (${written} of ${record.length} bytes)`), { code: 'SHORT_WRITE' });
+      fs.fsyncSync(fd); // the record is on disk before the call is acknowledged; a failed flush fails the call
     } catch (error) {
       failure = error;
     }
@@ -442,10 +443,44 @@ function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT
     return scored.slice(0, limit);
   }
 
+  // Creates the card exclusively and makes its bytes durable: open(O_EXCL), write every byte, fsync,
+  // close. True when this call created it, false when a file is already there. Any other failure
+  // (a full disk, a failed flush) removes the partial card before it throws, so a retry is not refused
+  // by the stub it would otherwise find; if the stub cannot be removed the error says so.
+  function createCard(target, file, text) {
+    let fd;
+    try {
+      fd = openNoFollow(target, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o644);
+    } catch (error) {
+      if (error.code === 'EEXIST') return false;
+      throw error;
+    }
+    let failure = null;
+    try {
+      fs.writeFileSync(fd, text);
+      fs.fsyncSync(fd);
+    } catch (error) {
+      failure = error;
+    }
+    try {
+      fs.closeSync(fd);
+    } catch (error) {
+      failure = failure || error;
+    }
+    if (!failure) return true;
+    const why = failure.code ? failure.code : 'write error';
+    let removed = true;
+    try { fs.unlinkSync(target); } catch (unlinkError) { removed = Boolean(unlinkError) && unlinkError.code === 'ENOENT'; }
+    if (!removed) throw new InputError(`the card could not be written (${why}), so this call failed, and ${file} could not be removed afterwards: a partial card may remain at ${file} in the memory folder. Delete it, then send the request again`);
+    throw new InputError(`the card could not be written (${why}); nothing was saved, send the request again`);
+  }
+
   function validate({ name, description, type, body }) {
     if (typeof name !== 'string' || name.length > MAX_CARD_NAME || !CARD_NAME_RE.test(name)) {
       throw new InputError(`name must be kebab-case (lowercase letters, digits, single dashes), at most ${MAX_CARD_NAME} characters`);
     }
+    // A file the folder keeps for itself (the pointer block is the one a kebab-case name can reach).
+    if (NOT_CARDS.has(`${name}.md`)) throw new InputError(`${name} is reserved for the memory folder itself; choose a different name`);
     if (!CARD_TYPES.includes(type)) throw new InputError(`type must be one of ${CARD_TYPES.join(', ')}`);
     const oneLine = typeof description === 'string' ? description.replace(/\s+/g, ' ').trim() : '';
     if (!oneLine || oneLine.length > MAX_DESCRIPTION) {
@@ -465,8 +500,12 @@ function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT
   // overwrites: a name that exists is refused, with one exception that makes a retry safe. If the
   // card on disk carries a nonce and has exact bytes that one valid journal record holds for that name
   // (so this server wrote these bytes; a hand-written or edited card cannot match), is byte for byte
-  // what this call would write, has no index line and was not demoted, an earlier call wrote the card
-  // and stopped before the index; this call finishes that line and writes no second record.
+  // what this call would write and was not demoted, an earlier call wrote the card and then failed
+  // (a lost lock, a failed release, a stop before the index). This call finishes the index line if it
+  // is missing, writes no second record, and succeeds: the card is saved, so the retry is not told to
+  // pick another name. Durability: the card and the journal record are fsynced before the call is
+  // acknowledged, and the index replacement is fsynced with its directory (see guard.writeFileAtomic).
+  // A failed flush fails the call and takes the same cleanup path as a failed write.
   // The index and the journal are read (through no-follow descriptors) before the card is written,
   // so a refused aux file leaves no orphan card. The card is created first, then journaled; if the
   // journal append fails (an error, a short write, a failed close) the call fails and the card this
@@ -488,17 +527,15 @@ function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT
       if (parseIndex(indexText).unclosed) throw new InputError('MEMORY.md ends inside an unclosed <!-- comment, so a new line would be hidden; close the comment first');
       const alreadyIndexed = pointersOf(indexText).has(file);
       const known = journaled(); // a journal that is a link or not a file refuses here, before any card exists
-      let created = false;
-      try {
-        fs.writeFileSync(target, text, { flag: 'wx', mode: 0o644 });
-        created = true;
-      } catch (error) {
-        if (error.code !== 'EEXIST') throw error;
+      const created = createCard(target, file, text);
+      if (!created) {
+        // The name is taken. It is the same call retried (a lost lock or a failed release after the card
+        // landed) only when the server made these exact bytes and this call would write them again.
         const bytes = readFileNoFollow(target, null);
         const onDisk = bytes === null ? null : bytes.toString('utf8');
         const id = onDisk === null ? '' : parseCard(file, onDisk).id;
         const serverMade = bytes !== null && vouches(known, file, id, contentHash(bytes));
-        if (!serverMade || alreadyIndexed || onDisk !== cardText(card, id) || demotedFiles().has(file)) {
+        if (!serverMade || onDisk !== cardText(card, id) || demotedFiles().has(file)) {
           throw new InputError(`a card named ${card.name} already exists; choose a different name`);
         }
       }
@@ -515,7 +552,8 @@ function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT
         }
       }
       const updated = alreadyIndexed ? indexText : withEntry(indexText, entry);
-      if (!alreadyIndexed) writeFileAtomic(indexPath, updated, { beforeCommit: () => lock.assertOwned() });
+      if (!alreadyIndexed) writeFileAtomic(indexPath, updated, { beforeCommit: () => lock.assertOwned() }); // flushes the folder too
+      else fsyncDir(realFolder()); // no rename to flush it: make the card's and the journal's entries durable here
       converge(lock, indexPath);
       const finalText = readFileNoFollow(indexPath) || updated;
       const lineCount = finalText.split('\n').length;

@@ -94,8 +94,9 @@ That is a legitimate state, but only when it is on purpose, which is what `DEMOT
 ## Eviction: DEMOTED.md
 
 The index has a budget, so something leaves when something arrives. Leaving is relocation, not
-deletion. To demote a card, remove its line from `MEMORY.md`, keep the file, and add a line to
-`DEMOTED.md`:
+deletion. To demote a card, list it in `DEMOTED.md` first, then delete its line from `MEMORY.md`, and keep the
+file. (That order matters if the memory server is running: between the two steps a card it wrote and
+that has no pointer would be restored.) The `DEMOTED.md` line:
 
 ```
 - prefers-short-replies.md : one-time preference, now in the soul core
@@ -112,8 +113,9 @@ If the memory server (`npx lararium serve`) is in use, it also keeps `.lararium-
 folder: one self-checking record per card it wrote (the card carries a matching `lararium-id` line in
 its frontmatter and the record holds a hash of the card's exact bytes), so it can restore an index
 line that a concurrent writer dropped. Leave the `lararium-id` line in place. A card you wrote or
-edited by hand is yours: once its bytes differ from what the server wrote, the server never touches it. It is not a card and not an index; leave it alone (it may be committed or
-ignored, as you prefer).
+edited by hand is yours: once its bytes differ from what the server wrote, the server never touches it.
+`.lararium-remembered` is not a card and not an index; leave it alone (it may be committed or ignored,
+as you prefer).
 
 `node hooks/memory-check.mjs .` reports all three, plus dangling pointers (a line for a file that
 does not exist) and cards with broken frontmatter. It is read-only: it never adds a pointer,

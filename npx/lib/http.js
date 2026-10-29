@@ -5,9 +5,6 @@
 // wrong one is a 401. The read tier is served a server without `remember`.
 const http = require('node:http');
 const crypto = require('node:crypto');
-// The SDK's HTTP transport calls crypto.randomUUID() on the global. Supported Node releases have
-// it; this only covers a runtime that does not, and must run before the transport is loaded.
-if (!globalThis.crypto) globalThis.crypto = crypto.webcrypto;
 const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
 const auth = require('./auth');
 const { createMcpServer } = require('./mcp');
