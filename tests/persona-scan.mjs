@@ -37,8 +37,10 @@ const splitCamel = text => text.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
 export const REPO_SLUG = 'kylnor/lararium';
 const withoutSlug = text => text.split(REPO_SLUG).join(' ');
 
-// Narrow, named exceptions. Each strips one exact string from one file before the scan, so the
-// same file can still leak anything else.
+// Narrow, named exceptions for names. An exempt string counts only as a whole occurrence, with no
+// letter, digit or underscore touching either end, so a longer token that merely contains it is still
+// scanned. The same file can still leak anything else. There is no such list for private data: a
+// synthetic fixture in a test is built at run time instead, so its literal never appears in a file.
 export const EXACT_STRIPS = {
   // the MIT license must keep its copyright notice
   LICENSE: ['Copyright (c) 2026 Kyle Northup'],
@@ -48,39 +50,47 @@ export const EXACT_STRIPS = {
 
 // Where the repo tree (not a scaffolded stack) may carry names: the opt-in roster, the blog and the
 // release history tell the story, and the contributor tests have to spell the list out.
-// The same idea for private data: one exact synthetic string in one named file, for the contributor
-// tests that have to spell a fake leak out to prove the scanner catches it. Anything else in the file,
-// and the same string anywhere else, still counts. Prefer building a fixture at run time instead.
-const SCRUB_TEST_FIXTURES = ['/home/alice/.ssh', 'box.tail1234.ts.net', 'sk-abcdefghijklmnopqrstuvwxyz0123', 'jane@corp.io'];
-export const PRIVATE_EXACT_STRIPS = {
-  // the scrub test spells fake leaks out to prove the scanner catches them; this file lists them
-  'tests/persona-scrub.test.mjs': SCRUB_TEST_FIXTURES,
-  'tests/persona-scan.mjs': SCRUB_TEST_FIXTURES,
-};
-
 export const NAME_ALLOWED_PREFIXES = ['agents/examples/', 'docs/blog/', 'tests/'];
 export const NAME_ALLOWED_FILES = new Set(['CHANGELOG.md']);
 
-export function nameHits(file, text) {
+const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function withoutExemptions(file, text) {
   let body = text;
-  for (const s of EXACT_STRIPS[file] || []) body = body.split(s).join(' ');
+  for (const s of EXACT_STRIPS[file] || []) body = body.replace(new RegExp(`(?<![A-Za-z0-9_])${escapeRe(s)}(?![A-Za-z0-9_])`, 'g'), ' ');
+  return body;
+}
+
+// Markdown emphasis and code markers can split a name (`Ky**le`, `Or\`ac\`le`), so every line is
+// scanned twice: as written, and with * _ and backtick removed. A name the first view already found
+// is counted once; the second view adds only what the first could not see.
+const MARKERS = /[*_`]/g;
+const namesIn = text => [...splitCamel(withoutSlug(text)).matchAll(NAME_RE)].map(m => m[0]);
+function namesOf(line) {
+  const pool = namesIn(line);
+  const left = pool.map(w => w.toLowerCase());
+  for (const m of namesIn(line.replace(MARKERS, ''))) {
+    const at = left.indexOf(m.toLowerCase());
+    if (at >= 0) left.splice(at, 1);
+    else pool.push(m);
+  }
+  return pool;
+}
+
+export function nameHits(file, text) {
   const found = [];
-  body.split('\n').forEach((line, i) => {
-    const clean = splitCamel(withoutSlug(line));
-    for (const m of clean.matchAll(NAME_RE)) found.push(`${file}:${i + 1}: name "${m[0]}"  ${line.trim().slice(0, 100)}`);
+  withoutExemptions(file, text).split('\n').forEach((line, i) => {
+    for (const m of namesOf(line)) found.push(`${file}:${i + 1}: name "${m}"  ${line.trim().slice(0, 100)}`);
   });
   return found;
 }
 
 export function nameHitsInPath(file) {
-  const found = [];
-  for (const m of splitCamel(withoutSlug(file)).matchAll(NAME_RE)) found.push(`${file}: name "${m[0]}" in the path`);
-  return found;
+  return namesOf(file).map(m => `${file}: name "${m}" in the path`);
 }
 
 const PRIVATE = [
   ['home path', /\/(?:home|Users)\/[A-Za-z][\w.-]*/g],
-  ['api key', /\b(?:sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|xox[bap]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})/g],
+  ['api key', /\b(?:sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[bap]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})/g],
   ['private key', /-----BEGIN [A-Z ]*PRIVATE KEY-----/g],
   ['email', /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g],
   ['ip address', /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g],
@@ -94,10 +104,8 @@ const PRIVATE_PLACEHOLDERS = new Set([
 const PLACEHOLDER_EMAIL = /@(?:example\.(?:com|org|net)|users\.noreply\.github\.com)$/i;
 
 export function privateHits(file, text) {
-  let body = text;
-  for (const s of PRIVATE_EXACT_STRIPS[file] || []) body = body.split(s).join(' ');
   const found = [];
-  body.split('\n').forEach((line, i) => {
+  text.split('\n').forEach((line, i) => {
     const clean = line;
     for (const [kind, re] of PRIVATE) {
       for (const m of clean.matchAll(re)) {
