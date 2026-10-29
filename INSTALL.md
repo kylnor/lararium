@@ -238,8 +238,12 @@ this phase needs it unless they want a cloud app.
    If the pull answers "requires a newer version of Ollama", update Ollama and pull again; an older
    install cannot load this model.
    Restart the server with `--semantic`. If the model is missing or stops, search quietly falls
-   back to full-text and says so in its answer. The server stores which model built the vectors and
-   refuses to mix models; to switch, restart once with `--reindex`. The llama.cpp route is
+   back to full-text and says so in its answer. The server stores which model built the vectors,
+   and a fingerprint of it (a fixed test sentence it embedded, plus the model digest when Ollama
+   reports one), and refuses to reuse vectors when either changes, even if the model keeps the same
+   name and size. To switch or rebuild, run the server once with `--reindex`. That run rebuilds the
+   vectors and then exits, so launch the server again afterwards, with the same `--semantic` and
+   backend flags. The llama.cpp route is
    `--embed-backend llamacpp` against a `llama-server` serving `ggml-org/embeddinggemma-2-GGUF:BF16`
    with `--embeddings` (the server expects it on port 8080 unless `--embed-url` says otherwise).
 6. Optional, last: reach it from a cloud app (the Claude app on the web or phone, ChatGPT). Those
@@ -253,12 +257,20 @@ this phase needs it unless they want a cloud app.
      `https://` address for a quick test; a named tunnel on their own domain keeps the address
      stable. Cloudflare's tunnel docs walk the named setup.
 
-   Restart the server with that address: `npx lararium serve --public-url https://<their address>`.
+   Restart the server with that address, keeping every flag chosen earlier (`--semantic`,
+   `--embed-backend`, `--embed-url`, `--embed-model`, `--port`, `--memory`) because a restart
+   forgets any flag it is not given: `npx lararium serve --public-url https://<their address>` plus
+   those.
    The server refuses requests with no token or a wrong one (401), and the read token cannot call
    `remember`. Then walk the app step below. Give each app the token tier it needs: the write token
    if it should save facts, the read token if it should only look.
 7. Keep the tokens private. They live in the file step 2 named. If one leaks, run `npx lararium serve
-   --rotate-tokens`, which signs every connected app out, and reconnect the ones they still use. If
+   --rotate-tokens`. It prints that the tokens changed and where the file is, never the tokens
+   themselves. A server that is already running notices the new file on its next request, so the old
+   tokens and every app sign-in made with them stop working at once, with no restart. (Tokens set
+   with `LARARIUM_READ_TOKEN` or `LARARIUM_WRITE_TOKEN` are not in the file; change those and restart.)
+   Then show the new tokens with `--print-tokens`, only if the user wants to see them, and reconnect
+   the apps they still use. If
    the memory folder holds anything they would not post publicly, keep the server on this machine
    and skip step 6.
 8. Only when plain files and this server stop being enough (very large folders, many writers at

@@ -54,8 +54,10 @@ function createMcpServer({ store, semantic = null, role, version }) {
         names = fuse([byText, bySemantic], limit);
         mode = 'hybrid (full-text + EmbeddingGemma 2)';
       } catch (error) {
-        if (!(error instanceof SemanticUnavailable)) throw error;
-        mode = `full-text (semantic search unavailable: ${error.message})`;
+        // Whatever went wrong on the semantic path (model down, cache unreadable, disk full), the
+        // answer is full-text, not an error. Only the error code travels, never a local path.
+        const why = error instanceof SemanticUnavailable ? error.message : `semantic index error (${error.code || error.name})`;
+        mode = `full-text (semantic search unavailable: ${why})`;
       }
     }
     const known = new Map(byText.map(r => [r.name, r]));

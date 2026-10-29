@@ -60,10 +60,18 @@ function send(res, status, body, headers = {}) {
 
 // `publicUrl` is the HTTPS address the outside world uses (a tunnel); without it the server
 // describes itself by its loopback address, which is right for local tools.
-function createHttpServer({ store, semantic, tokens, publicUrl, version, log = () => {} }) {
+// Credentials come from `tokenSource` (auth.createTokenSource: re-read when the token file is
+// replaced, so a rotation revokes on this running server) or, for a fixed pair, from `tokens`.
+function createHttpServer({ store, semantic, tokens, tokenSource, publicUrl, version, log = () => {} }) {
   let base = publicUrl ? publicUrl.replace(/\/+$/, '') : '';
   const allowedHosts = new Set();
-  const key = auth.signingKey(tokens);
+  const source = tokenSource || { current: (fixed => () => fixed)({ tokens, key: auth.signingKey(tokens) }) };
+  // The current tokens and signing key, or a 503 when the token file is gone.
+  const creds = () => {
+    const c = source.current();
+    if (!c) throw Object.assign(new Error('server tokens unavailable'), { status: 503 });
+    return c;
+  };
   const throttle = auth.createLimiter({ max: 60, windowMs: 60 * 1000 });
   const usedCodes = new Map();
 
@@ -74,9 +82,11 @@ function createHttpServer({ store, semantic, tokens, publicUrl, version, log = (
   function tierOf(req) {
     const presented = auth.bearerFrom(req);
     if (!presented) return null;
-    const staticTier = auth.tierOfStaticToken(presented, tokens);
+    const current = source.current();
+    if (!current) return null; // fail closed: no readable token file means nobody gets in
+    const staticTier = auth.tierOfStaticToken(presented, current.tokens);
     if (staticTier) return staticTier;
-    const claims = auth.verify(key, 'at', presented);
+    const claims = auth.verify(current.key, 'at', presented);
     return claims && (claims.tier === 'read' || claims.tier === 'write') ? claims.tier : null;
   }
 
@@ -124,7 +134,7 @@ function createHttpServer({ store, semantic, tokens, publicUrl, version, log = (
       return send(res, 400, { error: 'invalid_redirect_uri', error_description: 'redirect_uris must be 1 to 5 https URLs (or http on loopback)' });
     }
     const name = typeof input.client_name === 'string' ? input.client_name.slice(0, 80) : 'MCP client';
-    const clientId = auth.sign(key, 'ci', { ru: uris, n: name, exp: Math.floor(Date.now() / 1000) + 365 * 24 * 3600 });
+    const clientId = auth.sign(creds().key, 'ci', { ru: uris, n: name, exp: Math.floor(Date.now() / 1000) + 365 * 24 * 3600 });
     return send(res, 201, {
       client_id: clientId,
       client_name: name,
@@ -136,7 +146,7 @@ function createHttpServer({ store, semantic, tokens, publicUrl, version, log = (
   }
 
   function parseAuthorize(params) {
-    const client = auth.verify(key, 'ci', params.get('client_id'));
+    const client = auth.verify(creds().key, 'ci', params.get('client_id'));
     const redirect = params.get('redirect_uri');
     if (!client || !client.ru.includes(redirect)) return { error: 'This application is not registered with this server, or its redirect address does not match.' };
     if (params.get('response_type') !== 'code') return { error: 'Only response_type=code is supported.' };
@@ -173,9 +183,10 @@ ${message ? `<p class="err">${esc(message)}</p>` : ''}
     const parsed = parseAuthorize(params);
     if (parsed.error) return send(res, 400, parsed.error);
     if (!isPost) return page(res, 200, parsed);
-    const tier = auth.tierOfStaticToken(params.get('token') || '', tokens);
+    const current = creds();
+    const tier = auth.tierOfStaticToken(params.get('token') || '', current.tokens);
     if (!tier) return page(res, 401, parsed, 'That token was not recognized.');
-    const code = auth.sign(key, 'ac', {
+    const code = auth.sign(current.key, 'ac', {
       cid: parsed.clientId, ru: parsed.redirect, cc: parsed.challenge, tier, jti: crypto.randomBytes(8).toString('hex'), exp: Math.floor(Date.now() / 1000) + CODE_TTL_S,
     });
     const target = new URL(parsed.redirect);
@@ -185,7 +196,7 @@ ${message ? `<p class="err">${esc(message)}</p>` : ''}
     return send(res, 302, '', { location: target.toString() });
   }
 
-  function issue(tier) {
+  function issue(key, tier) {
     const now = Math.floor(Date.now() / 1000);
     return {
       access_token: auth.sign(key, 'at', { tier, exp: now + ACCESS_TTL_S }),
@@ -201,6 +212,7 @@ ${message ? `<p class="err">${esc(message)}</p>` : ''}
     if (!throttle(`tok:${req.socket.remoteAddress}`)) return send(res, 429, { error: 'too_many_requests' });
     const form = new URLSearchParams(await readBody(req, MAX_FORM_BODY));
     const grant = form.get('grant_type');
+    const { key } = creds();
     if (grant === 'authorization_code') {
       const claims = auth.verify(key, 'ac', form.get('code'));
       const verifier = form.get('code_verifier') || '';
@@ -211,12 +223,12 @@ ${message ? `<p class="err">${esc(message)}</p>` : ''}
       for (const [id, exp] of usedCodes) if (exp < now) usedCodes.delete(id);
       if (!ok || usedCodes.has(claims.jti)) return send(res, 400, { error: 'invalid_grant' });
       usedCodes.set(claims.jti, claims.exp);
-      return send(res, 200, issue(claims.tier));
+      return send(res, 200, issue(key, claims.tier));
     }
     if (grant === 'refresh_token') {
       const claims = auth.verify(key, 'rt', form.get('refresh_token'));
       if (!claims || (claims.tier !== 'read' && claims.tier !== 'write')) return send(res, 400, { error: 'invalid_grant' });
-      return send(res, 200, issue(claims.tier));
+      return send(res, 200, issue(key, claims.tier));
     }
     return send(res, 400, { error: 'unsupported_grant_type' });
   }
@@ -244,7 +256,7 @@ ${message ? `<p class="err">${esc(message)}</p>` : ''}
     };
     route().catch(error => {
       log(`request failed: ${error.stack || error}`);
-      if (!res.headersSent) send(res, error.status || 500, { error: error.status === 413 ? 'body too large' : 'internal error' });
+      if (!res.headersSent) send(res, error.status || 500, { error: { 413: 'body too large', 503: 'server tokens unavailable' }[error.status] || 'internal error' });
       else res.end();
     });
   });

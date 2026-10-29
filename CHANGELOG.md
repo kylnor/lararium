@@ -26,7 +26,9 @@ the memory folder, so they search, read and add to the same cards.
 streamable HTTP; HTTP always needs a bearer token, with a read tier that has no `remember` and a write
 tier. A small OAuth 2.1 sign-in covers ChatGPT (OAuth only) and the Claude app. Node 18+, the official
 MCP SDK, no database. Optional semantic search with a local EmbeddingGemma 2, off by default, falling
-back to full-text whenever the model is missing. Details in `npx/README.md`.
+back to full-text whenever the model is missing. Details in `npx/README.md`. Rotating the tokens
+revokes on a server that is already running, the index and vector cache refuse symbolic links, the
+vector cache carries a model fingerprint, and several servers on one folder take turns on the index.
 
 **INSTALL.md Phase 5 is rewritten.** It used to describe the Postgres index. It is now the guided,
 local-first setup: start the server, add it to each tool, prove a round trip, then optionally add

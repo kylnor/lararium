@@ -5,7 +5,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { GuardError, resolveInside } = require('./guard');
+const { GuardError, resolveInside, resolveAuxFile } = require('./guard');
 
 const CARD_TYPES = ['user', 'feedback', 'project', 'reference'];
 const NOT_CARDS = new Set(['MEMORY.md', 'DEMOTED.md', 'README.md', 'pointer-block.md']);
@@ -15,6 +15,10 @@ const MAX_DESCRIPTION = 300;
 const MAX_BODY = 20000;
 const INDEX_MAX_LINES = 200;
 const INDEX_MAX_BYTES = 24000;
+const LOCK_NAME = '.memory-index.lock';
+const LOCK_STALE_MS = 10000; // a holder that crashed leaves its lock; after this long it is taken over
+const LOCK_WAIT_MS = 15000; // how long remember waits for another process before giving up
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const STOPWORDS = new Set((
   'a an and are as at be by do does for from has have how i in is it me my of on or our so ' +
   'that the this to was we what when where which who why with you your about remember know tell'
@@ -102,14 +106,55 @@ function withEntry(indexText, entry) {
   return `${indexText.replace(/\s+$/, '')}\n${entry}\n`;
 }
 
-function createStore({ root }) {
+function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT_MS }) {
   const folder = path.resolve(root);
   if (!fs.existsSync(folder) || !fs.statSync(folder).isDirectory()) {
     throw new InputError(`memory folder not found: ${folder}`);
   }
-  // One writer at a time inside this process. Another process editing MEMORY.md at the same
-  // instant can still race; the window is two file operations wide.
+  // One writer at a time inside this process; across processes (several stdio servers on one
+  // folder) the index update runs under a lock file, see withIndexLock.
   let writing = Promise.resolve();
+
+  // The index file, refused if it is a symbolic link. Does not require it to exist.
+  function indexFile() {
+    return resolveAuxFile(fs.realpathSync(folder), 'MEMORY.md');
+  }
+
+  // Cross-process mutex for the read-modify-rename of MEMORY.md: an exclusive create (O_EXCL) of
+  // a lock file beside it. A lock older than lockStaleMs belongs to a process that died and is
+  // taken over; if the lock stays busy past lockWaitMs, remember is refused with a clear error
+  // (and writes nothing) rather than risk a lost update.
+  async function withIndexLock(fn) {
+    const lock = path.join(fs.realpathSync(folder), LOCK_NAME);
+    const deadline = Date.now() + lockWaitMs;
+    for (;;) {
+      try {
+        const fd = fs.openSync(lock, 'wx', 0o644);
+        fs.writeSync(fd, `${process.pid}\n`);
+        fs.closeSync(fd);
+        break;
+      } catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+      }
+      let held;
+      try { held = fs.lstatSync(lock); } catch (error) {
+        if (error.code === 'ENOENT') continue; // released between our two looks: try again at once
+        throw error;
+      }
+      if (Date.now() - held.mtimeMs > lockStaleMs) {
+        const again = fs.lstatSync(lock, { throwIfNoEntry: false });
+        if (again && again.ino === held.ino && again.mtimeMs === held.mtimeMs) fs.rmSync(lock, { force: true });
+        continue;
+      }
+      if (Date.now() >= deadline) throw new InputError('the memory index is busy (another process is writing it); try again in a moment');
+      await sleep(15);
+    }
+    try {
+      return await fn();
+    } finally {
+      fs.rmSync(lock, { force: true });
+    }
+  }
 
   function cardFiles() {
     return fs.readdirSync(folder)
@@ -125,7 +170,8 @@ function createStore({ root }) {
 
   function pointered() {
     let index = '';
-    try { index = fs.readFileSync(path.join(folder, 'MEMORY.md'), 'utf8'); } catch { return new Set(); }
+    const indexPath = indexFile(); // a symlinked index is a GuardError, not an empty one
+    try { index = fs.readFileSync(indexPath, 'utf8'); } catch { return new Set(); }
     const lines = index.split('\n');
     const set = new Set();
     for (const i of entryLineIndexes(lines)) {
@@ -209,31 +255,39 @@ function createStore({ root }) {
   }
 
   // Writes one card and prepends its index line. Never overwrites: a name that exists is refused.
-  function rememberNow(input) {
+  // The index path is checked before the card is written, so a refused index leaves no orphan card.
+  async function rememberNow(input) {
     const card = validate(input);
-    const target = resolveInside(folder, card.name);
-    const text = `---\nname: ${card.name}\ndescription: ${yamlLine(card.description)}\ntype: ${card.type}\n---\n\n${card.body}\n`;
-    try {
-      fs.writeFileSync(target, text, { flag: 'wx', mode: 0o644 });
-    } catch (error) {
-      if (error.code === 'EEXIST') throw new InputError(`a card named ${card.name} already exists; choose a different name`);
-      throw error;
-    }
-    const indexPath = path.join(folder, 'MEMORY.md');
-    let indexText = '# Memory\n\n';
-    try { indexText = fs.readFileSync(indexPath, 'utf8'); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-    const updated = withEntry(indexText, `- ${card.name}.md - ${card.description}`);
-    const temp = `${indexPath}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
-    fs.writeFileSync(temp, updated, { mode: 0o644 });
-    fs.renameSync(temp, indexPath);
-    const lineCount = updated.split('\n').length;
-    const bytes = Buffer.byteLength(updated);
-    return {
-      name: card.name,
-      file: `${card.name}.md`,
-      indexLine: `- ${card.name}.md - ${card.description}`,
-      indexOverBudget: lineCount > INDEX_MAX_LINES || bytes > INDEX_MAX_BYTES,
-    };
+    return withIndexLock(() => {
+      const indexPath = indexFile();
+      const target = resolveInside(folder, card.name);
+      const text = `---\nname: ${card.name}\ndescription: ${yamlLine(card.description)}\ntype: ${card.type}\n---\n\n${card.body}\n`;
+      try {
+        fs.writeFileSync(target, text, { flag: 'wx', mode: 0o644 });
+      } catch (error) {
+        if (error.code === 'EEXIST') throw new InputError(`a card named ${card.name} already exists; choose a different name`);
+        throw error;
+      }
+      let indexText = '# Memory\n\n';
+      try { indexText = fs.readFileSync(indexPath, 'utf8'); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      const updated = withEntry(indexText, `- ${card.name}.md - ${card.description}`);
+      const temp = `${indexPath}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+      try {
+        fs.writeFileSync(temp, updated, { mode: 0o644, flag: 'wx' });
+        fs.renameSync(temp, indexPath);
+      } catch (error) {
+        fs.rmSync(temp, { force: true });
+        throw error;
+      }
+      const lineCount = updated.split('\n').length;
+      const bytes = Buffer.byteLength(updated);
+      return {
+        name: card.name,
+        file: `${card.name}.md`,
+        indexLine: `- ${card.name}.md - ${card.description}`,
+        indexOverBudget: lineCount > INDEX_MAX_LINES || bytes > INDEX_MAX_BYTES,
+      };
+    });
   }
 
   function remember(input) {

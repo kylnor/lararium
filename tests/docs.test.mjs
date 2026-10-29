@@ -88,3 +88,12 @@ test('shipped docs carry no em or en dash', () => {
     assert.deepEqual(bad, [], `dashes in ${bad.join(', ')}`);
   }
 });
+
+test('INSTALL.md tells the restart truth: --reindex exits, the public-URL command keeps earlier flags, rotation is live', () => {
+  const install = read('INSTALL.md');
+  assert.match(install, /rebuilds the\s+vectors and then exits, so launch the server again/, '--reindex exits and the server must be launched again');
+  assert.match(install, /keeping every flag chosen earlier \(`--semantic`,\s+`--embed-backend`, `--embed-url`, `--embed-model`/, 'the public-URL command keeps the earlier flags');
+  assert.match(install, /notices the new file on its next request/, 'rotation revokes on a running server');
+  assert.match(install, /never the tokens\s+themselves/, 'rotation prints no tokens');
+  assert.ok(!/signs every connected app out, and reconnect/.test(install), 'the old rotate wording is gone');
+});

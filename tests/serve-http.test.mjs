@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
@@ -228,4 +229,60 @@ test('OAuth: credentials die when the tokens are rotated', async () => {
     });
     assert.equal(res.status, 401);
   } finally { rotated.close(); }
+});
+
+// Rotation has to take effect on a server that is already running, or a leaked token stays good
+// until someone restarts it. This drives the real CLI: a running listener, then a separate
+// `--rotate-tokens` process, then the same listener again.
+test('rotation revokes on the running server: old static and OAuth credentials 401 at once, new tokens work, no restart', async () => {
+  const entry = path.join(repo, 'npx/index.js');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'serve-rotate-'));
+  const env = { ...process.env, LARARIUM_SERVE_HOME: home, LARARIUM_READ_TOKEN: '', LARARIUM_WRITE_TOKEN: '' };
+  const run = flag => spawnSync(process.execPath, [entry, 'serve', flag], { encoding: 'utf8', env });
+  const parse = out => Object.fromEntries(out.trim().split('\n').map(l => l.split(/:\s+/)));
+  const before = parse(run('--print-tokens').stdout);
+  const child = spawn(process.execPath, [entry, 'serve', '--memory', memory, '--port', '0'], { env, stdio: ['ignore', 'ignore', 'pipe'] });
+  try {
+    const url = await new Promise((resolve, reject) => {
+      let seen = '';
+      child.stderr.on('data', c => {
+        seen += c;
+        const m = seen.match(/listening on (http:\/\/127\.0\.0\.1:\d+)\/mcp/);
+        if (m) resolve(m[1]);
+      });
+      child.on('close', () => reject(new Error(`server exited early: ${seen}`)));
+    });
+    const call = token => fetch(`${url}/mcp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${token}` },
+      body: JSON.stringify(listTools),
+    }).then(r => r.status);
+
+    // an OAuth credential minted from the old tokens, through the live server
+    const { verifier, challenge } = pkce();
+    const reg = await (await fetch(`${url}/register`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ redirect_uris: [CALLBACK] }) })).json();
+    const authz = await fetch(`${url}/authorize`, { method: 'POST', body: authorizeForm(reg.client_id, challenge, before.write), redirect: 'manual' });
+    const code = new URL(authz.headers.get('location')).searchParams.get('code');
+    const grant = await (await fetch(`${url}/token`, {
+      method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: CALLBACK, client_id: reg.client_id, code_verifier: verifier }),
+    })).json();
+
+    assert.equal(await call(before.write), 200);
+    assert.equal(await call(before.read), 200);
+    assert.equal(await call(grant.access_token), 200);
+
+    assert.equal(run('--rotate-tokens').status, 0);
+    const after = parse(run('--print-tokens').stdout);
+    assert.notEqual(after.write, before.write);
+
+    assert.equal(await call(before.write), 401, 'old write token');
+    assert.equal(await call(before.read), 401, 'old read token');
+    assert.equal(await call(grant.access_token), 401, 'OAuth access token issued before the rotation');
+    assert.equal(await call(after.write), 200, 'new write token');
+    assert.equal(await call(after.read), 200, 'new read token');
+  } finally {
+    child.kill();
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });

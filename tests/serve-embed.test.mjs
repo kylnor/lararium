@@ -2,7 +2,7 @@
 // stored next to the vectors, never mixed, and always a fallback to full-text. A fake local
 // embedding server stands in for Ollama, so this runs anywhere with no model installed.
 // Needs the server's dependencies: npm ci --prefix npx
-import { test } from 'node:test';
+import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -21,28 +21,36 @@ const { Client } = sdk('@modelcontextprotocol/sdk/client/index.js');
 const { InMemoryTransport } = sdk('@modelcontextprotocol/sdk/inMemory.js');
 
 // "Meaning" in the fake: texts about pets point along axis 0, texts about money along axis 1.
-function fakeVector(text, dims = DIMS) {
+// With `swap` on, the same name now serves a different model: same size, different space.
+function fakeVector(text, dims = DIMS, swap = false) {
   const v = new Array(dims).fill(0);
-  if (/\b(cat|dog|kitten|puppy|pet)/i.test(text)) v[0] = 1;
-  if (/\b(invoice|payment|money|billing)/i.test(text)) v[1] = 1;
-  if (!v[0] && !v[1]) v[2] = 1;
+  const [pets, money, other] = swap ? [1, 0, 3] : [0, 1, 2];
+  if (/\b(cat|dog|kitten|puppy|pet)/i.test(text)) v[pets] = 1;
+  if (/\b(invoice|payment|money|billing)/i.test(text)) v[money] = 1;
+  if (!v[pets] && !v[money]) v[other] = 1;
   return v;
 }
 
 async function fakeOllama({ dims = DIMS, status = 200 } = {}) {
   const seen = [];
+  const state = { swap: false, digest: 'sha256:aaaa' };
   const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', c => { body += c; });
     req.on('end', () => {
+      if (req.url === '/api/tags') { // where Ollama reports each model's digest
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ models: state.digest ? [{ name: 'embeddinggemma-2:270m', digest: state.digest }] : [] }));
+        return;
+      }
       const { model, input } = JSON.parse(body);
       seen.push({ url: req.url, model, input });
       res.writeHead(status, { 'content-type': 'application/json' });
-      res.end(JSON.stringify(status === 200 ? { embeddings: input.map(t => fakeVector(t, dims)) } : { error: 'nope' }));
+      res.end(JSON.stringify(status === 200 ? { embeddings: input.map(t => fakeVector(t, dims, state.swap)) } : { error: 'nope' }));
     });
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  return { url: `http://127.0.0.1:${server.address().port}`, seen, close: () => server.close() };
+  return { url: `http://127.0.0.1:${server.address().port}`, seen, state, close: () => server.close() };
 }
 
 function folder() {
@@ -163,4 +171,133 @@ test('default is full-text only: with no semantic engine the mode says so and no
     assert.match(await toolSearch(f.store, null, 'invoice'), /Search mode: full-text\./);
     assert.equal(fs.existsSync(path.join(f.memory, '.index')), false);
   } finally { f.done(); }
+});
+
+// ---- r2 hardening -------------------------------------------------------------------------
+
+test('same name, same size, different model: the probe fingerprint refuses the old vectors until --reindex', async () => {
+  const f = folder();
+  const ollama = await fakeOllama();
+  try {
+    const semantic = createSemantic({ store: f.store, url: ollama.url });
+    await semantic.sync();
+    const saved = JSON.parse(fs.readFileSync(path.join(f.memory, '.index/embeddings.json'), 'utf8'));
+    assert.equal(saved.embedUrl, ollama.url);
+    assert.equal(saved.digest, 'sha256:aaaa');
+    assert.equal(saved.probe.v.length > 100, true, 'the probe vector is stored with the cache');
+    assert.equal((await semantic.rank('cat'))[0].name, 'feline-notes');
+
+    ollama.state.swap = true; // the model behind the same name and 768 dimensions changes
+    await assert.rejects(() => semantic.rank('cat'), err => err instanceof SemanticUnavailable && /probe/.test(err.message) && /--reindex/.test(err.message));
+    await assert.rejects(() => semantic.sync(), /--reindex/);
+    assert.match(await toolSearch(f.store, semantic, 'invoice'), /full-text \(semantic search unavailable: .*--reindex/);
+
+    semantic.reset();
+    assert.deepEqual(await semantic.sync(), { embedded: 2, total: 2 });
+    assert.equal((await semantic.rank('cat'))[0].name, 'feline-notes');
+  } finally { ollama.close(); f.done(); }
+});
+
+test('an endpoint change is checked by the probe: the same model elsewhere is fine, a different one is refused', async () => {
+  const f = folder();
+  const first = await fakeOllama();
+  const second = await fakeOllama();
+  const third = await fakeOllama();
+  try {
+    await createSemantic({ store: f.store, url: first.url }).sync();
+    const moved = createSemantic({ store: f.store, url: second.url });
+    assert.equal((await moved.rank('cat'))[0].name, 'feline-notes', 'same model on a new port keeps the cache');
+    third.state.swap = true;
+    await assert.rejects(() => createSemantic({ store: f.store, url: third.url }).rank('cat'), /probe.*--reindex/);
+  } finally { first.close(); second.close(); third.close(); f.done(); }
+});
+
+test('a changed server-reported digest refuses the cache even when the vectors would match', async () => {
+  const f = folder();
+  const ollama = await fakeOllama();
+  try {
+    const semantic = createSemantic({ store: f.store, url: ollama.url });
+    await semantic.sync();
+    ollama.state.digest = 'sha256:bbbb';
+    await assert.rejects(() => semantic.rank('cat'), err => /digest/.test(err.message) && /--reindex/.test(err.message));
+    ollama.state.digest = null; // a server that does not report one: the probe alone decides
+    assert.equal((await semantic.rank('cat'))[0].name, 'feline-notes');
+  } finally { ollama.close(); f.done(); }
+});
+
+test('a cache with no probe record is refused rather than trusted', async () => {
+  const f = folder();
+  const ollama = await fakeOllama();
+  try {
+    const semantic = createSemantic({ store: f.store, url: ollama.url });
+    await semantic.sync();
+    const file = path.join(f.memory, '.index/embeddings.json');
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    delete saved.probe;
+    fs.writeFileSync(file, JSON.stringify(saved));
+    await assert.rejects(() => semantic.rank('cat'), /--reindex/);
+  } finally { ollama.close(); f.done(); }
+});
+
+test('a symlinked .index folder is refused: nothing is written outside the memory folder, search falls back', async () => {
+  const f = folder();
+  const ollama = await fakeOllama();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'serve-outside-'));
+  try {
+    fs.symlinkSync(outside, path.join(f.memory, '.index'));
+    const semantic = createSemantic({ store: f.store, url: ollama.url });
+    await assert.rejects(() => semantic.sync(), err => err instanceof SemanticUnavailable && /symbolic link/.test(err.message));
+    assert.deepEqual(fs.readdirSync(outside), [], 'nothing escaped');
+    assert.match(await toolSearch(f.store, semantic, 'invoice'), /full-text \(semantic search unavailable: .*symbolic link/);
+    assert.deepEqual(fs.readdirSync(outside), []);
+  } finally { ollama.close(); fs.rmSync(outside, { recursive: true, force: true }); f.done(); }
+});
+
+test('a symlinked embeddings.json is refused too, and its target is neither read nor replaced', async () => {
+  const f = folder();
+  const ollama = await fakeOllama();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'serve-outside-'));
+  try {
+    const target = path.join(outside, 'decoy.json');
+    fs.writeFileSync(target, 'decoy');
+    fs.mkdirSync(path.join(f.memory, '.index'));
+    fs.symlinkSync(target, path.join(f.memory, '.index/embeddings.json'));
+    const semantic = createSemantic({ store: f.store, url: ollama.url });
+    await assert.rejects(() => semantic.sync(), /symbolic link/);
+    assert.equal(fs.readFileSync(target, 'utf8'), 'decoy');
+    assert.match(await toolSearch(f.store, semantic, 'invoice'), /^- accounts-notes/m);
+  } finally { ollama.close(); fs.rmSync(outside, { recursive: true, force: true }); f.done(); }
+});
+
+test('an embedding server that redirects is refused: card text never follows a redirect off this machine', async () => {
+  const f = folder();
+  const target = await fakeOllama();
+  const redirector = http.createServer((req, res) => {
+    req.resume();
+    res.writeHead(307, { location: `${target.url}${req.url}` });
+    res.end();
+  });
+  await new Promise(resolve => redirector.listen(0, '127.0.0.1', resolve));
+  try {
+    const semantic = createSemantic({ store: f.store, url: `http://127.0.0.1:${redirector.address().port}` });
+    await assert.rejects(() => semantic.sync(), err => err instanceof SemanticUnavailable && /redirect/.test(err.message));
+    assert.equal(target.seen.length, 0, 'the redirect target never received a request');
+    assert.match(await toolSearch(f.store, semantic, 'invoice'), /full-text \(semantic search unavailable: .*redirect/);
+  } finally { redirector.close(); target.close(); f.done(); }
+});
+
+test('any failure on the semantic path (disk full, permission) falls back to full-text instead of erroring', async () => {
+  const f = folder();
+  const ollama = await fakeOllama();
+  const real = fs.writeFileSync;
+  const patched = mock.method(fs, 'writeFileSync', (file, ...rest) => {
+    if (String(file).includes(`${path.sep}.index${path.sep}`)) throw Object.assign(new Error(`ENOSPC: no space left on device, write '${file}'`), { code: 'ENOSPC' });
+    return real(file, ...rest);
+  });
+  try {
+    const out = await toolSearch(f.store, createSemantic({ store: f.store, url: ollama.url }), 'invoice');
+    assert.match(out, /full-text \(semantic search unavailable: .*ENOSPC/);
+    assert.match(out, /^- accounts-notes/m, 'full-text still answers');
+    assert.doesNotMatch(out, new RegExp(f.top.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'the owner\'s folder path is not sent to the app');
+  } finally { patched.mock.restore(); ollama.close(); f.done(); }
 });

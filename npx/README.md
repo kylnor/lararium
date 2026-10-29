@@ -52,7 +52,9 @@ token. The default is streamable HTTP on `127.0.0.1:8787`, and HTTP always requi
 No token, or a wrong one, gets a 401. Tokens are created on first start in a private file
 (`~/.config/lararium/serve.json`, mode 0600; set `LARARIUM_SERVE_HOME` to move it), or come from
 `LARARIUM_READ_TOKEN` and `LARARIUM_WRITE_TOKEN` (32 characters or more, and different).
-`--print-tokens` shows them; `--rotate-tokens` replaces them and signs every connected app out.
+`--print-tokens` shows them. `--rotate-tokens` replaces them and prints only that it worked and where
+the file is; a server that is already running reads the new file on its next request, so the old tokens
+and every app sign-in made with them stop working at once, with no restart.
 
 **Cloud apps.** The Claude app and ChatGPT connect from the internet, so they need a public HTTPS
 address: put Tailscale Funnel or a Cloudflare Tunnel in front of the local port and start with
@@ -67,11 +69,15 @@ derived from the two tokens, so rotating the tokens revokes all of them. The wal
 EmbeddingGemma 2 (768 dimensions): Ollama `embeddinggemma-2:270m` (the default), or llama.cpp
 `ggml-org/embeddinggemma-2-GGUF:BF16` with `--embed-backend llamacpp`. The embedding server must be on
 this machine. Vectors live in `memory/.index/` next to a record of which model made them; a different
-model is refused until `--reindex`. If the model is missing or down, search falls back to full-text
-and says so.
+model is refused until `--reindex`, and so are vectors the server would no longer reproduce (a stored
+fingerprint of a fixed test sentence, plus the model digest when Ollama reports one, catches a different
+model behind the same name and size). `--reindex` rebuilds and exits; start the server again after it.
+Redirects from the embedding server are refused. If the model is missing, down, or the cache cannot be
+read or written, search falls back to full-text and says so.
 
 Limits worth knowing: it serves `memory/` only; `remember` adds cards and never edits one (a
-correction is a new card); two processes editing `memory/MEMORY.md` in the same instant can race.
+correction is a new card); several servers on one folder take turns on `memory/MEMORY.md` through a
+lock file (`.memory-index.lock`), and a symbolic link in place of `MEMORY.md` or `.index/` is refused.
 
 Behavior change since `0.2.x`: `npx lararium serve` is now this command. To scaffold a folder that
 is literally named `serve`, write `npx lararium ./serve`.

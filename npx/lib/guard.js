@@ -49,4 +49,41 @@ function resolveInside(root, name) {
   return real;
 }
 
-module.exports = { GuardError, resolveInside, toFileName };
+// The same containment for the files the server keeps beside the cards: the index (MEMORY.md),
+// the vector cache folder (.index/) and the temp files written on the way. None of them may be a
+// symbolic link, because a link would carry a read or a write out of the memory folder. The
+// messages name the entry, never the owner's absolute path, because they travel back to the app.
+function resolveAuxFile(dir, name) {
+  const target = path.join(dir, name);
+  let stat;
+  try {
+    stat = fs.lstatSync(target);
+  } catch (error) {
+    if (error.code === 'ENOENT') return target;
+    throw error;
+  }
+  if (stat.isSymbolicLink()) throw new GuardError(`${name} is a symbolic link; refusing to follow it out of the memory folder`);
+  if (!stat.isFile()) throw new GuardError(`${name} is not a regular file`);
+  return target;
+}
+
+// A real directory directly inside the memory folder. Returns null when absent unless `create`.
+function resolveAuxDir(root, name, { create = false } = {}) {
+  const realRoot = fs.realpathSync(root);
+  const target = path.join(realRoot, name);
+  let stat;
+  try {
+    stat = fs.lstatSync(target);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    if (!create) return null;
+    try { fs.mkdirSync(target, { mode: 0o755 }); } catch (mkError) { if (mkError.code !== 'EEXIST') throw mkError; }
+    stat = fs.lstatSync(target);
+  }
+  if (stat.isSymbolicLink()) throw new GuardError(`${name} is a symbolic link; refusing to follow it out of the memory folder`);
+  if (!stat.isDirectory()) throw new GuardError(`${name} is not a folder`);
+  if (fs.realpathSync(target) !== target) throw new GuardError(`${name} resolves outside the memory folder`);
+  return target;
+}
+
+module.exports = { GuardError, resolveInside, resolveAuxFile, resolveAuxDir, toFileName };

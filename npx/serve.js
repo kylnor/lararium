@@ -17,12 +17,12 @@ Options
   --host <addr>         HTTP bind address (default 127.0.0.1; leave it unless you know why)
   --public-url <https>  the HTTPS address a tunnel gives you, for the cloud apps (optional last step)
   --print-tokens        show the read and write tokens, then exit
-  --rotate-tokens       make new tokens (this signs every connected app out), then exit
+  --rotate-tokens       make new tokens, then exit (running servers drop the old ones on their next request; prints no secrets)
   --semantic            also rank by meaning with a local EmbeddingGemma 2 (off by default)
   --embed-backend <b>   ollama (default) or llamacpp
   --embed-url <url>     where that server listens (must be on this machine)
   --embed-model <name>  default embeddinggemma-2:270m (ollama)
-  --reindex             throw away stored vectors and rebuild them, then exit
+  --reindex             throw away stored vectors and rebuild them, then exit (launch the server again afterwards)
   --help
 `;
 
@@ -52,8 +52,17 @@ async function main(argv, env = process.env) {
   const log = line => process.stderr.write(`${line}\n`);
   const auth = require('./lib/auth');
 
-  if (opts['print-tokens'] || opts['rotate-tokens']) {
-    const tokens = auth.loadTokens({ env, rotate: Boolean(opts['rotate-tokens']) });
+  if (opts['rotate-tokens']) {
+    // Success and the file's location only. Secrets leave this program through --print-tokens and nothing else.
+    const tokens = auth.loadTokens({ env, rotate: true });
+    process.stdout.write(`rotated: new read and write tokens saved to ${tokens.file}\nservers already running drop the old tokens on their next request; reconnect each app with a new token (show them with --print-tokens)\n`);
+    if (env.LARARIUM_READ_TOKEN || env.LARARIUM_WRITE_TOKEN) {
+      process.stdout.write('note: LARARIUM_READ_TOKEN / LARARIUM_WRITE_TOKEN are set and still win over the file; change them there and restart to rotate those\n');
+    }
+    return;
+  }
+  if (opts['print-tokens']) {
+    const tokens = auth.loadTokens({ env });
     process.stdout.write(`read:  ${tokens.readToken}\nwrite: ${tokens.writeToken}\nfile:  ${tokens.file}\n`);
     return;
   }
@@ -98,7 +107,7 @@ async function main(argv, env = process.env) {
     if (u.protocol !== 'https:') throw new Error('--public-url must be an https:// address');
     publicUrl = u.origin;
   }
-  const server = createHttpServer({ store, semantic, tokens, publicUrl, version, log });
+  const server = createHttpServer({ store, semantic, tokenSource: auth.createTokenSource({ env }), publicUrl, version, log });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, host, resolve);

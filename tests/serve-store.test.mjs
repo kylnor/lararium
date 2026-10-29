@@ -7,12 +7,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
-const { createStore, InputError } = require(path.join(repo, 'npx/lib/store.js'));
+const { createStore, InputError, GuardError } = require(path.join(repo, 'npx/lib/store.js'));
 const check = path.join(repo, 'hooks/memory-check.mjs');
 
 // A stack-shaped folder: brain/ files the validator wants, and the SHIPPED memory/ files.
@@ -171,5 +171,75 @@ test('descriptions that are awkward as plain YAML are saved so a real YAML parse
       assert.equal(store.list().find(c => c.name === name).description, description.replace(/\s+/g, ' ').trim());
     }
     assert.equal(s.validate().status, 0);
+  } finally { s.done(); }
+});
+
+// ---- r2 hardening -------------------------------------------------------------------------
+
+test('a symlinked MEMORY.md is refused: its target is never read into the index, never replaced, no card is left behind', async () => {
+  const s = stack();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'serve-outside-'));
+  try {
+    const target = path.join(outside, 'notes.txt');
+    fs.writeFileSync(target, 'top secret outside text\n');
+    fs.rmSync(path.join(s.memory, 'MEMORY.md'));
+    fs.symlinkSync(target, path.join(s.memory, 'MEMORY.md'));
+    const store = createStore({ root: s.memory });
+    await assert.rejects(() => store.remember(fact('a-claim')), err => err instanceof GuardError && /symbolic link/.test(err.message));
+    assert.equal(fs.readFileSync(target, 'utf8'), 'top secret outside text\n', 'the outside file is untouched');
+    assert.equal(fs.lstatSync(path.join(s.memory, 'MEMORY.md')).isSymbolicLink(), true, 'the link was not replaced');
+    assert.equal(fs.existsSync(path.join(s.memory, 'a-claim.md')), false, 'no orphan card');
+    assert.throws(() => store.read('MEMORY'), GuardError);
+    assert.throws(() => store.list(), GuardError);
+    assert.deepEqual(fs.readdirSync(s.memory).filter(f => f.endsWith('.tmp')), []);
+  } finally { fs.rmSync(outside, { recursive: true, force: true }); s.done(); }
+});
+
+// Several stdio servers on one folder are separate processes (Phase 5). Each child below is a
+// whole store of its own; the in-process queue cannot see the others.
+const WRITER = `
+const { createStore } = require(process.argv[1]);
+const [root, prefix, count] = [process.argv[2], process.argv[3], Number(process.argv[4])];
+(async () => {
+  const store = createStore({ root });
+  for (let i = 0; i < count; i += 1) {
+    await store.remember({ name: prefix + '-' + i, description: 'One line.', type: 'user', body: 'A fact.' });
+  }
+})().catch(e => { console.error(e.stack); process.exit(1); });
+`;
+const runWriter = (memory, prefix, count) => new Promise((resolve, reject) => {
+  const child = spawn(process.execPath, ['-e', WRITER, path.join(repo, 'npx/lib/store.js'), memory, prefix, String(count)], { stdio: ['ignore', 'ignore', 'pipe'] });
+  let err = '';
+  child.stderr.on('data', c => { err += c; });
+  child.on('close', code => (code === 0 ? resolve() : reject(new Error(err))));
+});
+
+test('separate processes writing one folder at once never lose an index pointer', async () => {
+  const s = stack();
+  try {
+    await Promise.all([runWriter(s.memory, 'alpha', 40), runWriter(s.memory, 'beta', 40), runWriter(s.memory, 'gamma', 40)]);
+    const verdict = s.validate();
+    assert.equal(verdict.status, 0, verdict.stdout);
+    assert.match(verdict.stdout, /120 card\(s\): 120 pointered/);
+    assert.equal(fs.existsSync(path.join(s.memory, '.memory-index.lock')), false, 'the lock is released');
+  } finally { s.done(); }
+});
+
+test('a held index lock makes remember wait, then refuse with a clear error and leave no card; a stale lock is broken', async () => {
+  const s = stack();
+  try {
+    const lock = path.join(s.memory, '.memory-index.lock');
+    fs.writeFileSync(lock, 'someone else');
+    const impatient = createStore({ root: s.memory, lockWaitMs: 150, lockStaleMs: 60000 });
+    await assert.rejects(() => impatient.remember(fact('blocked')), err => err instanceof InputError && /busy/.test(err.message));
+    assert.equal(fs.existsSync(path.join(s.memory, 'blocked.md')), false, 'no orphan card when the index could not be updated');
+    assert.equal(fs.existsSync(lock), true, 'a live lock is not stolen');
+
+    const old = new Date(Date.now() - 120000);
+    fs.utimesSync(lock, old, old);
+    const patient = createStore({ root: s.memory, lockWaitMs: 2000, lockStaleMs: 1000 });
+    await patient.remember(fact('after-stale'));
+    assert.match(fs.readFileSync(path.join(s.memory, 'MEMORY.md'), 'utf8'), /- after-stale\.md - /);
+    assert.equal(fs.existsSync(lock), false);
   } finally { s.done(); }
 });

@@ -83,8 +83,18 @@ test('token commands: created private (0600), stable between runs, rotated on re
     assert.notEqual(a.read, a.write);
     assert.equal(fs.statSync(path.join(home, 'serve.json')).mode & 0o777, 0o600);
     assert.deepEqual(parse(spawnSync(process.execPath, [entry, 'serve', '--print-tokens'], { encoding: 'utf8', env }).stdout), a);
-    const rotated = parse(spawnSync(process.execPath, [entry, 'serve', '--rotate-tokens'], { encoding: 'utf8', env }).stdout);
+    const rotation = spawnSync(process.execPath, [entry, 'serve', '--rotate-tokens'], { encoding: 'utf8', env });
+    assert.equal(rotation.status, 0);
+    const rotated = parse(spawnSync(process.execPath, [entry, 'serve', '--print-tokens'], { encoding: 'utf8', env }).stdout);
     assert.notEqual(rotated.read, a.read);
     assert.notEqual(rotated.write, a.write);
+    // only --print-tokens reveals a secret: rotation says it worked and where the file is, nothing more
+    for (const secret of [a.read, a.write, rotated.read, rotated.write]) {
+      assert.equal(rotation.stdout.includes(secret), false, 'rotation stdout carries no token');
+      assert.equal(rotation.stderr.includes(secret), false, 'rotation stderr carries no token');
+    }
+    assert.doesNotMatch(rotation.stdout, /lr[rw]_/);
+    assert.match(rotation.stdout, /rotated/i);
+    assert.ok(rotation.stdout.includes(path.join(home, 'serve.json')), 'it names the file');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
