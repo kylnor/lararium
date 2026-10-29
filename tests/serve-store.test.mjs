@@ -863,7 +863,7 @@ const POINTER_FIXTURES = [
   ['link shape with an annotation', '- [t](linked.md) annotation', true],
   ['link shape with a path', '- [t](sub/linked.md) annotation', true],
   ['plain with a colon', '- linked.md: the hook', true],
-  ['plain with no space before text', '- linked.md—the hook', true],
+  ['plain with a non-space, non-name character after it', `- linked.md${String.fromCharCode(0x2c)}the hook`, true],
   ['CRLF line endings', '- linked.md - the hook\r\n- other.md - x', true],
   ['a longer name that merely starts the same', '- linked.mdx - the hook', false],
   ['a longer name before the extension', '- linked.md.bak - the hook', false],
