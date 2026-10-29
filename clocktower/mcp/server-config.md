@@ -72,9 +72,9 @@ read   < write  < admin
 - An unrecognized or absent token gets a 401.
 
 The staging token (`CLOCKTOWER_TOKEN_STAGING`) is a special write-tier token
-scoped so that Huginn (the gatherer agent) can write to a staging workspace
-partition without being able to access or mutate live knowledge. Muninn (the
-gating curator) holds a full write token and can promote from staging to live.
+scoped so that the gatherer agent can write to a staging workspace
+partition without being able to access or mutate live knowledge. The
+gating curator holds a full write token and can promote from staging to live.
 
 ---
 

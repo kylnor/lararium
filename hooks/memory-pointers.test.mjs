@@ -12,10 +12,10 @@ const repo = path.resolve(dir, '..');
 const START = '<!-- lararium:shared-memory:start -->';
 const count = (text, needle) => text.split(needle).length - 1;
 
-function sandbox() {
+function sandbox(stackName = 'my stack') {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'memory-pointers-'));
   const home = path.join(base, 'home');
-  const stack = path.join(base, 'my stack');
+  const stack = path.join(base, stackName);
   fs.mkdirSync(path.join(stack, 'memory'), { recursive: true });
   fs.copyFileSync(path.join(repo, 'memory/pointer-block.md'), path.join(stack, 'memory/pointer-block.md'));
   for (const d of ['.claude', '.codex', '.gemini']) fs.mkdirSync(path.join(home, d), { recursive: true });
@@ -106,5 +106,113 @@ test('--project writes AGENTS.md and GEMINI.md in the stack folder and touches n
     for (const f of Object.values(s.files)) assert.equal(fs.existsSync(f), false);
     assert.match(s.run('--project').stdout, /codex +unchanged/);
     assert.equal(s.run('--project', '--only', 'claude').status, 2);
+  } finally { fs.rmSync(s.base, { recursive: true, force: true }); }
+});
+
+test('refuses a block that contains, overlaps or sits inside another tool\'s block, before replacing anything', () => {
+  const cases = {
+    nested: [`${START}\nold\n<!-- other:start -->\nforeign text\n<!-- other:end -->\n<!-- lararium:shared-memory:end -->\n`, /contains another tool's "other" marker/],
+    overlapping: [`${START}\n<!-- other:start -->\n<!-- lararium:shared-memory:end -->\nmore\n<!-- other:end -->\n`, /contains another tool's "other" marker/],
+    enclosing: [`<!-- other:start -->\n${START}\nold\n<!-- lararium:shared-memory:end -->\n<!-- other:end -->\n`, /sits inside another tool's "other" block/],
+    'unclosed after an existing block': [`${START}\nold\n<!-- lararium:shared-memory:end -->\n<!-- other:start -->\nnever closed\n`, /unclosed "other" block/],
+  };
+  for (const [label, [content, message]] of Object.entries(cases)) {
+    const s = sandbox();
+    try {
+      fs.writeFileSync(s.files.codex, content);
+      const result = s.run('--only', 'codex');
+      assert.equal(result.status, 1, `${label}: ${result.stdout}`);
+      assert.match(result.stdout, message, label);
+      assert.equal(fs.readFileSync(s.files.codex, 'utf8'), content, `${label}: file must be untouched`);
+      assert.equal(s.run('--only', 'codex', '--check').status, 1, label);
+    } finally { fs.rmSync(s.base, { recursive: true, force: true }); }
+  }
+});
+
+test('still updates an old block in place when foreign blocks sit safely before and after it', () => {
+  const s = sandbox();
+  try {
+    const before = '<!-- a:start -->\nA\n<!-- a:end -->\n\n';
+    const after = '\n\n<!-- BEGIN b -->\nB\n<!-- END b -->\n';
+    fs.writeFileSync(s.files.codex, `${before}${START}\nold text\n<!-- lararium:shared-memory:end -->${after}`);
+    const result = s.run('--only', 'codex');
+    assert.equal(result.status, 0, result.stdout);
+    assert.match(result.stdout, /codex +updated/);
+    const text = fs.readFileSync(s.files.codex, 'utf8');
+    assert.ok(text.startsWith(before) && text.endsWith(after) && !text.includes('old text'));
+  } finally { fs.rmSync(s.base, { recursive: true, force: true }); }
+});
+
+test('refuses a dangling symlink instead of replacing it with a regular file', () => {
+  const s = sandbox();
+  try {
+    const missing = path.join(s.base, 'dotfiles', 'nowhere.md');
+    fs.symlinkSync(missing, s.files.claude);
+    for (const extra of [[], ['--check']]) {
+      const result = s.run('--only', 'claude', ...extra);
+      assert.equal(result.status, 1, result.stdout);
+      assert.match(result.stdout, /claude +refused: .* is a symlink to .*nowhere\.md, which does not exist/);
+    }
+    assert.ok(fs.lstatSync(s.files.claude).isSymbolicLink(), 'the link must stay a link');
+    assert.equal(fs.existsSync(missing), false, 'nothing may be created behind the link');
+  } finally { fs.rmSync(s.base, { recursive: true, force: true }); }
+});
+
+test('a stack path containing $& or $\' lands in the block literally', () => {
+  const s = sandbox("stack $& and $' and $`x".replace('`', ''));
+  try {
+    assert.equal(s.run().status, 0);
+    const claude = fs.readFileSync(s.files.claude, 'utf8');
+    assert.ok(claude.includes(`${s.stack}/CLAUDE.md`), claude);
+    assert.ok(claude.includes(`${s.stack}/memory/`));
+    assert.ok(!claude.includes('{{'));
+    assert.equal(count(claude, START), 1);
+    assert.match(s.run().stdout, /claude +unchanged/);
+  } finally { fs.rmSync(s.base, { recursive: true, force: true }); }
+});
+
+test('the generated grep command runs against a stack path with spaces and quotes, and finds a planted card', () => {
+  for (const name of ['my stack', "it's a stack"]) {
+    const s = sandbox(name);
+    try {
+      assert.equal(s.run('--only', 'claude').status, 0);
+      const block = fs.readFileSync(s.files.claude, 'utf8');
+      const command = block.split('\n').map(l => /`(grep -ril [^`]*)`/.exec(l)).find(Boolean)[1].replace('<term>', 'zebrafinch');
+      fs.writeFileSync(path.join(s.stack, 'memory', 'card.md'), 'the zebrafinch lesson\n');
+      const out = spawnSync('sh', ['-c', command], { encoding: 'utf8' });
+      assert.equal(out.status, 0, `${command}\n${out.stderr}`);
+      assert.equal(out.stdout.trim(), path.join(s.stack, 'memory', 'card.md'));
+    } finally { fs.rmSync(s.base, { recursive: true, force: true }); }
+  }
+});
+
+test('--project says it covers one folder, that CLAUDE.md is not written, and where the template is', () => {
+  const s = sandbox();
+  try {
+    const result = s.run('--project');
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.doesNotMatch(result.stdout, /in any folder/);
+    assert.match(result.stdout, /only: open a new Codex or Gemini CLI session in that folder/);
+    assert.match(result.stdout, /CLAUDE\.md is not written by this command.*starter\/CLAUDE\.template\.md/);
+    assert.match(s.run().stdout, /in any folder/);
+  } finally { fs.rmSync(s.base, { recursive: true, force: true }); }
+});
+
+test('--project refuses inside a clone of the Lararium repository and leaves AGENTS.md alone', () => {
+  const s = sandbox();
+  try {
+    const git = (...a) => spawnSync('git', ['-C', s.stack, ...a], { encoding: 'utf8' });
+    assert.equal(git('init', '-q').status, 0);
+    assert.equal(git('remote', 'add', 'origin', 'git@github.com:kylnor/lararium.git').status, 0);
+    fs.writeFileSync(path.join(s.stack, 'AGENTS.md'), 'contributor guide\n');
+    for (const extra of [[], ['--check']]) {
+      const result = s.run('--project', ...extra);
+      assert.equal(result.status, 2);
+      assert.match(result.stderr, /clone of the Lararium repository itself/);
+    }
+    assert.equal(fs.readFileSync(path.join(s.stack, 'AGENTS.md'), 'utf8'), 'contributor guide\n');
+    assert.equal(fs.existsSync(path.join(s.stack, 'GEMINI.md')), false);
+    assert.equal(git('remote', 'set-url', 'origin', 'https://github.com/someone/their-stack.git').status, 0);
+    assert.equal(s.run('--project').status, 0);
   } finally { fs.rmSync(s.base, { recursive: true, force: true }); }
 });

@@ -11,8 +11,7 @@ const os = require('os');
 const https = require('https');
 const { execFileSync } = require('child_process');
 
-const OWNER = 'kylnor';
-const REPO = 'lararium';
+const SLUG = 'kylnor/lararium'; // the GitHub repo this template is published from
 const USER_AGENT = 'lararium-scaffolder';
 const TAG_RE = /^[A-Za-z0-9._-]{1,32}$/;
 const REQUEST_TIMEOUT_MS = 4000;
@@ -20,7 +19,7 @@ const REQUEST_TIMEOUT_MS = 4000;
 function manualRoute() {
   return [
     'Manual route:',
-    `  git clone https://github.com/${OWNER}/${REPO}.git`,
+    `  git clone https://github.com/${SLUG}.git`,
     '  (or click "Use this template" on GitHub, or grab the zip from Releases)',
   ].join('\n');
 }
@@ -75,7 +74,7 @@ function httpGet(url, { asJson = false, destFile = null } = {}, redirectsLeft = 
 }
 
 async function resolveRef() {
-  const apiUrl = `https://api.github.com/repos/${OWNER}/${REPO}/releases/latest`;
+  const apiUrl = `https://api.github.com/repos/${SLUG}/releases/latest`;
   try {
     const res = await httpGet(apiUrl, { asJson: true });
     const parsed = JSON.parse(res.body);
@@ -91,7 +90,7 @@ async function resolveRef() {
 }
 
 async function downloadTarball(ref, kind) {
-  const url = `https://codeload.github.com/${OWNER}/${REPO}/tar.gz/refs/${kind}/${ref}`;
+  const url = `https://codeload.github.com/${SLUG}/tar.gz/refs/${kind}/${ref}`;
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lararium-'));
   const tarPath = path.join(tmpDir, 'stack.tar.gz');
   await httpGet(url, { destFile: tarPath });

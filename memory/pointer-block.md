@@ -5,7 +5,7 @@ Memory lives in files, shared by every agent CLI on this machine (Claude Code, C
 Files are the memory: no agent owns it and none keeps a private copy.
 - `{{STACK_ROOT}}/CLAUDE.md` is the map (`{{STACK_ROOT}}/brain/CLAUDE.md` if there is no root one).
   Read it first: it says where everything lives.
-- Search files first, always: `grep -ril --exclude-dir=.git "<term>" {{STACK_ROOT}}`.
+- Search files first, always: `grep -ril --exclude-dir=.git "<term>" {{STACK_ROOT_SHELL}}`.
 - `{{STACK_ROOT}}/memory/` holds lessons and corrections, one card per fact; `MEMORY.md` there is the
   index. Grep it before repeating a known mistake.
 - A search miss is not proof a fact is absent. Say "not found in <where you looked>", never "it does

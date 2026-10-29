@@ -26,7 +26,7 @@ a dead watcher is distinguishable from a quiet one. That's the full pattern — 
 just this loop pointed at Microsoft Graph instead of Gmail or iMessage.
 
 High-volume, noisy sources (this is likely true of Teams chat) should land in a **staging**
-partition first, not straight into the live knowledge base — the same Huginn/Muninn pattern
+partition first, not straight into the live knowledge base: the same gatherer/curator pattern
 Lararium uses for email and web captures: the watcher writes candidates to staging, a separate
 review pass (human or a gate agent) promotes what's worth keeping into the searchable index. Do
 this for Teams unless you want every "sounds good", "on it", and meeting-join notification treated
@@ -108,7 +108,7 @@ watching it" model the rest of Lararium's watchers use.
      as VTT, which needs parsing into plain text/segments before it's useful as a card.
    - Dedup against what's already stored (message ID / transcript ID are stable Graph identifiers,
      use those, not timestamps).
-   - Stage new items (per section 1, route through Huginn-style staging rather than straight to
+   - Stage new items (per section 1, route through gatherer-style staging rather than straight to
      live knowledge, given Teams chat volume).
    - Update `sync_state`, write the freshness heartbeat, done.
 3. Graph enforces rate limits and paginates with `@odata.nextLink` — follow the link, don't assume

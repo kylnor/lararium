@@ -73,15 +73,15 @@ agents that build), with `workspaces/` for projects that have earned their own f
    in `clocktower/connector-doctrine.md`. Coordination is a separate surface: `clocktower/queue-doctrine.md`
    runs multi-agent work natively on the tasks table you already have. Ships with
    an empty database and no credentials.
-4. **`agents/`**: a roster of specialized subagents (build, review, research, infra, adversarial,
-   memory) plus the dispatch doctrine for which to use when. The theme is yours to replace: the
-   re-theming interview (`agents/RETHEME.md`) rebuilds the whole roster in your own mythology,
-   doctrine intact. Bring your own gods, literally.
+4. **`agents/`**: the dispatch doctrine and three plain defaults (a reviewer, a researcher, a
+   verifier). Start with one assistant in one loop and put procedures in skills; add a subagent
+   only when it earns its place. A full themed roster ships as an opt-in example in
+   `agents/examples/`, with an interview for rebuilding it in a theme of your own.
 5. **`hooks/`**: the loops that make it feel alive. Session-start briefing, the heartbeat that
    remembers yesterday, voice integrity, compaction continuity, safety rails, dispatch routing.
    Doctrine plus minimal reference implementations that run on plain files, no database required.
 6. **`skills/`**: slash-command skills for the session lifecycle (`/end`, `/handoff`, `/sessions`),
-   self-improvement (`/evolve`), and memory curation (`/muninn`), plus the doctrine for writing
+   self-improvement (`/evolve`), and memory curation (`/curate`), plus the doctrine for writing
    your own.
 
 Beside the six layers ships one optional tool: **`lab/`**, a disposable sandbox for untrusted

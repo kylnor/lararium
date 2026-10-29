@@ -48,6 +48,14 @@ doctrine and compare-and-swap claiming, lanes empty), `workspaces/` (a map-only 
 earned not scaffolded, a docket), and `docs/ops-guards.md` (the disk-full watchdog and the unpushed
 work report, doctrine only). All of it ships empty or as marked templates.
 
+**Plain agent defaults.** The default install no longer ships a themed roster. `agents/defs/` now
+holds three plain definitions (`reviewer`, `researcher`, `verifier`), each with where to look,
+what done looks like and a self-check, and the reviewer and verifier are read-only. The dispatch
+doctrine is inline by default, procedures live in skills, and a subagent has to earn its place.
+The themed roster, its workflow chains and the re-theming interview moved to
+`agents/examples/gotham/`, opt-in. The `/muninn` skill is now `/curate`. A new test
+(`hooks/persona-scrub.test.mjs`) fails CI if a persona or owner name reaches the default install.
+
 Honest limits: the shipped capture hooks are wired for Claude Code only. Codex and Gemini CLI share
 the files and the pointer block; whether they save anything on their own is for you to verify.
 

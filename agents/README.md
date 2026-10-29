@@ -1,44 +1,66 @@
 # Agents
 
-A roster of specialized subagents the assistant dispatches to parallelize and de-risk work. They are
-a team, not worker threads: each has a defined function, a model, a tool set, and a personality. The
-assistant has opinions about when to use which.
+Start with one assistant in one loop. Add a subagent only when it earns its place.
 
 > **Canonical definitions live with your assistant's config** (one file per agent: system prompt,
-> model, tools). This README is the *relationship* layer: who to dispatch for what, the validated
-> loops, and the dispatch doctrine. The definitions are the work; this points at them.
+> tools). This README is the *relationship* layer: when to dispatch, the validated loops, and the
+> dispatch doctrine. The three definitions in `defs/` are the work; this points at them.
 
-## The roster by function (rename to taste)
-The original system used a themed naming set. Names do not matter; the *functional coverage* does.
-Make sure you have one agent for each of these jobs:
+## The default: inline, with skills
 
-- **Build**: a fast prototyper (ship working code now), a complex/autonomous builder (owns a whole
-  feature), an architect (think-before-build on the hard problems).
-- **Review / quality**: an adversarial code reviewer + deploy guardian, a QA agent that hunts edge
-  cases and will not sign off easily, a fast silent pattern scanner, a long-horizon strategic
-  reviewer, an A/B decision analyst, and a universal Judge that re-proves any non-code deliverable
-  against ground truth before it is trusted (`defs/harvey.md`; its scheduled sweep lives in
-  `patrol/`).
-- **Research / detective**: a deep researcher (web, returns knowledge not code), a debugger (traces
-  data flows), a data-acquisition agent (scraping, APIs), a risk/threat modeler.
-- **Infra / monitoring**: an infrastructure/hardware agent, a monitoring/anomaly/drift agent.
-- **Adversarial / chaos**: chaos engineering, load/stress, red-team prototyping, exploratory
-  edge-case testing.
-- **Orchestration / memory**: the team lead (the assistant itself), a signal gatherer that writes to
-  a staging area, a memory keeper that curates staging into the live brain, a curator that enforces
-  the brain's laws over the files.
+The main assistant works inline. It sees every skill's short description up front and loads a
+skill's full text only when the task calls for it (progressive disclosure). That makes a procedure
+cheap to keep: the description costs a line until the day it is needed. So procedures belong in
+`skills/`, not in more agents. A new agent is a second place for instructions to drift, and every
+handoff to it loses detail in both directions.
+
+## When a subagent earns its place
+
+Four cases, and only these:
+
+1. **Context bloat measurably hurts the one loop.** A long read-heavy job (many files, many pages)
+   fills the main conversation with material it only needs the conclusion of. The subagent does the
+   reading and returns a summary.
+2. **Parallel work that wants throwaway fresh context.** Independent tasks that do not need each
+   other's history run side by side, each in its own clean window, each in its own worktree.
+3. **One agent keeps picking the wrong tool or holding conflicting instructions.** Splitting the
+   job gives each side one clear instruction set. Try fixing the instructions first.
+4. **Separate permissions.** A reviewer or verifier should not be able to write. Its tool list is
+   read-only on purpose, so it cannot quietly fix the thing it was asked to judge.
+
+Review by a *different* model or CLI than the builder usually falls under case 4, and is worth
+doing for that reason alone: a second model does not share the first one's blind spots.
+
+Do not copy the org chart. One agent per team, per role title, or per problem type is an
+organisational choice, not an architecture. If you cannot say which of the four cases an agent
+serves, it should be a skill.
+
+## The three defaults
+
+Plain definitions, no backstory, in `defs/`:
+
+| agent | use it for | tools |
+|---|---|---|
+| `reviewer` | adversarial review of a finished branch, ending in a `VERDICT` line | read-only, Bash for tests |
+| `researcher` | read-heavy questions that return a compact answer with `file:line` or URL evidence | read-only, web |
+| `verifier` | re-proving a non-code deliverable against ground truth before it is trusted | read-only, Bash for checks |
+
+Each one says where to look, what done looks like, and a self-check. That is deliberate: a persona
+backstory adds tokens and no measured quality, while "where to look, what done looks like, how to
+check yourself" is what changes the output.
+
+Themed rosters (a full cast with voices and opinions) live in `examples/`. They are opt-in and not
+installed by default.
 
 ## The validated loops (the part worth copying)
-- **Subagent-first dispatch.** Default to dispatching; work inline only by exception. It preserves
-  the main context, parallelizes, and moves faster. When in doubt, dispatch.
-- **Build to a branch, then adversarial review, then merge.** A complex build goes: builder produces
-  a branch (no PR), reviewer does an adversarial pass, fix the blockers verbatim, then merge. This
-  catches scope and auth holes that would otherwise ship. The review report is a structured
-  contract, not prose: `BLOCKERS` (each with file:line, failure scenario, specific fix, and a
-  confidence), `Watch-outs` (each ticketed or consciously skipped), `Confirmed clean` BY DIMENSION
-  with what was actually inspected (a dimension not checked says NOT CHECKED, never silence), and
-  `Assumptions` (any claim without file:line or command-output evidence demotes here, never into
-  BLOCKERS). Silence is not a verdict; evidence-free findings are not findings.
+- **Build to a branch, then adversarial review, then merge.** A complex build goes: the builder
+  produces a branch (no PR), the reviewer does an adversarial pass, fix the blockers verbatim, then
+  merge. This catches scope and auth holes that would otherwise ship. The review report is a
+  structured contract, not prose: `BLOCKERS` (each with file:line, failure scenario, specific fix,
+  and a confidence), `Watch-outs` (each ticketed or consciously skipped), `Confirmed clean` BY
+  DIMENSION with what was actually inspected (a dimension not checked says NOT CHECKED, never
+  silence), and `Assumptions` (any claim without file:line or command-output evidence demotes here,
+  never into BLOCKERS). Silence is not a verdict; evidence-free findings are not findings.
 - **Worktree isolation** when two or more agents touch the same repo at once. Never run parallel
   agents against one working tree.
 - **Agent claims are signal, not truth.** When a review agent reports a "bug," trace the path or
@@ -52,12 +74,11 @@ Make sure you have one agent for each of these jobs:
   are the fallback for genuinely unexecutable judgments, and the brief says so explicitly.
 
 ## To make it yours
-1. Copy the definition files from `defs/` into your assistant's agent config (in Claude Code:
-   `~/.claude/agents/`, one file per agent).
-2. Want your own mythology instead of this one? Run the re-theming interview in `RETHEME.md`. It
-   regenerates the personas in your theme (heist crew, pantheon, plain functional names) while
-   keeping the doctrine intact. Do not find-and-replace names; that keeps the old personality
-   under a new name tag.
-3. Keep this README as the dispatch doctrine and prune the agents you do not use.
-4. If you later re-derive this layer from your own live system to share it, scrub the defs per
+1. Copy the files you want from `defs/` into your assistant's agent config (in Claude Code:
+   `~/.claude/agents/`, one file per agent). Start with the three; add a fourth only when a skill
+   cannot do the job and you can name the case above it serves.
+2. Want a themed team anyway? `examples/` holds one complete roster, and its `RETHEME.md` is an
+   interview that rebuilds it in a theme of your own. It is flavor: nothing in the default
+   install depends on it.
+3. If you later re-derive this layer from your own live system to share it, scrub the defs per
    `../SCRUB.md` first: agent prompts absorb owner specifics the same way skills do.

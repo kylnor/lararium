@@ -79,7 +79,15 @@ Run these in order. Every step only adds, so skip any the owner declines.
    cards and malformed frontmatter. Fix what it names; it never edits the index for you.
 5. **Optional operating shape.** Offer `governance/`, `forge/`, `workspaces/` and the ops guards
    one at a time and only where the owner feels the pain. Never scaffold a workspace in advance.
-6. **Stamp** `STACK_VERSION` as v3.0 in the closing step, as always.
+6. **Agents and the rename.** The default roster is now three plain defs in `agents/defs/`
+   (`reviewer.md`, `researcher.md`, `verifier.md`), and the themed roster moved to
+   `agents/examples/`. Do not touch agent defs the owner already runs; offer the three new
+   ones beside them. The memory-curation skill was renamed: **`/muninn` is now `/curate`**
+   (`skills/defs/muninn/` is now `skills/defs/curate/`). Rename the folder, change the skill's
+   `name:` to `curate`, and update anything that dispatches it by the old name (cron wrappers,
+   watcher names, the owner's own notes). If the owner keeps a roster with their own names, keep
+   their names and only adopt the new description of the skill.
+7. **Stamp** `STACK_VERSION` as v3.0 in the closing step, as always.
 
 ## Closing
 
@@ -104,8 +112,8 @@ release-by-release ledger, including v2.1 and later, lives in `CHANGELOG.md`.
 |---|---|---|
 | `rules/OPERATING.md` | The operating-rules template: action bias, the miss-capture protocol, steering rules, strategy rating, production standards, pipeline laws. v1's soul layer said "rules live in a separate document" and never shipped one. This is it. | The miss-capture protocol, day one, no infrastructure. |
 | `hooks/` | The loops: doctrine + minimal reference implementations for session-start briefing, heartbeat, voice integrity, context injection, compaction continuity, safety rails, dispatch routing. All run on plain files. | Briefing + heartbeat: the assistant remembers yesterday. |
-| `skills/` | Slash-command skills: `/end`, `/handoff`, `/sessions`, `/evolve`, `/muninn`, plus the doctrine for writing your own. | `/end` and `/handoff`: sessions stop evaporating. |
-| `agents/RETHEME.md` | The re-theming interview: rebuild the roster in your own mythology, doctrine kept, personas rewritten. | Not everyone wants to be Batman. |
+| `skills/` | Slash-command skills: `/end`, `/handoff`, `/sessions`, `/evolve`, `/curate`, plus the doctrine for writing your own. | `/end` and `/handoff`: sessions stop evaporating. |
+| `agents/examples/` | An opt-in themed roster and its re-theming interview (`RETHEME.md`). Not installed by default. | A worked example, only if you want a themed team. |
 | `soul/character-craft.md` | The persona-authoring craft: archetypes, eight dimensions, tone proofs, the named failure mode. | Write a `core.md` that still works at 2am in month three. |
 | `clocktower/retrieval-doctrine.md` | Seven production-earned retrieval rules. | A checklist when (or before) you build the index. |
 | `LICENSE` | MIT. The template is public. | Nothing to do. |

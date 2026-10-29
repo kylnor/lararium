@@ -93,9 +93,14 @@ install the shared pointer block so each reads the same files. Ask which CLIs th
 3. The script puts a marked block at the end of each file, after any block another tool manages,
    and never twice: running it again says `unchanged`. It refuses, and tells the user, when a file
    has unbalanced markers or ends inside another tool's block. Do not edit around a refusal.
-   It writes through a symlinked file and leaves the link in place.
+   It writes through a symlinked file and leaves the link in place, and refuses a symlink that
+   points nowhere. It also refuses when our block overlaps, contains or sits inside another tool's
+   block. `--project` covers this folder only and does not write `CLAUDE.md`: that is the map the
+   user writes from `starter/CLAUDE.template.md`. It refuses inside a clone of the Lararium
+   repository itself; make the user's own stack first.
 4. Without `node`, do it by hand: copy `memory/pointer-block.md`, replace `{{STACK_ROOT}}` with
-   this folder's full path, and append it to each file. Check the file for an existing
+   this folder's full path and `{{STACK_ROOT_SHELL}}` with the same path wrapped in single quotes,
+   and append it to each file. Check the file for an existing
    `lararium:shared-memory:start` marker first.
 5. Test each CLI the user has, in a new session, with no hints: "In one line: where does my memory
    live and how do I search it?" It should name this folder's map and a grep. If it does not,
@@ -145,11 +150,19 @@ The goal is a `soul/core.md` that sounds like a specific someone.
    references infrastructure they skipped should have that step cut, not left to error.
 
 ## Phase 4: The agents (optional: leverage on top of a working system)
-1. Ask whether they want the themed roster as-is or in their own mythology. If they want their own,
-   run the re-theming interview in `agents/RETHEME.md` (doctrine kept, personas regenerated; never
-   a find-and-replace).
-2. Ask which functions they actually need (most people do not need chaos + load + red-team on day one).
-   Prune the defs they will not use; keep the dispatch doctrine in the README.
+Start with these three, and only if the user wants subagents at all. The default is one assistant in
+one loop: it sees each skill's short description first and loads the full skill only when needed
+(progressive disclosure), so a procedure belongs in a skill, not in another agent.
+1. Offer the three plain defs in `agents/defs/`: `reviewer.md` (adversarial review, read-only),
+   `researcher.md` (read-heavy questions, compact answers) and `verifier.md` (re-proves a
+   deliverable against ground truth, read-only). Copy the ones they want into their assistant's agent
+   config. The reviewer works best on a different model or CLI than the builder.
+2. Add a subagent later only when a skill cannot do the job and one of the four cases in
+   `agents/README.md` applies: context bloat that measurably hurts the loop, parallel work that
+   wants fresh context, one agent picking the wrong tool or holding conflicting instructions, or a
+   job that needs separate permissions. Do not copy an org chart.
+3. Themed rosters live in `agents/examples/`. They are an opt-in example, not part of the install.
+   Mention them only if the user asks for a themed team.
 
 ## Phase 5: The index (optional: only when files outgrow grep-and-read)
 1. Tell them plainly: this is the heaviest phase and they can defer it indefinitely. The brain works

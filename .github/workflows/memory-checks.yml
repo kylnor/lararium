@@ -1,9 +1,8 @@
 name: memory-checks
+# No path filter: the persona-scrub test reads every tracked file, so any change can break it.
 on:
   push:
-    paths: ['hooks/**', '.claude/**', 'brain/now.md', 'soul/core.md', 'memory/**', '.github/workflows/memory-checks.yml']
   pull_request:
-    paths: ['hooks/**', '.claude/**', 'brain/now.md', 'soul/core.md', 'memory/**', '.github/workflows/memory-checks.yml']
 permissions:
   contents: read
 jobs:
@@ -17,4 +16,4 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - run: node --test hooks/memory-check.test.mjs hooks/memory-loop.test.mjs hooks/memory-pointers.test.mjs hooks/memory-cards.test.mjs
+      - run: node --test hooks/memory-check.test.mjs hooks/memory-loop.test.mjs hooks/memory-pointers.test.mjs hooks/memory-cards.test.mjs hooks/persona-scrub.test.mjs

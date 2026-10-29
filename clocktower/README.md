@@ -66,9 +66,9 @@ The brain-watcher is a special case: it does a `git pull` on the brain repo befo
 pass. This means edits pushed from any session land in the index within the watcher's normal
 cadence without requiring a manual sync trigger.
 
-The Huginn/Muninn pattern overlays staging on top of a standard watcher. Huginn writes to a
+The gatherer/curator pattern overlays staging on top of a standard watcher. The gatherer writes to a
 staging workspace partition using the staging token (which is scoped so it cannot touch the live
-knowledge base). Muninn runs a separate pass to review staged items, optionally applying
+knowledge base). The curator runs a separate pass to review staged items, optionally applying
 confidence scoring, deduplication, or human-in-the-loop review, before promoting to live.
 Use this pattern when the source signal is high-volume and low-signal-density (e.g., email
 threads, web captures) and you want a quality gate before items are searchable by the assistant.

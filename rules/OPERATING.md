@@ -172,7 +172,7 @@ harness reads. One file per repo: `feature_list.json`.
 The feature list gives code a machine-owned verdict. Everything else your agents produce
 (research, knowledge cards, audit findings, "I finished the migration") has no exit code, and a
 model asked whether its own work is done says yes. The Judge is the verdict layer for that output:
-an adversarial verifier (`agents/defs/harvey.md`) dispatched on a deliverable *before* it is
+an adversarial verifier (`agents/defs/verifier.md`) dispatched on a deliverable *before* it is
 trusted, merged, or acted on.
 
 - **Receipts or NOT VERIFIED.** Every claim is re-proven against ground truth (the live file, the

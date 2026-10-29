@@ -30,13 +30,13 @@ and the next:
   command.
 - **`/evolve`**: the nightly self-improvement pass. Rates the day's strategies, refreshes the
   playbook view, concludes finished experiments, and proposes rule promotions from recurring misses.
-- **`/muninn`**: the memory-curation gate. Triages staged knowledge candidates into the live brain,
+- **`/curate`**: the memory-curation gate. Triages staged knowledge candidates into the live brain,
   promote / reject / queue, then tidies the knowledge layer (consolidate, lifecycle sweep).
 - **`/upgrade`**: pull the latest template and apply what is new. Fetches the upstream, then defers
   to `../UPGRADING.md`: applies additive-doc deltas directly and interviews you only for structural
   ones. This is the skill the session-start update-check hook points at when a newer version is out.
 
-`/end` and `/handoff` write; `/sessions` reads; `/evolve` and `/muninn` are the two maintenance
+`/end` and `/handoff` write; `/sessions` reads; `/evolve` and `/curate` are the two maintenance
 loops that keep the strategy and knowledge layers from rotting; `/upgrade` keeps the stack itself
 current with the template it came from.
 

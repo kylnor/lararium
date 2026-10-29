@@ -53,7 +53,7 @@ other.
    Opinions, new Closing Register lines. Machinery copied through untouched. Show the owner the
    first one and get a tone check before doing the remaining ones.
 5. **Propagate the names.** Update the roster list and validated-loops examples in `README.md`,
-   the workflow chains in `defs/README.md`, and any skills or hooks that dispatch agents by name
+   the workflow chains in `CHAINS.md`, and any skills or hooks that dispatch agents by name
    (grep the whole repo for the old names; a dispatch to a deleted agent fails at the worst time).
 6. **Delete the old defs.** Two rosters answering the same functions is how dispatch gets weird.
 
