@@ -4,8 +4,8 @@
 // newest-first line in the MEMORY.md index. Nothing here is a database.
 const fs = require('node:fs');
 const path = require('node:path');
-const crypto = require('node:crypto');
-const { GuardError, resolveInside, resolveAuxFile } = require('./guard');
+const { GuardError, resolveInside, readFileNoFollow, writeFileAtomic } = require('./guard');
+const { createLock, LockBusy, LockLost } = require('./lock');
 
 const CARD_TYPES = ['user', 'feedback', 'project', 'reference'];
 const NOT_CARDS = new Set(['MEMORY.md', 'DEMOTED.md', 'README.md', 'pointer-block.md']);
@@ -16,9 +16,8 @@ const MAX_BODY = 20000;
 const INDEX_MAX_LINES = 200;
 const INDEX_MAX_BYTES = 24000;
 const LOCK_NAME = '.memory-index.lock';
-const LOCK_STALE_MS = 10000; // a holder that crashed leaves its lock; after this long it is taken over
+const LOCK_STALE_MS = 10000; // a holder that is gone leaves its lock; after this long it is taken over
 const LOCK_WAIT_MS = 15000; // how long remember waits for another process before giving up
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const STOPWORDS = new Set((
   'a an and are as at be by do does for from has have how i in is it me my of on or our so ' +
   'that the this to was we what when where which who why with you your about remember know tell'
@@ -96,6 +95,17 @@ function entryLineIndexes(lines) {
   return out;
 }
 
+// The card files an index text points at, in either shape of entry line.
+function pointersOf(indexText) {
+  const lines = indexText.split('\n');
+  const set = new Set();
+  for (const i of entryLineIndexes(lines)) {
+    const m = lines[i].match(/^- (?:\[[^\]]*\]\(([^)]+\.md)\)|(\S+\.md))/);
+    if (m) set.add(path.basename(m[1] || m[2]));
+  }
+  return set;
+}
+
 function withEntry(indexText, entry) {
   const lines = indexText.split('\n');
   const entries = entryLineIndexes(lines);
@@ -115,44 +125,25 @@ function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT
   // folder) the index update runs under a lock file, see withIndexLock.
   let writing = Promise.resolve();
 
-  // The index file, refused if it is a symbolic link. Does not require it to exist.
-  function indexFile() {
-    return resolveAuxFile(fs.realpathSync(folder), 'MEMORY.md');
-  }
-
-  // Cross-process mutex for the read-modify-rename of MEMORY.md: an exclusive create (O_EXCL) of
-  // a lock file beside it. A lock older than lockStaleMs belongs to a process that died and is
-  // taken over; if the lock stays busy past lockWaitMs, remember is refused with a clear error
-  // (and writes nothing) rather than risk a lost update.
+  // Cross-process mutex for the read-modify-rename of MEMORY.md, see lock.js. A lock that stays
+  // busy past lockWaitMs refuses the remember with a clear error (and writes nothing) rather than
+  // risk a lost update. `fn` gets the held lock so it can confirm ownership right before it commits.
   async function withIndexLock(fn) {
-    const lock = path.join(fs.realpathSync(folder), LOCK_NAME);
-    const deadline = Date.now() + lockWaitMs;
-    for (;;) {
-      try {
-        const fd = fs.openSync(lock, 'wx', 0o644);
-        fs.writeSync(fd, `${process.pid}\n`);
-        fs.closeSync(fd);
-        break;
-      } catch (error) {
-        if (error.code !== 'EEXIST') throw error;
-      }
-      let held;
-      try { held = fs.lstatSync(lock); } catch (error) {
-        if (error.code === 'ENOENT') continue; // released between our two looks: try again at once
-        throw error;
-      }
-      if (Date.now() - held.mtimeMs > lockStaleMs) {
-        const again = fs.lstatSync(lock, { throwIfNoEntry: false });
-        if (again && again.ino === held.ino && again.mtimeMs === held.mtimeMs) fs.rmSync(lock, { force: true });
-        continue;
-      }
-      if (Date.now() >= deadline) throw new InputError('the memory index is busy (another process is writing it); try again in a moment');
-      await sleep(15);
+    const lock = createLock({ file: path.join(fs.realpathSync(folder), LOCK_NAME), staleMs: lockStaleMs, waitMs: lockWaitMs });
+    let held;
+    try {
+      held = await lock.acquire();
+    } catch (error) {
+      if (error instanceof LockBusy) throw new InputError(error.message);
+      throw error;
     }
     try {
-      return await fn();
+      return await fn(held);
+    } catch (error) {
+      if (error instanceof LockLost) throw new InputError('the memory index changed while saving; send the same request again');
+      throw error;
     } finally {
-      fs.rmSync(lock, { force: true });
+      held.release();
     }
   }
 
@@ -163,22 +154,14 @@ function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT
   }
 
   function loadCard(file) {
-    const full = resolveInside(folder, file);
-    const text = fs.readFileSync(full, 'utf8');
+    const text = readFileNoFollow(resolveInside(folder, file));
+    if (text === null) throw new GuardError(`${file} is no longer there`);
     return { file, text, ...parseCard(file, text) };
   }
 
   function pointered() {
-    let index = '';
-    const indexPath = indexFile(); // a symlinked index is a GuardError, not an empty one
-    try { index = fs.readFileSync(indexPath, 'utf8'); } catch { return new Set(); }
-    const lines = index.split('\n');
-    const set = new Set();
-    for (const i of entryLineIndexes(lines)) {
-      const m = lines[i].match(/^- (?:\[[^\]]*\]\(([^)]+\.md)\)|(\S+\.md))/);
-      if (m) set.add(path.basename(m[1] || m[2]));
-    }
-    return set;
+    const index = readFileNoFollow(path.join(fs.realpathSync(folder), 'MEMORY.md')); // a symlinked index is a GuardError, not an empty one
+    return index === null ? new Set() : pointersOf(index);
   }
 
   function list({ type } = {}) {
@@ -198,8 +181,9 @@ function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT
 
   function read(name) {
     const full = resolveInside(folder, name);
-    if (!fs.existsSync(full)) throw new InputError('no such card');
-    return { name: path.basename(full, '.md'), text: fs.readFileSync(full, 'utf8') };
+    const text = readFileNoFollow(full);
+    if (text === null) throw new InputError('no such card');
+    return { name: path.basename(full, '.md'), text };
   }
 
   // Full-text ranking over name, description and body. Returns every scored card, best first.
@@ -254,37 +238,38 @@ function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT
     return { name, description: oneLine, type, body: body.replace(/\s+$/, '') };
   }
 
-  // Writes one card and prepends its index line. Never overwrites: a name that exists is refused.
-  // The index path is checked before the card is written, so a refused index leaves no orphan card.
+  // Writes one card and prepends its index line, both under the index lock. Never overwrites: a
+  // name that exists is refused, with one exception that makes a retry safe. If the card on disk is
+  // byte for byte what this call would write and the index has no line for it, an earlier call
+  // wrote the card and stopped before the index; this call finishes that index line.
+  // The index is read (through a no-follow descriptor) before the card is written, so a refused
+  // index leaves no orphan card.
   async function rememberNow(input) {
     const card = validate(input);
-    return withIndexLock(() => {
-      const indexPath = indexFile();
+    return withIndexLock(lock => {
+      const indexPath = path.join(fs.realpathSync(folder), 'MEMORY.md');
       const target = resolveInside(folder, card.name);
       const text = `---\nname: ${card.name}\ndescription: ${yamlLine(card.description)}\ntype: ${card.type}\n---\n\n${card.body}\n`;
+      const entry = `- ${card.name}.md - ${card.description}`;
+      const current = readFileNoFollow(indexPath);
+      const indexText = current === null ? '# Memory\n\n' : current;
+      const alreadyIndexed = pointersOf(indexText).has(`${card.name}.md`);
       try {
         fs.writeFileSync(target, text, { flag: 'wx', mode: 0o644 });
       } catch (error) {
-        if (error.code === 'EEXIST') throw new InputError(`a card named ${card.name} already exists; choose a different name`);
-        throw error;
+        if (error.code !== 'EEXIST') throw error;
+        if (alreadyIndexed || readFileNoFollow(target) !== text) {
+          throw new InputError(`a card named ${card.name} already exists; choose a different name`);
+        }
       }
-      let indexText = '# Memory\n\n';
-      try { indexText = fs.readFileSync(indexPath, 'utf8'); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-      const updated = withEntry(indexText, `- ${card.name}.md - ${card.description}`);
-      const temp = `${indexPath}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
-      try {
-        fs.writeFileSync(temp, updated, { mode: 0o644, flag: 'wx' });
-        fs.renameSync(temp, indexPath);
-      } catch (error) {
-        fs.rmSync(temp, { force: true });
-        throw error;
-      }
+      const updated = alreadyIndexed ? indexText : withEntry(indexText, entry);
+      if (!alreadyIndexed) writeFileAtomic(indexPath, updated, { beforeCommit: () => lock.assertOwned() });
       const lineCount = updated.split('\n').length;
       const bytes = Buffer.byteLength(updated);
       return {
         name: card.name,
         file: `${card.name}.md`,
-        indexLine: `- ${card.name}.md - ${card.description}`,
+        indexLine: entry,
         indexOverBudget: lineCount > INDEX_MAX_LINES || bytes > INDEX_MAX_BYTES,
       };
     });

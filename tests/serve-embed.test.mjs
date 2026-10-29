@@ -45,6 +45,7 @@ async function fakeOllama({ dims = DIMS, status = 200 } = {}) {
       }
       const { model, input } = JSON.parse(body);
       seen.push({ url: req.url, model, input });
+      if (state.onQuery && input.some(t => t.startsWith(QUERY_PREFIX))) state.onQuery(); // a test's move, mid-search
       res.writeHead(status, { 'content-type': 'application/json' });
       res.end(JSON.stringify(status === 200 ? { embeddings: input.map(t => fakeVector(t, dims, state.swap)) } : { error: 'nope' }));
     });
@@ -289,8 +290,8 @@ test('an embedding server that redirects is refused: card text never follows a r
 test('any failure on the semantic path (disk full, permission) falls back to full-text instead of erroring', async () => {
   const f = folder();
   const ollama = await fakeOllama();
-  const real = fs.writeFileSync;
-  const patched = mock.method(fs, 'writeFileSync', (file, ...rest) => {
+  const real = fs.openSync;
+  const patched = mock.method(fs, 'openSync', (file, ...rest) => { // the cache temp file is created with openSync
     if (String(file).includes(`${path.sep}.index${path.sep}`)) throw Object.assign(new Error(`ENOSPC: no space left on device, write '${file}'`), { code: 'ENOSPC' });
     return real(file, ...rest);
   });
@@ -300,4 +301,54 @@ test('any failure on the semantic path (disk full, permission) falls back to ful
     assert.match(out, /^- accounts-notes/m, 'full-text still answers');
     assert.doesNotMatch(out, new RegExp(f.top.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'the owner\'s folder path is not sent to the app');
   } finally { patched.mock.restore(); ollama.close(); f.done(); }
+});
+
+// ---- r3 hardening -------------------------------------------------------------------------
+
+test('ranking uses the vectors that passed the fingerprint, not a cache file replaced while the query was being embedded', async () => {
+  const f = folder();
+  const ollama = await fakeOllama();
+  try {
+    const semantic = createSemantic({ store: f.store, url: ollama.url });
+    await semantic.sync();
+    const file = path.join(f.memory, '.index/embeddings.json');
+    const verified = JSON.parse(fs.readFileSync(file, 'utf8'));
+    // While the query is being embedded another process replaces the cache: same identity and probe,
+    // but the two cards' vectors swapped, so reading the file again would flip the ranking.
+    const swapped = { ...verified, vectors: { 'feline-notes.md': verified.vectors['accounts-notes.md'], 'accounts-notes.md': verified.vectors['feline-notes.md'] } };
+    ollama.state.onQuery = () => fs.writeFileSync(file, JSON.stringify(swapped));
+    const ranked = await semantic.rank('my cat', 2);
+    assert.equal(ranked[0].name, 'feline-notes', 'ranked against the verified snapshot');
+    assert.ok(ranked[0].score > ranked[1].score);
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).vectors, swapped.vectors, 'the swap really happened');
+  } finally { ollama.close(); f.done(); }
+});
+
+test('a cache write whose .index/ is swapped for a link mid-write is refused before the rename and nothing lands outside', async () => {
+  const f = folder();
+  const ollama = await fakeOllama();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'serve-outside-'));
+  const index = path.join(f.memory, '.index');
+  const real = fs.writeFileSync;
+  let patched;
+  try {
+    const semantic = createSemantic({ store: f.store, url: ollama.url });
+    await semantic.sync(); // creates .index/ and the first cache
+    await f.store.remember({ name: 'new-card', description: 'A new one.', type: 'user', body: 'The puppy is called Biscuit.' });
+    let swapped = false;
+    // The moment the temp file has been written, replace .index/ with a link to an outside folder:
+    // after the folder was validated, before the rename.
+    patched = mock.method(fs, 'writeFileSync', (file, ...rest) => {
+      const result = real(file, ...rest);
+      if (typeof file === 'number' && !swapped && fs.readdirSync(index).some(n => n.endsWith('.tmp'))) {
+        swapped = true;
+        fs.rmSync(index, { recursive: true });
+        fs.symlinkSync(outside, index);
+      }
+      return result;
+    });
+    await assert.rejects(() => semantic.sync(), err => err instanceof SemanticUnavailable && /\.index changed while in use/.test(err.message));
+    assert.equal(swapped, true, 'the swap happened mid-write');
+    assert.deepEqual(fs.readdirSync(outside), [], 'nothing was written through the link');
+  } finally { patched && patched.mock.restore(); ollama.close(); fs.rmSync(outside, { recursive: true, force: true }); f.done(); }
 });

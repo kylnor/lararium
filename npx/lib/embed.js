@@ -8,10 +8,13 @@
 // embedded again and must match; if not, the cache is refused until --reindex. Anything that goes
 // wrong (server down, model missing, wrong size, a cache that cannot be read or written) falls
 // back to full-text. Text only ever goes to a loopback address, and redirects are refused.
+// The cache is read through a no-follow descriptor, the vectors a search ranks against are the very
+// ones that passed the fingerprint check (held in memory, never read back from the file), and a
+// write goes to a temp file in the pinned .index/ folder and is renamed into place.
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { GuardError, resolveAuxDir, resolveAuxFile } = require('./guard');
+const { GuardError, pinAuxDir, readFileNoFollow, writeFileAtomic } = require('./guard');
 
 const DEFAULTS = {
   ollama: { url: 'http://127.0.0.1:11434', model: 'embeddinggemma-2:270m' },
@@ -137,14 +140,13 @@ function createSemantic({ store, backend = 'ollama', url, model, fetchImpl = glo
   // The stored cache, or null when there is none (or it is unreadable JSON, which is rebuilt).
   // Refuses a cache built under a different identity, and any path that would leave the folder.
   function readCache() {
-    const dir = resolveAuxDir(store.folder, '.index');
+    const dir = pinAuxDir(store.folder, '.index');
     if (!dir) return null;
-    const file = resolveAuxFile(dir, 'embeddings.json');
+    const text = readFileNoFollow(path.join(dir.path, 'embeddings.json'));
+    dir.check(); // the folder is still the one that was validated
+    if (text === null) return null;
     let saved;
-    try { saved = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (error) {
-      if (error.code && error.code !== 'ENOENT') throw error;
-      return null;
-    }
+    try { saved = JSON.parse(text); } catch { return null; }
     const same = saved && saved.identity &&
       saved.identity.backend === identity.backend && saved.identity.model === identity.model && saved.identity.dims === identity.dims;
     if (!same) {
@@ -156,27 +158,25 @@ function createSemantic({ store, backend = 'ollama', url, model, fetchImpl = glo
   }
 
   function saveCache({ vectors, probe, digest }) {
-    const dir = resolveAuxDir(store.folder, '.index', { create: true });
-    const file = resolveAuxFile(dir, 'embeddings.json');
-    const temp = path.join(dir, `embeddings.json.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`);
-    try {
-      fs.writeFileSync(temp, JSON.stringify({ identity, embedUrl: endpoint, digest, probe, vectors }), { flag: 'wx' });
-      fs.renameSync(temp, file);
-    } catch (error) {
-      fs.rmSync(temp, { force: true });
-      throw error;
-    }
+    const dir = pinAuxDir(store.folder, '.index', { create: true });
+    writeFileAtomic(
+      path.join(dir.path, 'embeddings.json'),
+      JSON.stringify({ identity, embedUrl: endpoint, digest, probe, vectors }),
+      { beforeCommit: dir.check },
+    );
   }
 
   function reset() {
-    const dir = resolveAuxDir(store.folder, '.index');
-    if (dir) fs.rmSync(resolveAuxFile(dir, 'embeddings.json'), { force: true });
+    const dir = pinAuxDir(store.folder, '.index');
+    if (dir) fs.rmSync(path.join(dir.path, 'embeddings.json'), { force: true });
   }
 
   // A refused path is "semantic unavailable" like any other reason the cache cannot be used.
   const unavailable = error => (error instanceof GuardError ? new SemanticUnavailable(error.message) : error);
 
-  // Embeds every card that is new or changed since its vector was stored.
+  // Embeds every card that is new or changed since its vector was stored. Returns the counts and
+  // `vectors`: the verified snapshot (cache entries that passed the fingerprint plus the ones just
+  // embedded), which is what ranking must use.
   async function syncNow() {
     const saved = readCache();
     const known = saved ? saved.vectors : {};
@@ -203,20 +203,22 @@ function createSemantic({ store, backend = 'ollama', url, model, fetchImpl = glo
       slice.forEach((p, j) => { next[p.file] = { hash: p.hash, v: encode(vectors[j]) }; });
     }
     if (pending.length || Object.keys(next).length !== Object.keys(known).length) saveCache({ vectors: next, probe, digest });
-    return { embedded: pending.length, total: Object.keys(next).length };
+    return { embedded: pending.length, total: Object.keys(next).length, vectors: next };
   }
 
   async function sync() {
-    try { return await syncNow(); } catch (error) { throw unavailable(error); }
+    try {
+      const { embedded, total } = await syncNow();
+      return { embedded, total };
+    } catch (error) { throw unavailable(error); }
   }
 
   // Best-first [{name, score}] by cosine similarity, or throws SemanticUnavailable.
   async function rank(query, limit = 10) {
     try {
-      await syncNow();
+      const { vectors } = await syncNow(); // the snapshot that was verified; the file is not read again
       const [q] = await embed([`${QUERY_PREFIX}${query}`]);
-      const saved = readCache();
-      return Object.entries(saved ? saved.vectors : {})
+      return Object.entries(vectors)
         .map(([file, entry]) => ({ name: file.slice(0, -3), score: dot(q, decode(entry.v)) }))
         .sort((a, b) => b.score - a.score)
         .slice(0, limit);

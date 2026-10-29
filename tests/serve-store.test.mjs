@@ -243,3 +243,82 @@ test('a held index lock makes remember wait, then refuse with a clear error and 
     assert.equal(fs.existsSync(lock), false);
   } finally { s.done(); }
 });
+
+// ---- r3 hardening -------------------------------------------------------------------------
+
+test('a dangling MEMORY.md symlink (it looks absent to a path check) is refused: nothing is created through it, no card is left', async () => {
+  const s = stack();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'serve-outside-'));
+  try {
+    const target = path.join(outside, 'not-yet.txt');
+    fs.rmSync(path.join(s.memory, 'MEMORY.md'));
+    fs.symlinkSync(target, path.join(s.memory, 'MEMORY.md'));
+    const store = createStore({ root: s.memory });
+    await assert.rejects(() => store.remember(fact('a-claim')), err => err instanceof GuardError && /symbolic link/.test(err.message));
+    assert.equal(fs.existsSync(target), false, 'nothing was created at the link target');
+    assert.equal(fs.existsSync(path.join(s.memory, 'a-claim.md')), false);
+    assert.equal(fs.lstatSync(path.join(s.memory, 'MEMORY.md')).isSymbolicLink(), true);
+  } finally { fs.rmSync(outside, { recursive: true, force: true }); s.done(); }
+});
+
+test('a card with no index line (an earlier call stopped halfway) is finished by retrying the same call, once', async () => {
+  const s = stack();
+  try {
+    const store = createStore({ root: s.memory });
+    const indexPath = path.join(s.memory, 'MEMORY.md');
+    const before = fs.readFileSync(indexPath, 'utf8');
+    await store.remember(fact('half-done'));
+    fs.writeFileSync(indexPath, before); // the crash: the card is on disk, the index never got its line
+    assert.deepEqual(store.list().map(c => [c.name, c.inIndex]), [['half-done', false]]);
+
+    const retried = await store.remember(fact('half-done'));
+    assert.equal(retried.file, 'half-done.md');
+    assert.deepEqual(store.list().map(c => [c.name, c.inIndex]), [['half-done', true]]);
+    const lines = fs.readFileSync(indexPath, 'utf8').split('\n').filter(l => l.startsWith('- half-done.md'));
+    assert.equal(lines.length, 1, 'exactly one index line');
+    assert.equal(s.validate().status, 0);
+
+    await assert.rejects(() => store.remember(fact('half-done')), /already exists/); // now it is a real duplicate
+    assert.equal(fs.readFileSync(indexPath, 'utf8').split('\n').filter(l => l.startsWith('- half-done.md')).length, 1);
+  } finally { s.done(); }
+});
+
+test('an unindexed card with different content is somebody else\'s card: refused, never overwritten, never indexed', async () => {
+  const s = stack();
+  try {
+    fs.writeFileSync(path.join(s.memory, 'hand-written.md'), '---\nname: hand-written\ndescription: Written by an agent.\ntype: user\n---\n\nTheir text.\n');
+    const store = createStore({ root: s.memory });
+    const index = fs.readFileSync(path.join(s.memory, 'MEMORY.md'), 'utf8');
+    await assert.rejects(() => store.remember(fact('hand-written')), /already exists/);
+    assert.match(fs.readFileSync(path.join(s.memory, 'hand-written.md'), 'utf8'), /Their text/);
+    assert.equal(fs.readFileSync(path.join(s.memory, 'MEMORY.md'), 'utf8'), index, 'the index is untouched');
+  } finally { s.done(); }
+});
+
+test('a lock whose owner changed before the commit stops the write: the index is not replaced', async () => {
+  const s = stack();
+  try {
+    const store = createStore({ root: s.memory });
+    const real = fs.writeFileSync;
+    const index = fs.readFileSync(path.join(s.memory, 'MEMORY.md'), 'utf8');
+    const lockFile = path.join(s.memory, '.memory-index.lock');
+    // someone takes over the lock file after our temp index is written and before we commit it
+    const { mock } = await import('node:test');
+    let swapped = false;
+    const patched = mock.method(fs, 'writeFileSync', (file, ...rest) => {
+      const result = real(file, ...rest);
+      if (typeof file === 'number' && !swapped && fs.readdirSync(s.memory).some(f => f.startsWith('MEMORY.md.') && f.endsWith('.tmp'))) {
+        swapped = true;
+        fs.rmSync(lockFile);
+        real(lockFile, `${'a'.repeat(32)}\n${process.pid}\nsomewhere\n`);
+      }
+      return result;
+    });
+    try {
+      await assert.rejects(() => store.remember(fact('late-write')), err => err instanceof InputError && /send the same request again/.test(err.message));
+    } finally { patched.mock.restore(); }
+    assert.equal(swapped, true);
+    assert.equal(fs.readFileSync(path.join(s.memory, 'MEMORY.md'), 'utf8'), index, 'the index was not replaced');
+    assert.deepEqual(fs.readdirSync(s.memory).filter(f => f.endsWith('.tmp')), []);
+  } finally { s.done(); }
+});

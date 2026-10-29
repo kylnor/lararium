@@ -197,7 +197,7 @@ this phase needs it unless they want a cloud app.
 1. Tell them plainly what this is and that they can skip it. The server offers four tools:
    `search`, `read`, `list` and `remember`. `remember` writes one card in `memory/` plus its index
    line, exactly the format the hooks and `memory/README.md` use, so a fact saved from any app is
-   a plain file every other agent reads. Check `node --version` is 18 or newer; if not, say so and
+   a plain file every other agent reads. Check `node --version` is 20 or newer; if not, say so and
    stop here.
 2. Start the server. It runs from the stack folder, serves `memory/`, and listens only on this
    machine. Run `npx lararium serve` (one short command; say what it does first). Leave it running:

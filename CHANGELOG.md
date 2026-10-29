@@ -24,7 +24,7 @@ the memory folder, so they search, read and add to the same cards.
 **`npx lararium serve`** (npm package `0.3.0`). Four tools: `search`, `read`, `list`, `remember`.
 `remember` writes exactly the v3 card format, one fact per file plus its index line. Stdio and
 streamable HTTP; HTTP always needs a bearer token, with a read tier that has no `remember` and a write
-tier. A small OAuth 2.1 sign-in covers ChatGPT (OAuth only) and the Claude app. Node 18+, the official
+tier. A small OAuth 2.1 sign-in covers ChatGPT (OAuth only) and the Claude app. Node 20+, the official
 MCP SDK, no database. Optional semantic search with a local EmbeddingGemma 2, off by default, falling
 back to full-text whenever the model is missing. Details in `npx/README.md`. Rotating the tokens
 revokes on a server that is already running, the index and vector cache refuse symbolic links, the

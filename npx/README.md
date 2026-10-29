@@ -30,7 +30,7 @@ npx lararium serve --stdio      # a tool launches it for you (Claude Desktop, Cl
 npx lararium serve              # always-on, 127.0.0.1:8787, bearer tokens required
 ```
 
-A small MCP server over the memory folder (`./memory`, or `--memory <dir>`). Node 18 or newer, the
+A small MCP server over the memory folder (`./memory`, or `--memory <dir>`). Node 20 or newer, the
 official MCP SDK, no database. The files stay the memory; the server never keeps its own copy.
 
 | tool | does |
@@ -54,7 +54,8 @@ No token, or a wrong one, gets a 401. Tokens are created on first start in a pri
 `LARARIUM_READ_TOKEN` and `LARARIUM_WRITE_TOKEN` (32 characters or more, and different).
 `--print-tokens` shows them. `--rotate-tokens` replaces them and prints only that it worked and where
 the file is; a server that is already running reads the new file on its next request, so the old tokens
-and every app sign-in made with them stop working at once, with no restart.
+and every app sign-in made with them stop working at once, with no restart. (Tokens set with
+`LARARIUM_READ_TOKEN` or `LARARIUM_WRITE_TOKEN` are not in the file: change those and restart.)
 
 **Cloud apps.** The Claude app and ChatGPT connect from the internet, so they need a public HTTPS
 address: put Tailscale Funnel or a Cloudflare Tunnel in front of the local port and start with
@@ -78,6 +79,18 @@ read or written, search falls back to full-text and says so.
 Limits worth knowing: it serves `memory/` only; `remember` adds cards and never edits one (a
 correction is a new card); several servers on one folder take turns on `memory/MEMORY.md` through a
 lock file (`.memory-index.lock`), and a symbolic link in place of `MEMORY.md` or `.index/` is refused.
+
+**Threat model.** The server defends against the callers of its tools: HTTP and stdio clients,
+including cloud apps reaching it over a tunnel. They get a token tier, names that can only be plain
+card files in the memory folder, errors with no local paths in them (the full error goes to the
+server's own log), and a read tier that has no `remember` at all. A local process that can already
+write into the memory folder is trusted, because it can edit the cards directly. Inside that model the
+server avoids following symbolic links it did not create: the index, the lock file and the vector
+cache are opened without following a link and read or written through the open file, and the cache
+folder is checked again before anything is committed. It does not try to win a race against a hostile
+local writer. One accepted gap: rotating the tokens does not cancel a request that was already
+authenticated and is still in flight; it finishes, and every request after it is refused.
+
 
 Behavior change since `0.2.x`: `npx lararium serve` is now this command. To scaffold a folder that
 is literally named `serve`, write `npx lararium ./serve`.

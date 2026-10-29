@@ -1,6 +1,7 @@
 'use strict';
 // The four tools, built per caller. A read-tier caller gets a server that does not have `remember`
 // at all, so the refusal does not depend on a check inside a handler.
+const crypto = require('node:crypto');
 const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { z } = require('zod');
 const { InputError, GuardError, CARD_TYPES } = require('./store');
@@ -16,13 +17,19 @@ const INSTRUCTIONS = [
 const text = value => ({ content: [{ type: 'text', text: value }] });
 const failure = message => ({ isError: true, content: [{ type: 'text', text: message }] });
 
-// Turns store errors the caller can act on into tool errors; anything else is a real failure.
-async function guarded(fn) {
+const stderrLog = line => process.stderr.write(`${line}\n`);
+
+// Turns store errors the caller can act on into tool errors. Anything else is a real failure: the
+// full error (a filesystem message names the owner's home folder) goes to the local log only, and
+// the caller gets a short message with a reference that finds the line there.
+async function guarded(tool, log, fn) {
   try {
     return await fn();
   } catch (error) {
     if (error instanceof InputError || error instanceof GuardError) return failure(error.message);
-    throw error;
+    const ref = crypto.randomBytes(3).toString('hex');
+    log(`tool ${tool} failed (ref ${ref}): ${error && error.stack ? error.stack : error}`);
+    return failure(`The memory server hit an internal error (ref ${ref}). Details are in its local log.`);
   }
 }
 
@@ -36,7 +43,8 @@ function fuse(lists, limit) {
   return [...score.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([name]) => name);
 }
 
-function createMcpServer({ store, semantic = null, role, version }) {
+// `log` receives full diagnostics for the server's own operator; nothing logged is sent to the caller.
+function createMcpServer({ store, semantic = null, role, version, log = stderrLog }) {
   const server = new McpServer({ name: 'lararium-memory', version }, { instructions: INSTRUCTIONS });
 
   server.registerTool('search', {
@@ -44,7 +52,7 @@ function createMcpServer({ store, semantic = null, role, version }) {
     description: 'Search the owner\'s memory cards. Pass the topic in plain words ("pricing preferences", "Jane Doe"). Returns the best matches with a snippet; use `read` for the full card.',
     inputSchema: { query: z.string().min(1).max(500), limit: z.number().int().min(1).max(50).optional() },
     annotations: { readOnlyHint: true, openWorldHint: false },
-  }, ({ query, limit = 10 }) => guarded(async () => {
+  }, ({ query, limit = 10 }) => guarded('search', log, async () => {
     const byText = store.searchText(query, { limit: 50 });
     let mode = 'full-text';
     let names = byText.slice(0, limit).map(r => r.name);
@@ -56,6 +64,7 @@ function createMcpServer({ store, semantic = null, role, version }) {
       } catch (error) {
         // Whatever went wrong on the semantic path (model down, cache unreadable, disk full), the
         // answer is full-text, not an error. Only the error code travels, never a local path.
+        if (!(error instanceof SemanticUnavailable)) log(`semantic search failed, answering from full-text: ${error && error.stack ? error.stack : error}`);
         const why = error instanceof SemanticUnavailable ? error.message : `semantic index error (${error.code || error.name})`;
         mode = `full-text (semantic search unavailable: ${why})`;
       }
@@ -76,14 +85,14 @@ function createMcpServer({ store, semantic = null, role, version }) {
     description: 'Open one card in full by name (for example "prefers-short-replies"). `MEMORY` opens the index.',
     inputSchema: { name: z.string().min(1).max(120) },
     annotations: { readOnlyHint: true, openWorldHint: false },
-  }, ({ name }) => guarded(() => text(store.read(name).text)));
+  }, ({ name }) => guarded('read', log, () => text(store.read(name).text)));
 
   server.registerTool('list', {
     title: 'List memory cards',
     description: 'List every card with its type and one-line description, optionally only one type.',
     inputSchema: { type: z.enum(CARD_TYPES).optional() },
     annotations: { readOnlyHint: true, openWorldHint: false },
-  }, ({ type }) => guarded(() => {
+  }, ({ type }) => guarded('list', log, () => {
     const cards = store.list({ type });
     if (!cards.length) return text('No cards yet.');
     return text(`${cards.length} card(s).\n${cards.map(c => `- ${c.name} [${c.type}]${c.inIndex ? '' : ' (not in index)'} ${c.description}`).join('\n')}`);
@@ -100,7 +109,7 @@ function createMcpServer({ store, semantic = null, role, version }) {
         body: z.string().min(1).max(20000).describe('the fact, then Why and How to apply for feedback and project cards'),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    }, input => guarded(async () => {
+    }, input => guarded('remember', log, async () => {
       const saved = await store.remember(input);
       const warn = saved.indexOverBudget ? ' The index is now past 200 lines or 24 KB: tell the owner to demote older cards.' : '';
       return text(`Saved ${saved.file} and added to the index: ${saved.indexLine}${warn}`);

@@ -90,7 +90,7 @@ async function main(argv, env = process.env) {
   if (opts.stdio) {
     const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
     const { createMcpServer } = require('./lib/mcp');
-    const server = createMcpServer({ store, semantic, role: opts['read-only'] ? 'read' : 'write', version });
+    const server = createMcpServer({ store, semantic, role: opts['read-only'] ? 'read' : 'write', version, log });
     await server.connect(new StdioServerTransport());
     log(`lararium memory (stdio) serving ${store.folder}`);
     return;

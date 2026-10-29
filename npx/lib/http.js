@@ -5,8 +5,8 @@
 // wrong one is a 401. The read tier is served a server without `remember`.
 const http = require('node:http');
 const crypto = require('node:crypto');
-// Node 18 has no global `crypto` (it arrived in 19 and is behind a flag in 18), and the SDK's HTTP
-// transport calls crypto.randomUUID() on the global. Supply it before the transport is loaded.
+// The SDK's HTTP transport calls crypto.randomUUID() on the global. Supported Node releases have
+// it; this only covers a runtime that does not, and must run before the transport is loaded.
 if (!globalThis.crypto) globalThis.crypto = crypto.webcrypto;
 const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
 const auth = require('./auth');
@@ -102,7 +102,7 @@ function createHttpServer({ store, semantic, tokens, tokenSource, publicUrl, ver
       return send(res, error.status || 400, { error: error.status === 413 ? 'body too large' : 'body must be JSON' });
     }
     // Stateless: a fresh server per request, shaped by the caller's tier.
-    const server = createMcpServer({ store, semantic, role: tier, version });
+    const server = createMcpServer({ store, semantic, role: tier, version, log });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on('close', () => { transport.close().catch(() => {}); server.close().catch(() => {}); });
     await server.connect(transport);
