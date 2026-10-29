@@ -8,6 +8,11 @@ life so the assistant comes online already knowing who you are.
 index never replaces the brain; it makes the brain searchable and adds the firehose the brain points
 at. Do not copy corpora into markdown. The card points at the corpus; it does not eat it.
 
+> **Just want your apps to share the memory folder?** You do not need any of this. `npx lararium serve`
+> runs a small MCP server over your files (search, read, list, remember), no database. Setup is
+> `INSTALL.md`, Phase 5, and the server's own notes are in `npx/README.md`. This document describes
+> the much heavier database-backed index; start here only when files and that server stop being enough.
+
 ## Architecture (the shape to reproduce)
 - **MCP server**: an HTTP (or stdio) MCP the assistant calls (`search`, `recall`, `remember`,
   session briefing, soul get/set, tasks, goals). This is how the assistant reads and writes the

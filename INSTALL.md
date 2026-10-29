@@ -184,14 +184,114 @@ one loop: it sees each skill's short description first and loads the full skill 
    `agents/examples/`), or can be browsed in the upstream repository. Mention them only if the
    user asks for a themed team.
 
-## Phase 5: The index (optional: only when files outgrow grep-and-read)
-1. Tell them plainly: this is the heaviest phase and they can defer it indefinitely. The brain works
-   without it.
-2. Walk `clocktower/README.md`. Help them produce a real `.env` from `.env.example` (their own
-   database, their own embedding key, their own host). **Never invent or reuse anyone else's
-   credentials.**
-3. Point them at the schema and the watcher pattern. Standing up the actual database and watchers is
-   their infrastructure to run; the interview hands them the map, not the keys.
+## Phase 5: Share the memory with your other apps (optional: when more than one tool should read it)
+
+Claude Code, Codex and Gemini CLI already read your folder (Phase 0 pointed them at it). This phase
+is for the apps that cannot: Claude Desktop, the Claude app, ChatGPT. It runs a small local server
+over the same files. There is no database. The files stay the memory; the server only lets other
+tools search them, read them and add to them.
+
+Order matters. Everything is local first. Public HTTPS is the last, optional step, and nothing in
+this phase needs it unless they want a cloud app.
+
+1. Tell them plainly what this is and that they can skip it. The server offers four tools:
+   `search`, `read`, `list` and `remember`. `remember` writes one card in `memory/` plus its index
+   line, exactly the format the hooks and `memory/README.md` use, so a fact saved from any app is
+   a plain file every other agent reads. Check `node --version` is 18 or newer; if not, say so and
+   stop here.
+2. Start the server. It runs from the stack folder, serves `memory/`, and listens only on this
+   machine. Run `npx lararium serve` (one short command; say what it does first). Leave it running:
+   if the assistant cannot keep a process alive, ask the user to open a second terminal for it. On
+   first start it creates two private tokens, a read token and a write token, in a file only the
+   user can read, and prints where that file is. Never print the tokens into the chat or into any
+   file in the stack. The server prints them only when the user asks: `npx lararium serve
+   --print-tokens`.
+3. Add it to each tool they use. Use stdio where the tool launches the server itself; no token and
+   no network are involved.
+   - **Claude Desktop:** open Settings, Developer, Edit Config. Add this to `mcpServers`, with the
+     full path of their `memory/` folder, then quit and reopen the app:
+
+     ```json
+     "lararium-memory": {
+       "command": "npx",
+       "args": ["lararium", "serve", "--stdio", "--memory", "<full path to memory/>"]
+     }
+     ```
+
+   - **Claude Code:** `claude mcp add lararium-memory -- npx lararium serve --stdio --memory <full path to memory/>`
+   - **Codex:** `codex mcp add lararium-memory -- npx lararium serve --stdio --memory <full path to memory/>`
+
+   Add `--read-only` after `--stdio` for any tool that should search but never write. Offer these
+   one at a time and only for tools the user actually has.
+4. Prove a round trip before going further. In one tool, ask it to remember a harmless fact ("save
+   that my test fact is blue kayaks, use the remember tool"). Open `memory/` and read the new card
+   back from disk, and confirm its line is at the top of `memory/MEMORY.md`. Then, in a different
+   tool, ask "what do you remember about blue kayaks". It should answer from the card. If the second
+   tool is Codex or another file-reading agent, no server is needed for that half: it reads the file.
+   If either half fails, say so plainly and fix it before offering anything else. Delete the test
+   card afterwards if the user does not want it kept.
+5. Optional: search by meaning. Plain full-text search is the default and works without anything
+   installed. If they want matches by meaning ("pricing" finding a card about "rates"), a local
+   EmbeddingGemma 2 can rank cards too. It runs on their machine; nothing is sent anywhere.
+   Install Ollama from ollama.com, then run `ollama pull embeddinggemma-2:270m` (a few hundred MB;
+   use that exact tag, the untagged name is a different build that needs extra runtime support).
+   If the pull answers "requires a newer version of Ollama", update Ollama and pull again; an older
+   install cannot load this model.
+   Restart the server with `--semantic`. If the model is missing or stops, search quietly falls
+   back to full-text and says so in its answer. The server stores which model built the vectors and
+   refuses to mix models; to switch, restart once with `--reindex`. The llama.cpp route is
+   `--embed-backend llamacpp` against a `llama-server` serving `ggml-org/embeddinggemma-2-GGUF:BF16`
+   with `--embeddings` (the server expects it on port 8080 unless `--embed-url` says otherwise).
+6. Optional, last: reach it from a cloud app (the Claude app on the web or phone, ChatGPT). Those
+   apps connect from the internet, so the server needs a public HTTPS address. Explain the cost of
+   saying yes: anything that has the write token can add to their memory, and the tokens are the
+   only lock. Then offer one of two tunnels, whichever they already use:
+   - **Tailscale Funnel:** `tailscale funnel --bg 8787`. It prints an `https://` address on the
+     user's own tailnet domain. Needs Tailscale installed, Funnel enabled for the tailnet in its
+     admin console, and the tailnet's HTTPS certificates switched on.
+   - **Cloudflare Tunnel:** `cloudflared tunnel --url http://127.0.0.1:8787` prints a temporary
+     `https://` address for a quick test; a named tunnel on their own domain keeps the address
+     stable. Cloudflare's tunnel docs walk the named setup.
+
+   Restart the server with that address: `npx lararium serve --public-url https://<their address>`.
+   The server refuses requests with no token or a wrong one (401), and the read token cannot call
+   `remember`. Then walk the app step below. Give each app the token tier it needs: the write token
+   if it should save facts, the read token if it should only look.
+7. Keep the tokens private. They live in the file step 2 named. If one leaks, run `npx lararium serve
+   --rotate-tokens`, which signs every connected app out, and reconnect the ones they still use. If
+   the memory folder holds anything they would not post publicly, keep the server on this machine
+   and skip step 6.
+8. Only when plain files and this server stop being enough (very large folders, many writers at
+   once), the optional database index is described in `clocktower/README.md`. Do not set it up unless
+   they ask; Phase 5 is complete without it.
+
+### Where it is right now (checked 2026-10-28)
+
+Cloud-app setup moves faster than this file. These are the facts as of the date above, with where
+they came from. If a screen does not match, trust the app's own current help over this box and tell
+the user what differs.
+
+- **Claude app (claude.ai, desktop and phone):** add a custom connector under Settings, Connectors,
+  using the `https://<address>/mcp` URL. Anthropic's connector authentication page lists three
+  ways in: OAuth, a static credential (an organization Owner enters a bearer token once; documented
+  as a beta for a limited set of organizations), or none. This server supports the first two: it
+  answers the OAuth sign-in (the consent page asks for the read or write token and grants that tier),
+  and it also accepts the token as a plain bearer header for organizations that have the static
+  option. Sources: https://claude.com/docs/connectors/building/authentication and
+  https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp
+- **Claude Desktop, local server:** supported, and it is the stdio route in step 3. Source:
+  https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop
+- **ChatGPT:** add the `https://<address>/mcp` URL as a custom connector (developer mode, in
+  ChatGPT's settings; availability depends on plan and workspace). OpenAI's documented options are
+  OAuth or no authentication. There is no static-bearer option, so the OAuth sign-in above is the
+  only way in, and this server never offers an unauthenticated mode. Source:
+  https://help.openai.com/en/articles/12584461-connecting-custom-mcp-servers-in-chatgpt
+- **ChatGPT desktop, local server:** not confirmed. OpenAI documents remote connectors; a public
+  bug report shows a desktop app discovering a local server's tools without exposing them to
+  chat. Do not promise it. Use step 6. Source: https://github.com/openai/codex/issues/38162
+
+When an app asks you to sign in, check the address shown on the consent page is the app you are
+connecting before you paste a token.
 
 ## Phase 6: The operating shape (optional: when instructions or builds outgrow a flat file)
 Offer only what hurts today, one at a time, and skip the rest.

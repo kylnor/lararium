@@ -191,9 +191,18 @@ async function run() {
 }
 
 if (require.main === module) {
-  run().catch((err) => {
-    fail(err && err.message ? err.message : String(err));
-  });
+  // `serve` is the one subcommand: the memory server. It is loaded on demand so scaffolding never
+  // needs the MCP SDK. Everything else is the scaffolder, unchanged.
+  if (process.argv[2] === 'serve') {
+    require('./serve').main(process.argv.slice(3)).catch((err) => {
+      console.error(`lararium serve: ${err && err.message ? err.message : String(err)}`);
+      process.exit(1);
+    });
+  } else {
+    run().catch((err) => {
+      fail(err && err.message ? err.message : String(err));
+    });
+  }
 }
 
 module.exports = { unpack, CONTRIBUTOR_ONLY, EXAMPLES_DIR };

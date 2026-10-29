@@ -8,3 +8,5 @@ soul/heartbeat.md
 soul/heartbeat.md.*.tmp
 handoff.md
 handoff.md.consumed
+# Optional semantic-search vectors built by `npx lararium serve --semantic`: derived, never committed.
+memory/.index/
