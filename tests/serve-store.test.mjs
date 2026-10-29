@@ -64,7 +64,8 @@ test('remember never overwrites, and refuses malformed input', async () => {
       fact('ok-name', { description: '   ' }), fact('ok-name', { body: '' }), fact('ok-name', { body: 'x'.repeat(20001) }),
     ];
     for (const input of bad) await assert.rejects(() => store.remember(input), InputError);
-    assert.deepEqual(fs.readdirSync(s.memory).sort(), ['DEMOTED.md', 'MEMORY.md', 'a-claim.md']);
+    assert.deepEqual(fs.readdirSync(s.memory).sort(), ['.lararium-remembered', 'DEMOTED.md', 'MEMORY.md', 'a-claim.md'], 'refused calls left no card and no journal line');
+    assert.equal(fs.readFileSync(path.join(s.memory, '.lararium-remembered'), 'utf8'), 'a-claim.md\n');
   } finally { s.done(); }
 });
 
@@ -229,11 +230,13 @@ test('a held index lock makes remember wait, then refuse with a clear error and 
   const s = stack();
   try {
     const lock = path.join(s.memory, '.memory-index.lock');
-    fs.writeFileSync(lock, 'someone else');
+    const dead = spawnSync(process.execPath, ['-e', '0']).pid; // a pid that has just exited
+    const abandoned = `${'b'.repeat(32)}\n${dead}\n${os.hostname()}\n`;
+    fs.writeFileSync(lock, abandoned);
     const impatient = createStore({ root: s.memory, lockWaitMs: 150, lockStaleMs: 60000 });
     await assert.rejects(() => impatient.remember(fact('blocked')), err => err instanceof InputError && /busy/.test(err.message));
     assert.equal(fs.existsSync(path.join(s.memory, 'blocked.md')), false, 'no orphan card when the index could not be updated');
-    assert.equal(fs.existsSync(lock), true, 'a live lock is not stolen');
+    assert.equal(fs.existsSync(lock), true, 'a young lock is not stolen');
 
     const old = new Date(Date.now() - 120000);
     fs.utimesSync(lock, old, old);
@@ -320,5 +323,184 @@ test('a lock whose owner changed before the commit stops the write: the index is
     assert.equal(swapped, true);
     assert.equal(fs.readFileSync(path.join(s.memory, 'MEMORY.md'), 'utf8'), index, 'the index was not replaced');
     assert.deepEqual(fs.readdirSync(s.memory).filter(f => f.endsWith('.tmp')), []);
+  } finally { s.done(); }
+});
+
+// ---- round 5: cards are canonical, a lost index line is a short-lived orphan that heals ----------
+
+const journalFile = s => path.join(s.memory, '.lararium-remembered');
+const indexFile = s => path.join(s.memory, 'MEMORY.md');
+const pointerNames = s => fs.readFileSync(indexFile(s), 'utf8').replace(/<!--[\s\S]*?-->/g, '').split('\n').filter(l => l.startsWith('- ')).map(l => l.slice(2).split(' ')[0]);
+
+test('remember journals the card it wrote: one whole line per card, in write order, and validate does not call the journal a card', async () => {
+  const s = stack();
+  try {
+    const store = createStore({ root: s.memory });
+    await store.remember(fact('first-claim'));
+    await store.remember(fact('second-claim'));
+    assert.equal(fs.readFileSync(journalFile(s), 'utf8'), 'first-claim.md\nsecond-claim.md\n');
+    assert.deepEqual(store.cardFiles(), ['first-claim.md', 'second-claim.md']);
+    const verdict = s.validate();
+    assert.equal(verdict.status, 0, verdict.stdout);
+    assert.match(verdict.stdout, /2 card\(s\): 2 pointered/);
+  } finally { s.done(); }
+});
+
+test('a lost update (the index rewritten without B\'s line after B committed) is restored by the next remember, at the top region, with B\'s own description', async () => {
+  const s = stack();
+  try {
+    const store = createStore({ root: s.memory });
+    await store.remember(fact('card-a'));
+    const afterA = fs.readFileSync(indexFile(s), 'utf8');
+    await store.remember(fact('card-b', { description: 'B\'s own hook line.' }));
+    fs.writeFileSync(indexFile(s), afterA); // Codex round 4, reduced to its effect: A's stale rename lands over B's commit
+    assert.deepEqual(pointerNames(s), ['card-a.md']);
+    assert.match(s.validate().stdout, /ORPHANED card-b.md/, 'in between, the checker shows it as orphaned');
+
+    await store.remember(fact('card-c'));
+    assert.deepEqual(pointerNames(s), ['card-b.md', 'card-c.md', 'card-a.md'], 'B is back in the top region (a repaired line goes on top, so it is read first by the 200 line cut)');
+    assert.match(fs.readFileSync(indexFile(s), 'utf8'), /^- card-b\.md - B's own hook line\.$/m);
+    const verdict = s.validate();
+    assert.equal(verdict.status, 0, verdict.stdout);
+    assert.match(verdict.stdout, /3 card\(s\): 3 pointered/);
+  } finally { s.done(); }
+});
+
+test('a fresh store start restores a dropped line (heal), and does nothing, not even take the lock, when nothing is missing', async () => {
+  const s = stack();
+  try {
+    const first = createStore({ root: s.memory });
+    await first.remember(fact('survivor'));
+    const withLine = fs.readFileSync(indexFile(s), 'utf8');
+    assert.equal(await createStore({ root: s.memory }).heal(), 0);
+    assert.equal(fs.readFileSync(indexFile(s), 'utf8'), withLine, 'nothing to do, nothing rewritten');
+
+    fs.writeFileSync(indexFile(s), '# Memory\n\n'); // the line is lost
+    const restarted = createStore({ root: s.memory });
+    assert.equal(await restarted.heal(), 1);
+    assert.deepEqual(pointerNames(s), ['survivor.md']);
+    assert.equal(s.validate().status, 0);
+    assert.equal(fs.existsSync(path.join(s.memory, '.memory-index.lock')), false);
+  } finally { s.done(); }
+});
+
+test('repair puts back several lines newest first, ahead of the entries that survived, and stops at once when it is complete', async () => {
+  const s = stack();
+  try {
+    const store = createStore({ root: s.memory });
+    await store.remember(fact('one'));
+    await store.remember(fact('two'));
+    await store.remember(fact('three'));
+    fs.writeFileSync(indexFile(s), '# Memory\n\n- one.md - the surviving line\n');
+    assert.equal(await store.heal(), 2);
+    assert.deepEqual(pointerNames(s), ['three.md', 'two.md', 'one.md']);
+    assert.equal(await store.heal(), 0);
+  } finally { s.done(); }
+});
+
+test('a demoted journaled card (line removed, listed in DEMOTED.md) is never re-added, by remember or by start', async () => {
+  const s = stack();
+  try {
+    const store = createStore({ root: s.memory });
+    await store.remember(fact('keeper'));
+    await store.remember(fact('old-habit'));
+    fs.writeFileSync(indexFile(s), fs.readFileSync(indexFile(s), 'utf8').split('\n').filter(l => !l.startsWith('- old-habit.md')).join('\n'));
+    fs.appendFileSync(path.join(s.memory, 'DEMOTED.md'), '- old-habit.md : one-time preference\n');
+
+    await store.remember(fact('newcomer'));
+    assert.deepEqual(pointerNames(s), ['newcomer.md', 'keeper.md']);
+    assert.equal(await createStore({ root: s.memory }).heal(), 0);
+    assert.deepEqual(pointerNames(s), ['newcomer.md', 'keeper.md']);
+    assert.equal(fs.existsSync(path.join(s.memory, 'old-habit.md')), true, 'the card stays, pull-tier on purpose');
+    await assert.rejects(() => store.remember(fact('old-habit')), /already exists/, 'an identical retry does not undo the demotion either');
+    assert.deepEqual(pointerNames(s), ['newcomer.md', 'keeper.md']);
+    const verdict = s.validate();
+    assert.equal(verdict.status, 0, verdict.stdout);
+    assert.match(verdict.stdout, /3 card\(s\): 2 pointered, 1 demoted on purpose/);
+  } finally { s.done(); }
+});
+
+test('a hand-written card (not journaled) with no pointer is never touched; neither is a journal line for a card that is gone', async () => {
+  const s = stack();
+  try {
+    fs.writeFileSync(path.join(s.memory, 'hand-written.md'), '---\nname: hand-written\ndescription: Written by an agent.\ntype: user\n---\n\nTheir text.\n');
+    const store = createStore({ root: s.memory });
+    await store.remember(fact('ours'));
+    await store.remember(fact('deleted-later'));
+    fs.rmSync(path.join(s.memory, 'deleted-later.md'));
+    fs.writeFileSync(indexFile(s), '# Memory\n\n'); // everything dropped
+    assert.equal(await store.heal(), 1);
+    assert.deepEqual(pointerNames(s), ['ours.md'], 'only the journaled card that still exists came back');
+    assert.match(s.validate().stdout, /ORPHANED hand-written.md/, 'the hand-written orphan is still the owner\'s to resolve');
+    assert.match(fs.readFileSync(path.join(s.memory, 'hand-written.md'), 'utf8'), /Their text/);
+  } finally { s.done(); }
+});
+
+test('journal lines that are not whole, well-formed card names are ignored (no path, no torn line, no foreign file)', async () => {
+  const s = stack();
+  try {
+    fs.writeFileSync(path.join(s.memory, 'real-one.md'), '---\nname: real-one\ndescription: Real.\ntype: user\n---\n\nx\n');
+    fs.writeFileSync(path.join(s.memory, 'torn.md'), '---\nname: torn\ndescription: Torn.\ntype: user\n---\n\nx\n');
+    fs.writeFileSync(journalFile(s), ['../outside.md', 'Upper-Case.md', 'MEMORY.md', 'a b.md', 'real-one.md', 'real-one.md', 'torn.md'].join('\n')); // the last line has no newline
+    const store = createStore({ root: s.memory });
+    assert.equal(await store.heal(), 1);
+    assert.deepEqual(pointerNames(s), ['real-one.md']);
+  } finally { s.done(); }
+});
+
+test('a journal that is a symlink is refused before any card is written, and nothing is created through it', async () => {
+  const s = stack();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'serve-outside-'));
+  try {
+    const target = path.join(outside, 'victim.txt');
+    fs.symlinkSync(target, journalFile(s)); // dangling
+    const store = createStore({ root: s.memory });
+    await assert.rejects(() => store.remember(fact('a-claim')), err => err instanceof GuardError && /symbolic link/.test(err.message));
+    assert.equal(fs.existsSync(target), false);
+    assert.equal(fs.existsSync(path.join(s.memory, 'a-claim.md')), false, 'no orphan card');
+    await assert.rejects(() => store.heal().then(() => { throw new Error('should have refused'); }), () => true);
+  } finally { fs.rmSync(outside, { recursive: true, force: true }); s.done(); }
+});
+
+test('a card whose commit lost the lock stays on disk and journaled, and the next remember restores its line', async () => {
+  const s = stack();
+  try {
+    const store = createStore({ root: s.memory });
+    const real = fs.writeFileSync;
+    const lockFile = path.join(s.memory, '.memory-index.lock');
+    const { mock } = await import('node:test');
+    let swapped = false;
+    const patched = mock.method(fs, 'writeFileSync', (file, ...rest) => {
+      const result = real(file, ...rest);
+      if (typeof file === 'number' && !swapped && fs.readdirSync(s.memory).some(f => f.startsWith('MEMORY.md.') && f.endsWith('.tmp'))) {
+        swapped = true;
+        fs.rmSync(lockFile);
+        real(lockFile, `${'a'.repeat(32)}\n${process.pid}\nsomewhere\n`);
+      }
+      return result;
+    });
+    try {
+      await assert.rejects(() => store.remember(fact('late-write')), err => err instanceof InputError && /send the same request again/.test(err.message));
+    } finally { patched.mock.restore(); }
+    fs.rmSync(lockFile);
+    assert.deepEqual(pointerNames(s), [], 'the line did not land');
+    assert.equal(fs.readFileSync(journalFile(s), 'utf8'), 'late-write.md\n', 'the card is journaled');
+    assert.equal(await store.heal(), 1);
+    assert.deepEqual(pointerNames(s), ['late-write.md']);
+    assert.equal(s.validate().status, 0);
+  } finally { s.done(); }
+});
+
+test('two processes each remembering 25 cards at once: all 50 cards, all 50 pointers, all 50 journal lines', async () => {
+  const s = stack();
+  try {
+    await Promise.all([runWriter(s.memory, 'left', 25), runWriter(s.memory, 'right', 25)]);
+    const verdict = s.validate();
+    assert.equal(verdict.status, 0, verdict.stdout);
+    assert.match(verdict.stdout, /50 card\(s\): 50 pointered/);
+    assert.equal(pointerNames(s).length, 50);
+    assert.equal(new Set(pointerNames(s)).size, 50);
+    assert.equal(fs.readFileSync(journalFile(s), 'utf8').split('\n').filter(Boolean).length, 50);
+    assert.deepEqual(fs.readdirSync(s.memory).filter(f => f.endsWith('.tmp') || f.endsWith('.lock') || f.endsWith('.reclaim')), []);
   } finally { s.done(); }
 });

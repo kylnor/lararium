@@ -1,26 +1,32 @@
 'use strict';
 // A cross-process mutex held as a lock file, for the read-modify-rename of MEMORY.md (several
-// stdio servers can share one folder). Ownership is explicit:
+// stdio servers can share one folder). It is best-effort serialization, not the safety net: the
+// store journals every card it writes and re-checks the index after each commit, so a lost index
+// line is restored (see store.js). The lock keeps that repair rare. What it does:
 //
-//   - The file holds a random owner token, the holder's pid and its host name. Creating it is one
-//     exclusive open (O_EXCL, never through a link). That is the only way a lock is ever taken.
+//   - The file holds a random owner token, the holder's pid and its host name. It is published
+//     whole: the content is written to a unique temp file in the same folder, then hard-linked to
+//     the lock path (link fails with EEXIST when a lock exists), then the temp is unlinked. No
+//     empty or partial lock file is ever visible at the lock path. Needs a local disk.
 //   - Release removes the file only while it still holds our token.
+//   - A lock file that cannot be parsed (empty, partial, foreign) is never stale: it is treated as
+//     busy and left alone.
 //   - A lock older than `staleMs` is only reclaimed when its holder is gone: the pid is dead on
-//     this host, the lock came from another host, or the file is not one of ours. A holder that
-//     is alive on this host (merely slow or paused) is never evicted on age alone.
-//   - Reclaim goes through a mutex of its own, a sibling `<lock>.reclaim` marker (same token, pid,
-//     host content, same exclusive create). Only the marker's holder may touch a judged-stale
-//     lock, and only after reading it again under the marker: it must still be the very file that
-//     was judged and still be stale. The lock file is never renamed, moved aside or restored, so
-//     no instant exists in which a live holder's lock is absent from its path. A reclaimer that
-//     judged a lock stale and then paused finds, on waking, a different lock and leaves it alone.
-//   - The marker is released with the same token check. A marker left by a process that died
-//     inside the (microsecond) reclaim window is cleared by the same age-and-dead-pid rule as a
-//     lock, with a short window (`markerStaleMs`); a marker from a live process is respected.
-//   - A holder can ask `assertOwned()` right before it commits. Since nobody can remove a live
-//     holder's lock, that check is sufficient to keep two writers out of the index rename.
+//     this host, or the lock came from another host. A holder that is alive on this host (merely
+//     slow or paused) is not evicted on age alone.
+//   - Reclaim goes through a mutex of its own, a sibling `<lock>.reclaim` marker (same content,
+//     same atomic publish). Only the marker's holder takes down a judged-stale lock, after reading
+//     it again under the marker. The lock file is never renamed, moved aside or restored.
+//   - The marker is released with a token check, and a marker left by a dead process is cleared by
+//     the same age-and-dead-pid rule with a short window (`markerStaleMs`).
+//   - A holder can ask `assertOwned()` right before it commits.
+//
+// What this does not promise: the compare-then-unlink steps (releasing, clearing a stale marker,
+// taking down a stale lock) are separate system calls on a pathname, so a pause in exactly the
+// wrong place can still let two writers overlap. That is why the lock is not load-bearing.
 const fs = require('node:fs');
 const os = require('node:os');
+const path = require('node:path');
 const crypto = require('node:crypto');
 const { openNoFollow, readFileNoFollow } = require('./guard');
 
@@ -59,30 +65,39 @@ function parseOwner(raw) {
 
 // Hooks exist so a test can park a process at an exact point (they may return a promise); nothing
 // else sets them:
+//   beforeLink     (sync) the temp file is complete, the lock path not yet published
 //   beforeReclaim  after a lock was judged stale, before the marker is taken
 //   underMarker    holding the marker, before the lock is read again
 function createLock({ file, staleMs = 10000, markerStaleMs = 5000, waitMs = 15000, hooks = {} }) {
   const host = os.hostname();
   const markerFile = `${file}.reclaim`;
 
-  // One exclusive create of `target` holding `content`. False when it already exists.
+  // Publishes `content` at `target` in one step, or returns false when `target` already exists
+  // (a link included: link(2) never follows or replaces what is there). The content goes to a
+  // unique temp file first, so `target` is either absent or complete.
   function tryCreate(target, content) {
+    const temp = `${target}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
     let fd;
     try {
-      fd = openNoFollow(target, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o644);
-    } catch (error) {
-      if (error.code === 'EEXIST') return false;
-      throw error;
-    }
-    try {
+      fd = openNoFollow(temp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o644);
       fs.writeFileSync(fd, content);
-    } catch (error) {
       fs.closeSync(fd);
-      fs.rmSync(target, { force: true });
-      throw error;
+      fd = undefined;
+      if (hooks.beforeLink) hooks.beforeLink(temp, target);
+      try {
+        fs.linkSync(temp, target);
+      } catch (error) {
+        if (error.code === 'EEXIST') return false;
+        if (['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS'].includes(error.code)) {
+          throw new Error('this filesystem does not support hard links; keep the memory folder on a local disk');
+        }
+        throw error;
+      }
+      return true;
+    } finally {
+      if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* already failing */ } }
+      fs.rmSync(temp, { force: true });
     }
-    fs.closeSync(fd);
-    return true;
   }
 
   // What is in `target` right now, or null if there is nothing. A link is a GuardError.
@@ -103,15 +118,17 @@ function createLock({ file, staleMs = 10000, markerStaleMs = 5000, waitMs = 1500
     }
   }
 
-  // Abandoned: old enough, and not held by a process that is alive on this host.
+  // Abandoned: old enough, parseable, and not held by a process that is alive on this host. Content
+  // that cannot be parsed is never abandoned: it may be someone's lock mid-publish or not ours.
   function isStale(seen, windowMs) {
     if (Date.now() - seen.stat.mtimeMs <= windowMs) return false;
     const owner = parseOwner(seen.raw);
-    return !(owner && owner.host === host && pidAlive(owner.pid));
+    if (!owner) return false;
+    return !(owner.host === host && pidAlive(owner.pid));
   }
 
-  // Unlinks `target` only while it still holds exactly `expected`. Used for release (the file is
-  // ours and cannot be reclaimed from under us, see above) and for clearing a judged-stale marker.
+  // Unlinks `target` only while it still holds exactly `expected`. Used for release and for clearing
+  // a judged-stale marker. Compare and unlink are two calls; see the note at the top.
   function removeIfHolds(target, expected) {
     let current;
     try { current = readFileNoFollow(target); } catch { return false; }
@@ -161,10 +178,14 @@ function createLock({ file, staleMs = 10000, markerStaleMs = 5000, waitMs = 1500
     const token = crypto.randomBytes(16).toString('hex');
     const mine = `${token}\n${process.pid}\n${host}\n`;
     const deadline = Date.now() + waitMs;
-    const busy = () => new LockBusy('the memory index is busy (another process is writing it); try again in a moment');
+    let foreign = false; // the lock path holds something this server did not write
+    const busy = () => new LockBusy(foreign
+      ? `the memory index lock file (${path.basename(file)}) is not one this server wrote, so it is left alone; if no other process is writing, delete it and try again`
+      : 'the memory index is busy (another process is writing it); try again in a moment');
     for (;;) {
       if (tryCreate(file, mine)) return handle(token, mine);
       const seen = inspect(file);
+      foreign = Boolean(seen) && !parseOwner(seen.raw);
       if (seen && isStale(seen, staleMs)) {
         const took = await reclaim(seen);
         if (Date.now() >= deadline) throw busy();

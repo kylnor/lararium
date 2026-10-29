@@ -1,7 +1,9 @@
 // The primitives under the memory server's hardening: opens that refuse a link instead of following
 // it, a pinned folder that notices being swapped, and the index lock's ownership rules (release
 // only what is ours, reclaim only what is abandoned and only under the reclaim marker, a live
-// holder's lock is never moved, exactly one reclaimer wins).
+// holder is not evicted on age alone, exactly one reclaimer wins, the lock is published whole).
+// The lock is best-effort serialization (the store's journal and convergent index are the safety net,
+// see serve-store.test.mjs); these tests pin the rules it does keep.
 // Needs no dependencies beyond the repo: node --test tests/serve-lock.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -145,7 +147,7 @@ test('release does not delete a lock that holds someone else\'s token, and asser
   } finally { s.done(); }
 });
 
-test('a stale lock whose holder is gone is reclaimed; a live holder on this host is never evicted on age alone', async () => {
+test('a stale lock whose holder is gone is reclaimed (dead pid, other host); a live holder on this host is never evicted on age alone', async () => {
   const s = sandbox();
   try {
     // dead pid on this host
@@ -155,10 +157,7 @@ test('a stale lock whose holder is gone is reclaimed; a live holder on this host
     assert.notEqual(fs.readFileSync(s.lockFile, 'utf8').split('\n')[0], '', 'a fresh lock is in place');
     first.release();
 
-    // a file that is not one of ours, and a lock from another host
-    fs.writeFileSync(s.lockFile, 'someone else');
-    age(s.lockFile, 60000);
-    (await createLock({ file: s.lockFile, staleMs: 1000, waitMs: 500 }).acquire()).release();
+    // a lock from another host
     fs.writeFileSync(s.lockFile, ownerText(process.pid, 'some-other-host'));
     age(s.lockFile, 60000);
     (await createLock({ file: s.lockFile, staleMs: 1000, waitMs: 500 }).acquire()).release();
@@ -375,5 +374,78 @@ test('two or more concurrent reclaimers of one abandoned lock: exactly one acqui
     assert.equal(results.filter(r => r === 'LockBusy').length, 5, `results: ${results.join(', ')}`);
     assert.equal(fs.existsSync(s.lockFile), false, 'the winner released');
     assert.deepEqual(leftovers(s.dir), []);
+  } finally { s.done(); }
+});
+
+// ---- atomic publish (round 5): the lock path is absent or complete, never empty or partial ----
+
+test('the lock is published whole: while the temp file is complete the lock path does not exist yet, and no temp survives', async () => {
+  const s = sandbox();
+  try {
+    const seenAtLink = [];
+    const lock = createLock({
+      file: s.lockFile,
+      hooks: {
+        beforeLink: (temp, target) => {
+          seenAtLink.push({ lockExists: fs.existsSync(target), temp: fs.readFileSync(temp, 'utf8'), sameDir: path.dirname(temp) === path.dirname(target) });
+        },
+      },
+    });
+    const held = await lock.acquire();
+    assert.equal(seenAtLink.length, 1);
+    assert.equal(seenAtLink[0].lockExists, false, 'nothing is visible at the lock path before the link');
+    assert.equal(seenAtLink[0].sameDir, true);
+    assert.match(seenAtLink[0].temp, new RegExp(`^${held.token}\\n${process.pid}\\n.+\\n$`), 'the temp held the whole owner record');
+    assert.equal(fs.readFileSync(s.lockFile, 'utf8'), seenAtLink[0].temp, 'the lock is that same complete record');
+    assert.deepEqual(leftovers(s.dir), []);
+    held.release();
+  } finally { s.done(); }
+});
+
+test('link-based acquire refuses while a lock exists, leaves it byte for byte, and leaves no temp', async () => {
+  const s = sandbox();
+  try {
+    const held = await createLock({ file: s.lockFile }).acquire();
+    const before = fs.readFileSync(s.lockFile, 'utf8');
+    const inode = fs.statSync(s.lockFile).ino;
+    await assert.rejects(() => createLock({ file: s.lockFile, waitMs: 150 }).acquire(), LockBusy);
+    assert.equal(fs.readFileSync(s.lockFile, 'utf8'), before);
+    assert.equal(fs.statSync(s.lockFile).ino, inode, 'the same file, never replaced');
+    assert.deepEqual(leftovers(s.dir), []);
+    held.assertOwned();
+    held.release();
+  } finally { s.done(); }
+});
+
+test('an empty, partial or foreign lock file is never reclaimed, however old: it is treated as busy', async () => {
+  const s = sandbox();
+  try {
+    for (const content of ['', 'a1b2', `${hex()}\n`, `${hex()}\n${process.pid}\n`, `${hex()}\n${deadPid()}`, 'someone else']) {
+      fs.writeFileSync(s.lockFile, content);
+      age(s.lockFile, 600000);
+      await assert.rejects(() => createLock({ file: s.lockFile, staleMs: 1000, waitMs: 150 }).acquire(), LockBusy, JSON.stringify(content));
+      assert.equal(fs.readFileSync(s.lockFile, 'utf8'), content, `untouched: ${JSON.stringify(content)}`);
+      assert.deepEqual(leftovers(s.dir), []);
+    }
+    // the refusal says what to do about a file this server did not write, and names no path
+    fs.writeFileSync(s.lockFile, '');
+    age(s.lockFile, 600000);
+    await assert.rejects(() => createLock({ file: s.lockFile, staleMs: 1000, waitMs: 100 }).acquire(),
+      err => err instanceof LockBusy && /not one this server wrote/.test(err.message) && !err.message.includes(s.top));
+  } finally { s.done(); }
+});
+
+test('an empty or partial reclaim marker is not cleared either', async () => {
+  const s = sandbox();
+  const markerFile = `${s.lockFile}.reclaim`;
+  try {
+    fs.writeFileSync(s.lockFile, ownerText(deadPid()));
+    age(s.lockFile, 60000);
+    for (const content of ['', 'half-written']) {
+      fs.writeFileSync(markerFile, content);
+      age(markerFile, 600000);
+      await assert.rejects(() => createLock({ file: s.lockFile, staleMs: 1000, markerStaleMs: 1000, waitMs: 150 }).acquire(), LockBusy);
+      assert.equal(fs.readFileSync(markerFile, 'utf8'), content);
+    }
   } finally { s.done(); }
 });

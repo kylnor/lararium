@@ -108,6 +108,11 @@ destroyed by a bad edit. Now a card is in exactly one of three states:
 - **demoted**: no pointer, listed in `DEMOTED.md`, pull-tier on purpose.
 - **orphaned**: neither. Something went wrong. Find out what before adding anything else.
 
+If the memory server (`npx lararium serve`) is in use, it also keeps `.lararium-remembered` in this
+folder: one file name per line for each card it wrote, so it can restore an index line that a
+concurrent writer dropped. It is not a card and not an index; leave it alone (it may be committed or
+ignored, as you prefer).
+
 `node hooks/memory-check.mjs .` reports all three, plus dangling pointers (a line for a file that
 does not exist) and cards with broken frontmatter. It is read-only: it never adds a pointer,
 because re-adding one would silently undo a considered demotion.

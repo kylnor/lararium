@@ -79,6 +79,9 @@ read or written, search falls back to full-text and says so.
 Limits worth knowing: it serves `memory/` only; `remember` adds cards and never edits one (a
 correction is a new card); several servers on one folder take turns on `memory/MEMORY.md` through a
 lock file (`.memory-index.lock`), and a symbolic link in place of `MEMORY.md` or `.index/` is refused.
+The cards are canonical and the index line is derived: every card the server writes is also recorded
+in `memory/.lararium-remembered` (an append-only list of file names), and the index is brought back in
+line with it.
 
 **Threat model.** The server defends against the callers of its tools: HTTP and stdio clients,
 including cloud apps reaching it over a tunnel. They get a token tier, names that can only be plain
@@ -88,11 +91,22 @@ write into the memory folder is trusted, because it can edit the cards directly.
 server avoids following symbolic links it did not create: the index, the lock file and the vector
 cache are opened without following a link and read or written through the open file, and the cache
 folder is checked again before anything is committed. It does not try to win a race against a hostile
-local writer. The index lock is only ever taken by one exclusive create, and a lock that looks
-abandoned is reclaimed under a second, short-lived marker file (`.memory-index.lock.reclaim`) after
-reading it again, so a live server's lock is never moved. A server that crashes inside that
-microsecond window can leave the marker behind; it is cleared once it is a few seconds old and its
-process is gone. One accepted gap: rotating the tokens does not cancel a request that was already
+local writer. The index lock keeps two servers from writing the index at once, but it is
+best-effort: it is published whole (written to a temp file, then hard-linked into place, so an empty
+or partial lock is never visible), a lock file it cannot parse is treated as busy and left alone, and
+a lock is only taken over when its holder is gone. Removing a file by name in Node is a compare and
+then an unlink, so a process paused at exactly the wrong moment can still overlap another. The server
+does not claim otherwise, and does not depend on it.
+
+**What is guaranteed.** A remembered card is never lost: the card file is created exclusively and
+journaled before its index line is written. If a concurrent writer drops the index line, the line is
+restored on the next `remember` by any server on that folder, or when a server starts, using the
+card's own description. Until then `node hooks/memory-check.mjs .` shows the card as orphaned. The
+repair only touches cards the server itself wrote: a card you wrote by hand is never given a pointer,
+and a card you demoted (line removed from `MEMORY.md` and listed in `DEMOTED.md`) is never given one
+back. Local disks only: appends to the journal are not atomic on network filesystems, and the lock
+needs hard links.
+One accepted gap: rotating the tokens does not cancel a request that was already
 authenticated and is still in flight; it finishes, and every request after it is refused.
 
 

@@ -57,6 +57,24 @@ test('stdio --read-only does not offer remember', async () => {
   } finally { f.done(); }
 });
 
+test('stdio: a server start restores an index line a concurrent writer dropped; --read-only start writes nothing', async () => {
+  const f = memoryFolder();
+  try {
+    const card = '---\nname: dropped-line\ndescription: The line for this card was lost.\ntype: project\n---\n\nStill here.\n';
+    fs.writeFileSync(path.join(f.memory, 'dropped-line.md'), card);
+    fs.writeFileSync(path.join(f.memory, '.lararium-remembered'), 'dropped-line.md\n');
+    const index = path.join(f.memory, 'MEMORY.md');
+    const before = fs.readFileSync(index, 'utf8');
+
+    await (await open(f.memory, ['--read-only'])).close();
+    assert.equal(fs.readFileSync(index, 'utf8'), before, 'a read-only server does not write the index');
+
+    await (await open(f.memory)).close();
+    assert.match(fs.readFileSync(index, 'utf8'), /^- dropped-line\.md - The line for this card was lost\.$/m);
+    assert.equal(fs.readFileSync(path.join(f.memory, 'dropped-line.md'), 'utf8'), card, 'the card itself is untouched');
+  } finally { f.done(); }
+});
+
 test('serve --help and bad input finish cleanly, and requiring the scaffolder loads no MCP code', () => {
   const loaded = spawnSync(process.execPath, ['-e', `require(${JSON.stringify(entry)}); console.log(Object.keys(require.cache).some(k => k.includes('modelcontextprotocol') || k.includes('serve.js')))`], { encoding: 'utf8' });
   assert.equal(loaded.stdout.trim(), 'false');

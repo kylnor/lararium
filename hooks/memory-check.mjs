@@ -58,7 +58,7 @@ for (const [relative, required, remedy] of checks) {
 // dangling pointers and broken frontmatter, and never adds a pointer (re-adding one would silently
 // undo a considered demotion).
 const CARD_TYPES = new Set(['user', 'feedback', 'project', 'reference']);
-const NOT_CARDS = new Set(['MEMORY.md', 'DEMOTED.md', 'README.md', 'pointer-block.md']);
+const NOT_CARDS = new Set(['MEMORY.md', 'DEMOTED.md', 'README.md', 'pointer-block.md', '.lararium-remembered']);
 const INDEX_MAX_LINES = 200;
 const INDEX_MAX_BYTES = 24000;
 function cardFindings(memoryDir) {

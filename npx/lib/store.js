@@ -2,13 +2,22 @@
 // The memory folder as a store. Files stay canonical: this module reads and writes exactly the v3
 // card format (memory/README.md): one fact per file with name/description/type frontmatter, plus a
 // newest-first line in the MEMORY.md index. Nothing here is a database.
+//
+// The cards are canonical; the index line is derived. Index writes from separate processes can race
+// (the lock in lock.js narrows that, it cannot close it), so every card this server writes is also
+// recorded in an append-only journal beside the cards, and the index converges on the journal: after
+// each commit, and once at server start, a journaled card that exists, has no pointer and is not in
+// DEMOTED.md gets its line back. A lost line is a short-lived orphan, never a lost card.
 const fs = require('node:fs');
 const path = require('node:path');
-const { GuardError, resolveInside, readFileNoFollow, writeFileAtomic } = require('./guard');
+const { GuardError, resolveInside, openNoFollow, readFileNoFollow, writeFileAtomic } = require('./guard');
 const { createLock, LockBusy, LockLost } = require('./lock');
 
 const CARD_TYPES = ['user', 'feedback', 'project', 'reference'];
-const NOT_CARDS = new Set(['MEMORY.md', 'DEMOTED.md', 'README.md', 'pointer-block.md']);
+const JOURNAL_NAME = '.lararium-remembered'; // one `<name>.md` line per card this server wrote
+const NOT_CARDS = new Set(['MEMORY.md', 'DEMOTED.md', 'README.md', 'pointer-block.md', JOURNAL_NAME]);
+const JOURNAL_LINE_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*\.md$/;
+const HEAL_PASSES = 5; // re-reads of the index after a commit before giving up (the next remember or start retries)
 const CARD_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MAX_CARD_NAME = 80;
 const MAX_DESCRIPTION = 300;
@@ -164,6 +173,90 @@ function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT
     return index === null ? new Set() : pointersOf(index);
   }
 
+  // ---- the journal and the convergent index -------------------------------------------------
+  const realFolder = () => fs.realpathSync(folder);
+
+  // Records a card this server just wrote. One write(2) on an O_APPEND descriptor, no lock: appends
+  // from separate processes land one after another on a local disk. Not atomic on network disks.
+  function journalAppend(file) {
+    const fd = openNoFollow(path.join(realFolder(), JOURNAL_NAME), fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT, 0o644);
+    try {
+      if (!fs.fstatSync(fd).isFile()) throw new GuardError(`${JOURNAL_NAME} is not a regular file`);
+      fs.writeSync(fd, `${file}\n`);
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+
+  // The cards the journal names, oldest first, each once. Only whole, well-formed lines count.
+  function journaled() {
+    const text = readFileNoFollow(path.join(realFolder(), JOURNAL_NAME));
+    if (text === null) return [];
+    const seen = new Set();
+    for (const line of text.split('\n').slice(0, -1)) {
+      if (line.length <= MAX_CARD_NAME + 3 && JOURNAL_LINE_RE.test(line)) seen.add(line);
+    }
+    return [...seen];
+  }
+
+  // Cards listed in DEMOTED.md: pull-tier on purpose, never given a pointer back.
+  function demotedFiles() {
+    const text = readFileNoFollow(path.join(realFolder(), 'DEMOTED.md'));
+    const out = new Set();
+    if (text === null) return out;
+    for (const line of text.replace(/<!--[\s\S]*?-->/g, '').split('\n')) {
+      const m = line.match(/^- (\S+\.md)/);
+      if (m) out.add(m[1]);
+    }
+    return out;
+  }
+
+  // Index lines for the journaled cards that exist, have no pointer in `indexText` and were not
+  // demoted. Cards written by hand are not in the journal, so they are never touched.
+  function missingLines(indexText) {
+    const pointers = pointersOf(indexText);
+    const demoted = demotedFiles();
+    const lines = [];
+    for (const file of journaled()) {
+      if (pointers.has(file) || demoted.has(file)) continue;
+      let card;
+      try { card = loadCard(file); } catch (error) {
+        if (error instanceof GuardError) continue; // gone, or a link: nothing to point at
+        throw error;
+      }
+      const hook = (card.description || card.name.replace(/-/g, ' ')).slice(0, MAX_DESCRIPTION);
+      lines.push(`- ${file} - ${hook}`);
+    }
+    return lines;
+  }
+
+  // Re-reads the index and puts back what a concurrent writer dropped, up to HEAL_PASSES times.
+  // Runs under the lock. Best effort: a lock lost mid-way or an unreadable aux file ends the repair,
+  // the next remember or server start picks it up. Returns how many lines were restored.
+  function converge(lock, indexPath) {
+    let restored = 0;
+    for (let pass = 0; pass < HEAL_PASSES; pass += 1) {
+      const current = readFileNoFollow(indexPath);
+      const text = current === null ? '# Memory\n\n' : current;
+      let missing;
+      try { missing = missingLines(text); } catch (error) {
+        if (error instanceof GuardError) return restored;
+        throw error;
+      }
+      if (!missing.length) return restored;
+      let next = text;
+      for (const line of missing) next = withEntry(next, line); // oldest first, so the newest ends on top
+      try {
+        writeFileAtomic(indexPath, next, { beforeCommit: () => lock.assertOwned() });
+      } catch (error) {
+        if (error instanceof LockLost) return restored;
+        throw error;
+      }
+      restored += missing.length;
+    }
+    return restored;
+  }
+
   function list({ type } = {}) {
     const indexed = pointered();
     const cards = [];
@@ -238,41 +331,57 @@ function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT
     return { name, description: oneLine, type, body: body.replace(/\s+$/, '') };
   }
 
-  // Writes one card and prepends its index line, both under the index lock. Never overwrites: a
-  // name that exists is refused, with one exception that makes a retry safe. If the card on disk is
-  // byte for byte what this call would write and the index has no line for it, an earlier call
-  // wrote the card and stopped before the index; this call finishes that index line.
-  // The index is read (through a no-follow descriptor) before the card is written, so a refused
-  // index leaves no orphan card.
+  // Writes one card, journals it, and prepends its index line, under the index lock. Never
+  // overwrites: a name that exists is refused, with one exception that makes a retry safe. If the
+  // card on disk is byte for byte what this call would write, has no index line and was not demoted,
+  // an earlier call wrote the card and stopped before the index; this call finishes that line.
+  // The index and the journal are read (through no-follow descriptors) before the card is written,
+  // so a refused aux file leaves no orphan card. After the index commit the index is re-read and any
+  // journaled card whose line a concurrent writer dropped is restored (see converge).
   async function rememberNow(input) {
     const card = validate(input);
     return withIndexLock(lock => {
-      const indexPath = path.join(fs.realpathSync(folder), 'MEMORY.md');
+      const indexPath = path.join(realFolder(), 'MEMORY.md');
       const target = resolveInside(folder, card.name);
+      const file = `${card.name}.md`;
       const text = `---\nname: ${card.name}\ndescription: ${yamlLine(card.description)}\ntype: ${card.type}\n---\n\n${card.body}\n`;
-      const entry = `- ${card.name}.md - ${card.description}`;
+      const entry = `- ${file} - ${card.description}`;
       const current = readFileNoFollow(indexPath);
       const indexText = current === null ? '# Memory\n\n' : current;
-      const alreadyIndexed = pointersOf(indexText).has(`${card.name}.md`);
+      const alreadyIndexed = pointersOf(indexText).has(file);
+      journaled(); // a journal that is a link or not a file refuses here, before any card exists
       try {
         fs.writeFileSync(target, text, { flag: 'wx', mode: 0o644 });
       } catch (error) {
         if (error.code !== 'EEXIST') throw error;
-        if (alreadyIndexed || readFileNoFollow(target) !== text) {
+        if (alreadyIndexed || readFileNoFollow(target) !== text || demotedFiles().has(file)) {
           throw new InputError(`a card named ${card.name} already exists; choose a different name`);
         }
       }
+      journalAppend(file);
       const updated = alreadyIndexed ? indexText : withEntry(indexText, entry);
       if (!alreadyIndexed) writeFileAtomic(indexPath, updated, { beforeCommit: () => lock.assertOwned() });
-      const lineCount = updated.split('\n').length;
-      const bytes = Buffer.byteLength(updated);
+      converge(lock, indexPath);
+      const finalText = readFileNoFollow(indexPath) || updated;
+      const lineCount = finalText.split('\n').length;
+      const bytes = Buffer.byteLength(finalText);
       return {
         name: card.name,
-        file: `${card.name}.md`,
+        file,
         indexLine: entry,
         indexOverBudget: lineCount > INDEX_MAX_LINES || bytes > INDEX_MAX_BYTES,
       };
     });
+  }
+
+  // The same repair, on its own: for server start, so a line dropped before a restart does not wait
+  // for the next remember. Looks first without the lock and takes it only when there is work.
+  // Returns how many index lines it restored.
+  async function healNow() {
+    const indexPath = path.join(realFolder(), 'MEMORY.md');
+    const current = readFileNoFollow(indexPath);
+    if (!missingLines(current === null ? '# Memory\n\n' : current).length) return 0;
+    return withIndexLock(lock => converge(lock, indexPath));
   }
 
   function remember(input) {
@@ -281,7 +390,13 @@ function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT
     return run;
   }
 
-  return { folder, list, read, searchText, remember, cardFiles, loadCard };
+  function heal() {
+    const run = writing.then(healNow);
+    writing = run.catch(() => {});
+    return run;
+  }
+
+  return { folder, list, read, searchText, remember, heal, cardFiles, loadCard };
 }
 
 module.exports = { createStore, InputError, GuardError, CARD_TYPES, tokenize };

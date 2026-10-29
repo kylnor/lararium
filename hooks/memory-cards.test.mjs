@@ -34,6 +34,20 @@ test('the shipped empty memory folder passes, and a card with a pointer or a dem
   } finally { fs.rmSync(s.root, { recursive: true, force: true }); }
 });
 
+test('the server\'s remembered-journal is not a card: it is not counted, flagged or required to be pointered', () => {
+  const s = stack();
+  try {
+    for (const f of ['MEMORY.md', 'DEMOTED.md']) fs.copyFileSync(path.join(dir, '..', 'memory', f), path.join(s.memory, f));
+    fs.writeFileSync(path.join(s.memory, 'prefers-short-replies.md'), card('prefers-short-replies'));
+    fs.appendFileSync(path.join(s.memory, 'MEMORY.md'), '- prefers-short-replies.md - short replies\n');
+    fs.writeFileSync(path.join(s.memory, '.lararium-remembered'), 'prefers-short-replies.md\nghost-entry.md\n');
+    const ok = s.run();
+    assert.equal(ok.status, 0, ok.stdout);
+    assert.match(ok.stdout, /1 card\(s\): 1 pointered/);
+    assert.doesNotMatch(ok.stdout, /lararium-remembered|ghost-entry/);
+  } finally { fs.rmSync(s.root, { recursive: true, force: true }); }
+});
+
 test('flags orphans, dangling pointers, bad frontmatter, and never edits the index', () => {
   const s = stack();
   try {

@@ -87,6 +87,16 @@ async function main(argv, env = process.env) {
     log(`semantic search on: ${JSON.stringify(semantic.identity)}; falls back to full-text if the model is unavailable`);
   }
 
+  if (!opts['read-only']) {
+    // A concurrent writer can drop an index line; the card is safe and the line is restored here.
+    try {
+      const restored = await store.heal();
+      if (restored) log(`restored ${restored} index line(s) that a concurrent writer dropped`);
+    } catch (error) {
+      log(`index repair skipped: ${error.message}`);
+    }
+  }
+
   if (opts.stdio) {
     const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
     const { createMcpServer } = require('./lib/mcp');
