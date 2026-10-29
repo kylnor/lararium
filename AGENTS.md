@@ -1,3 +1,4 @@
+<!-- lararium:contributor-file -->
 # AGENTS.md
 
 Instructions for coding agents working in this repository.
@@ -33,7 +34,7 @@ file are here for one of two jobs, and they need opposite instincts:
    CI cuts the GitHub release from this entry when `STACK_VERSION` changes on main; a bump
    without a changelog entry fails the release workflow on purpose.
 3. Write `docs/blog/dispatch-NN-<slug>.md` (tone template: `dispatch-01-the-lab.md`).
-4. The site renders from this repo (`elorati-landing/lararium/blog/build.mjs` in the private
+4. The site renders from this repo (a blog build script in the owner's private
    site repo reads `docs/blog/`); if you cannot run it, say so rather than skipping silently.
 
 ## The shipped memory hooks run here too
@@ -45,6 +46,17 @@ fails on an absolute path. The template markers in `soul/core.md` and `brain/now
 startup hook uses to tell a blank template from the user's own file; change them in both places.
 
 ## Verification
+
+- `tests/` holds the contributor tests (persona scrub, frontmatter, scaffold). The scaffolder drops
+  `tests/`, so a stranger's stack never carries them. Run `node --test hooks/*.test.mjs tests/*.test.mjs`;
+  the scaffold test packs the git index, so stage new files first. The suite needs a git checkout
+  (it runs `git ls-files` and `git archive`), not a source export. To audit one specific commit,
+  set `LARARIUM_ARCHIVE_REF=HEAD` (or a SHA) so the scaffold test packs that ref instead of the index.
+- Anything a stranger should not receive is listed in `CONTRIBUTOR_ONLY` in `npx/index.js`. The
+  template and zip routes copy everything, so the README, starter and INSTALL carry a one-line
+  cleanup of that same list, and `tests/scaffold.test.mjs` plays that route end to end. Every
+  contributor workflow job carries `if: github.repository == 'kylnor/lararium'`
+  (`tests/workflows.test.mjs`); a new job without it fails the suite.
 
 - `node --check` any `.mjs` you touch (`skills/defs/*/`, `npx/`).
 - Runnable pieces keep zero dependencies unless their SKILL.md says otherwise; do not add

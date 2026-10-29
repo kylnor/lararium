@@ -15,6 +15,62 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 
 ---
 
+## v3.0 (2026-10-28): structural
+
+Memory that follows you across agents. The one problem people keep naming is that memory lives in
+one tool and the next tool starts blank. v3 makes the answer the headline: files are the memory,
+every agent CLI is pointed at the same files, and the memory fills from hooks and streams instead
+of depending on the agent to remember to save.
+
+**Start here in five minutes.** A new `starter/` tier: a root map file (`CLAUDE.md`, built from
+`starter/CLAUDE.template.md`), three folders (`notes/`, `people/`, `projects/`), the memory index,
+one topic per file, lowercase-hyphen names. The README and INSTALL open with it. Everything else
+is labelled "when you outgrow the starter" and is optional.
+
+**Cross-agent memory.** `memory/pointer-block.md` is a short block that names the map, says how to
+search, and tells the agent to write a card when corrected. `hooks/memory-pointers.mjs` installs it
+into `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` and `~/.gemini/GEMINI.md` (or, with `--project`,
+into `CLAUDE.md`, `AGENTS.md` and `GEMINI.md` inside the stack only). It appends outside any block another tool
+manages, is idempotent, refuses rather than guessing on unbalanced markers, writes through
+symlinks, and has a read-only `--check`. A search miss is stated as "not found in X", never "it
+does not exist".
+
+**Memory cards.** `memory/` holds one fact per file with `name`, `description` and `type`
+(`user`, `feedback`, `project`, `reference`) frontmatter, a one-line-per-card `MEMORY.md` index
+(newest first, because loaders cut long indexes), and a `DEMOTED.md` convention for cards kept on
+purpose without a pointer. `hooks/reference/session-start.js` now injects the index lines into
+the session, and says nothing when there are none. `hooks/memory-check.mjs` reports dangling
+pointers, orphaned cards and bad frontmatter, and never edits the index.
+
+**Operating shape, all optional.** `governance/` (the eviction rule, a constitution template with
+its reasoning, a gates registry that demands proof, a rule ledger, a graveyard), `forge/` (the brief
+doctrine and compare-and-swap claiming, lanes empty), `workspaces/` (a map-only root, workspaces
+earned not scaffolded, a docket), and `docs/ops-guards.md` (the disk-full watchdog and the unpushed
+work report, doctrine only). All of it ships empty or as marked templates.
+
+**Plain agent defaults.** The default install no longer ships a themed roster. `agents/defs/` now
+holds three plain definitions (`reviewer`, `researcher`, `verifier`), each with where to look,
+what done looks like and a self-check. The reviewer and verifier carry only Read, Grep and Glob,
+so read-only is enforced by the tool list, not by a sentence; running tests is the builder's job.
+The reviewer holds every fix it recommends to the intended case, so review rounds do not grow the
+change.
+The dispatch doctrine is inline by default, procedures live in skills, and a subagent has to earn
+its place. The themed roster, its workflow chains and the re-theming interview moved to
+`agents/examples/`, opt-in. The `/muninn` skill is now `/curate`. `npx lararium` leaves out the
+contributor files, the blog, the themed roster (unless `--with-examples`) and the tests, so a
+scaffolded stack carries none of them. `hooks/memory-pointers.mjs --project` refuses a stack that
+still holds the contributor `AGENTS.md`. New tests under `tests/` fail CI if a persona name or
+private data reaches the scaffolded stack, if an agent def has invalid frontmatter, or if the
+scaffold path changes.
+
+Honest limits: the shipped capture hooks are wired for Claude Code only. Codex and Gemini CLI share
+the files and the pointer block; whether they save anything on their own is for you to verify.
+
+Upgrading: copy `memory/`, `starter/`, `governance/`, `forge/`, `workspaces/`, `docs/ops-guards.md`,
+`hooks/memory-pointers.mjs` and its test, plus the changed `hooks/memory-check.mjs` and
+`hooks/reference/session-start.js`, into your stack, then follow the v2.18 to v3.0 steps in
+`UPGRADING.md`. Nothing here overwrites a file you own.
+
 ## v2.18 (2026-09-22): structural
 
 Memory is on from the first conversation. A stranger-path test found the promise behind an

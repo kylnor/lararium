@@ -11,16 +11,22 @@ const os = require('os');
 const https = require('https');
 const { execFileSync } = require('child_process');
 
-const OWNER = 'kylnor';
-const REPO = 'lararium';
+const SLUG = 'kylnor/lararium'; // the GitHub repo this template is published from
 const USER_AGENT = 'lararium-scaffolder';
 const TAG_RE = /^[A-Za-z0-9._-]{1,32}$/;
 const REQUEST_TIMEOUT_MS = 4000;
 
+// Contributor-only material. It lives in the template repo for the people who edit the template and
+// never belongs in a stranger's personal stack: the contributor guide, the depersonalization
+// checklist, release history, the blog, the scaffolder itself and this repo's CI.
+const CONTRIBUTOR_ONLY = ['npx', '.github', 'tests', 'AGENTS.md', 'SCRUB.md', 'CHANGELOG.md', path.join('docs', 'blog')];
+// The themed roster is flavor. It is only scaffolded on request (--with-examples).
+const EXAMPLES_DIR = path.join('agents', 'examples');
+
 function manualRoute() {
   return [
     'Manual route:',
-    `  git clone https://github.com/${OWNER}/${REPO}.git`,
+    `  git clone https://github.com/${SLUG}.git`,
     '  (or click "Use this template" on GitHub, or grab the zip from Releases)',
   ].join('\n');
 }
@@ -75,7 +81,7 @@ function httpGet(url, { asJson = false, destFile = null } = {}, redirectsLeft = 
 }
 
 async function resolveRef() {
-  const apiUrl = `https://api.github.com/repos/${OWNER}/${REPO}/releases/latest`;
+  const apiUrl = `https://api.github.com/repos/${SLUG}/releases/latest`;
   try {
     const res = await httpGet(apiUrl, { asJson: true });
     const parsed = JSON.parse(res.body);
@@ -91,7 +97,7 @@ async function resolveRef() {
 }
 
 async function downloadTarball(ref, kind) {
-  const url = `https://codeload.github.com/${OWNER}/${REPO}/tar.gz/refs/${kind}/${ref}`;
+  const url = `https://codeload.github.com/${SLUG}/tar.gz/refs/${kind}/${ref}`;
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lararium-'));
   const tarPath = path.join(tmpDir, 'stack.tar.gz');
   await httpGet(url, { destFile: tarPath });
@@ -102,8 +108,40 @@ async function downloadTarball(ref, kind) {
   return tarPath;
 }
 
+// Extract a template tarball into target and leave a personal stack: contributor-only files are
+// removed (and the themed roster too, unless asked for) BEFORE the first commit, so none of it is in
+// the stack's history. Exported so the scaffold test drives this exact path.
+function unpack(tarPath, target, { withExamples = false } = {}) {
+  try {
+    execFileSync('tar', ['-xzf', tarPath, '-C', target, '--strip-components=1']);
+  } catch (err) {
+    throw new Error(`tar extraction failed (${err.message}).`);
+  }
+
+  const drop = withExamples ? CONTRIBUTOR_ONLY : [...CONTRIBUTOR_ONLY, EXAMPLES_DIR];
+  for (const rel of drop) {
+    fs.rmSync(path.join(target, rel), { recursive: true, force: true });
+  }
+
+  console.log('lararium: initializing git...');
+  try {
+    execFileSync('git', ['init'], { cwd: target, stdio: 'ignore' });
+    execFileSync('git', ['add', '-A'], { cwd: target, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'Initial commit from lararium template'], {
+      cwd: target,
+      stdio: 'ignore',
+    });
+  } catch (err) {
+    console.log(
+      'lararium: git init/commit skipped (configure git user.name and user.email, then commit by hand).'
+    );
+  }
+}
+
 async function run() {
-  const folderArg = process.argv[2] || 'lararium';
+  const args = process.argv.slice(2);
+  const withExamples = args.includes('--with-examples');
+  const folderArg = args.find((a) => !a.startsWith('--')) || 'lararium';
   const target = path.resolve(process.cwd(), folderArg);
 
   if (fs.existsSync(target)) {
@@ -135,33 +173,10 @@ async function run() {
 
   console.log(`lararium: unpacking into ${target}...`);
   try {
-    execFileSync('tar', ['-xzf', tarPath, '-C', target, '--strip-components=1']);
+    unpack(tarPath, target, { withExamples });
   } catch (err) {
-    fail(`tar extraction failed (${err.message}). Your system may be missing tar.`);
+    fail(`${err.message} Your system may be missing tar.`);
     return;
-  }
-
-  // The scaffolder's own package dir doesn't belong in the recipient's copy,
-  // and neither do this repo's own CI files, if any ship in the release.
-  for (const dir of ['npx', '.github']) {
-    const p = path.join(target, dir);
-    if (fs.existsSync(p)) {
-      fs.rmSync(p, { recursive: true, force: true });
-    }
-  }
-
-  console.log('lararium: initializing git...');
-  try {
-    execFileSync('git', ['init'], { cwd: target, stdio: 'ignore' });
-    execFileSync('git', ['add', '-A'], { cwd: target, stdio: 'ignore' });
-    execFileSync('git', ['commit', '-m', 'Initial commit from lararium template'], {
-      cwd: target,
-      stdio: 'ignore',
-    });
-  } catch (err) {
-    console.log(
-      'lararium: git init/commit skipped (configure git user.name and user.email, then commit by hand).'
-    );
   }
 
   console.log('');
@@ -170,10 +185,15 @@ async function run() {
   console.log(`  cd ${folderArg}`);
   console.log('  claude');
   console.log('');
-  console.log('Then say: "Run the install interview in INSTALL.md".');
+  console.log('Then say: "Run the starter in starter/README.md".');
+  console.log('(When you outgrow it, the full setup is INSTALL.md.)');
   console.log('');
 }
 
-run().catch((err) => {
-  fail(err && err.message ? err.message : String(err));
-});
+if (require.main === module) {
+  run().catch((err) => {
+    fail(err && err.message ? err.message : String(err));
+  });
+}
+
+module.exports = { unpack, CONTRIBUTOR_ONLY, EXAMPLES_DIR };

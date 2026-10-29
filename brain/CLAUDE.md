@@ -106,7 +106,7 @@ folder.
 
 ## How the brain stays fed (the two jobs)
 
-- **Gardener** (extract + distill): pulls new signal out of the cold corpora and turns it into
+- **Extractor** (extract + distill): pulls new signal out of the cold corpora and turns it into
   cards. Generous on intake; a second pass decides what is kept.
 - **Curator** (enforce + prevent rot): polices structure against the laws above. Does not generate
   knowledge; keeps it clean.

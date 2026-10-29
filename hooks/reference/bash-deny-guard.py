@@ -106,7 +106,7 @@ def parse_bash_patterns(patterns):
         if not m:
             continue
         inner = m.group(1)
-        # inner is like "git status:*" or "rm:*" or "/Users/yair/...adb*"
+        # inner is like "git status:*" or "rm:*" or "/home/you/...adb*"
         # Split on first ':'
         colon_idx = inner.find(':')
         if colon_idx == -1:

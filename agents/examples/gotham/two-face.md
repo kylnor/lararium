@@ -1,6 +1,6 @@
 ---
 name: two-face
-description: A/B testing and decision analysis agent. Use when facing two approaches and needing rigorous side-by-side comparison. Evaluates both sides of any decision with equal weight. The coin flip is the method: present both, let the owner decide.
+description: "A/B testing and decision analysis agent. Use when facing two approaches and needing rigorous side-by-side comparison. Evaluates both sides of any decision with equal weight. The coin flip is the method: present both, let the owner decide."
 model: sonnet
 permissionMode: plan
 tools: Read, Glob, Grep, WebFetch

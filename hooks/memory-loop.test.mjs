@@ -93,6 +93,36 @@ test('shipped hooks find their own stack without LARARIUM_ROOT and follow a move
   } finally { fs.rmSync(base, { recursive: true, force: true }); }
 });
 
+test('a finished starter gets no install-interview notices for the soul and brain it skips on purpose', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'memory-starter-'));
+  const start = () => spawnSync(process.execPath, [path.join(dir, 'reference/session-start.js')],
+    { env: { ...process.env, LARARIUM_ROOT: root }, input: '{"source":"startup"}', encoding: 'utf8' }).stdout;
+  try {
+    fs.mkdirSync(path.join(root, 'brain'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'soul'), { recursive: true });
+    fs.copyFileSync(path.join(dir, '../brain/now.md'), path.join(root, 'brain/now.md'));
+    fs.copyFileSync(path.join(dir, '../soul/core.md'), path.join(root, 'soul/core.md'));
+    const template = fs.readFileSync(path.join(dir, '../starter/CLAUDE.template.md'), 'utf8');
+
+    // Starter copied but not filled in yet: not complete, the notices stay.
+    fs.writeFileSync(path.join(root, 'CLAUDE.md'), template);
+    assert.match(start(), /soul\/core\.md is still the blank template/);
+
+    // Starter filled in: the tiers it skips are the intended state.
+    const filled = template.replace("<Your name>'s folder", "Sam's folder")
+      .replace(/<One or two sentences[^>]*>/, 'Running my household.')
+      .replace(/<One sentence an assistant[^>]*>/, 'Keep replies short.');
+    fs.writeFileSync(path.join(root, 'CLAUDE.md'), filled);
+    const done = start();
+    assert.doesNotMatch(done, /install interview/);
+    assert.doesNotMatch(done, /still the blank template/);
+
+    // A real soul and now are still injected after the starter.
+    fs.writeFileSync(path.join(root, 'brain/now.md'), '# Now\n\n- Paint the fence\n');
+    assert.match(start(), /\[Now: current focus\]\n# Now\n\n- Paint the fence/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('shipped project settings register memory with no absolute paths', () => {
   const settings = JSON.parse(fs.readFileSync(path.join(dir, '../.claude/settings.json'), 'utf8'));
   const commands = Object.values(settings.hooks).flat().flatMap(g => g.hooks).map(h => h.command);

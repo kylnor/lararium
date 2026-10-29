@@ -30,13 +30,13 @@ and the next:
   command.
 - **`/evolve`**: the nightly self-improvement pass. Rates the day's strategies, refreshes the
   playbook view, concludes finished experiments, and proposes rule promotions from recurring misses.
-- **`/muninn`**: the memory-curation gate. Triages staged knowledge candidates into the live brain,
+- **`/curate`**: the memory-curation gate. Triages staged knowledge candidates into the live brain,
   promote / reject / queue, then tidies the knowledge layer (consolidate, lifecycle sweep).
 - **`/upgrade`**: pull the latest template and apply what is new. Fetches the upstream, then defers
   to `../UPGRADING.md`: applies additive-doc deltas directly and interviews you only for structural
   ones. This is the skill the session-start update-check hook points at when a newer version is out.
 
-`/end` and `/handoff` write; `/sessions` reads; `/evolve` and `/muninn` are the two maintenance
+`/end` and `/handoff` write; `/sessions` reads; `/evolve` and `/curate` are the two maintenance
 loops that keep the strategy and knowledge layers from rotting; `/upgrade` keeps the stack itself
 current with the template it came from.
 
@@ -51,7 +51,7 @@ A skill is a prompt, and prompts absorb specifics. The moment a skill touches yo
 starts accreting client names, absolute paths, hostnames, dollar amounts, and the name of your
 assistant. That is fine while it stays private. It is a leak the instant you hand the skill to
 someone else. Before sharing any skill, run the same three-pass scrub the rest of this template went
-through (see `../SCRUB.md`): secrets, data, identity. The cheapest leak to catch is the one you grep
+through (see [`SCRUB.md`](https://github.com/kylnor/lararium/blob/main/SCRUB.md) upstream): secrets, data, identity. The cheapest leak to catch is the one you grep
 for.
 
 ## Do not rewrite what already exists

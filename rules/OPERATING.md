@@ -172,7 +172,7 @@ harness reads. One file per repo: `feature_list.json`.
 The feature list gives code a machine-owned verdict. Everything else your agents produce
 (research, knowledge cards, audit findings, "I finished the migration") has no exit code, and a
 model asked whether its own work is done says yes. The Judge is the verdict layer for that output:
-an adversarial verifier (`agents/defs/harvey.md`) dispatched on a deliverable *before* it is
+an adversarial verifier (`agents/defs/verifier.md`) dispatched on a deliverable *before* it is
 trusted, merged, or acted on.
 
 - **Receipts or NOT VERIFIED.** Every claim is re-proven against ground truth (the live file, the
@@ -182,6 +182,9 @@ trusted, merged, or acted on.
   homework, and the grader does not rewrite the homework.
 - **No contract, nothing to judge against.** The dispatch names the contract (the brief, the task,
   the ship-definition) and the ground-truth sources. A missing contract is itself the finding.
+- **The gate is optional.** Nothing here makes per-deliverable dispatch the default. It is one
+  instance of the separate-permissions reason to dispatch (the Judge holds no write tools), so adopt
+  it only for output you would otherwise trust unchecked.
 - **Two triggers, one capability.** The gate (dispatch per deliverable, synchronous) and the
   patrol (`agents/patrol/`, a daily sweep re-proving work already claimed done, max 3
   receipt-backed findings to a persistent queue). Build the gate first; the patrol is nearly free
@@ -189,9 +192,12 @@ trusted, merged, or acted on.
 
 ## Dispatch
 
-The full doctrine lives in `../agents/README.md`. The one-line version: default to dispatching
-subagents; work inline only when the task needs conversational back-and-forth or context that only
-exists in the current session. Parallel same-repo work gets worktrees. Agent findings are signal,
+The full doctrine lives in `../agents/README.md`. The one-line version: work inline by default,
+and let skills carry the procedures (the assistant sees a skill's short description first and
+loads the rest only when it needs it). Dispatch a subagent only for one of four reasons: context
+bloat that measurably hurts the main loop, parallel work that wants fresh context, one agent
+picking the wrong tool or holding conflicting instructions, or a job that needs separate
+permissions. Do not copy an org chart. Parallel same-repo work gets worktrees. Agent findings are signal,
 not truth: verify before paying for the fix. And the check is the contract: a dispatched task
 whose "done" can be an executable command names that command in the brief, exit 0 is the only
 pass, checks print why they fail, and a task that fails two informed attempts means the spec is

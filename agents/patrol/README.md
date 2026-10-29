@@ -1,8 +1,8 @@
-# The patrol (the Judge's second trigger)
+# The patrol (the verifier's second trigger)
 
-The Judge (`agents/defs/harvey.md`) has two triggers, one capability:
+The verifier (`agents/defs/verifier.md`) has two triggers, one capability:
 
-- **Gate:** synchronous. A sub-agent returns a deliverable; dispatch Harvey on it *before* you
+- **Gate:** synchronous. A sub-agent returns a deliverable; dispatch the verifier on it *before* you
   trust, merge, or act on it. This is just a dispatch; no machinery needed.
 - **Patrol:** ambient. A daily scheduled sweep over everything *already claimed done* (your
   heartbeat file's ship-claims, recently completed tasks), re-proving claims against ground truth

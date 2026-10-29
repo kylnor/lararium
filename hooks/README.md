@@ -44,6 +44,10 @@ briefing block that gets injected into context. The assistant opens the session 
 it is, what it did last time, what you are focused on, and where the last session told it to pick up.
 This is the single highest-leverage hook in the stack: without it, every session starts cold.
 
+The briefing also injects the pointer lines of `memory/MEMORY.md` (up to 200 lines or about 24KB,
+the cut a loader applies), so lessons recorded as cards are in context from the first turn. It
+injects nothing when the index has no pointers.
+
 ### b. Heartbeat (`session-end-heartbeat.js`, SessionEnd)
 Reads the session transcript, distills what happened into a short summary, and writes it to the
 heartbeat file. That file is what the next session's briefing reads back. This is the write half of
@@ -161,7 +165,7 @@ Every hook takes its payload on stdin, so you can exercise it without Claude Cod
 ```
 echo '{"source":"startup","session_id":"test","cwd":"/tmp"}' | node reference/session-start.js
 echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | node reference/pretooluse-guard.js
-echo '{"tool_name":"Agent","tool_input":{"subagent_type":"architect","prompt":"x"}}' | node reference/agent-model-router.js
+echo '{"tool_name":"Agent","tool_input":{"subagent_type":"reviewer","prompt":"x"}}' | node reference/agent-model-router.js
 echo '{"source":"startup"}' | STACK_UPDATE_CHECK_FIXTURE=v9.9 node reference/update-check.js
 echo '{"tool_name":"Bash","tool_input":{"command":"git status && rm -rf ~/.ssh"}}' | python3 reference/bash-deny-guard.py
 echo '{"tool_name":"Write","tool_input":{"file_path":"/tmp/x.py","content":"key=\"AKIAIOSFODNN7EXAMPLE\""}}' | node reference/secret-write-guard.js
@@ -186,9 +190,10 @@ conversations opened elsewhere.
 
 Copy the reference hooks to wherever you keep hook scripts (the example uses `~/.claude/hooks/stack/`)
 and add the `hooks` block from `settings.example.json` to your Claude Code `settings.json`. The block
-registers all six reference hooks against their events: two on `SessionStart` (the briefing and the
-update checker, both of whose stdout is injected), and two PreToolUse entries, one matched to `Bash`
-for the safety rail, one matched to `Agent` for the dispatch router. The example file also carries a
+registers all eight reference hooks against their events: two on `SessionStart` (the briefing and the
+update checker, both of whose stdout is injected), one on `SessionEnd` (the heartbeat), one on `Stop`
+(the voice log), and four PreToolUse hooks in three entries (two matched to `Bash` for the safety
+rails, one to `Agent` for the dispatch router, one to `Write|Edit` for the secret guard). The example file also carries a
 top-level `stackUpdateCheck` block, the config the update checker reads (toggle + upstream); copy it
 alongside the `hooks` block.
 
@@ -209,8 +214,12 @@ alongside the `hooks` block.
       { "hooks": [ { "type": "command", "command": "node ~/.claude/hooks/stack/voice-log.js" } ] }
     ],
     "PreToolUse": [
-      { "matcher": "Bash",  "hooks": [ { "type": "command", "command": "node ~/.claude/hooks/stack/pretooluse-guard.js" } ] },
-      { "matcher": "Agent", "hooks": [ { "type": "command", "command": "node ~/.claude/hooks/stack/agent-model-router.js" } ] }
+      { "matcher": "Bash", "hooks": [
+        { "type": "command", "command": "node ~/.claude/hooks/stack/pretooluse-guard.js" },
+        { "type": "command", "command": "python3 ~/.claude/hooks/stack/bash-deny-guard.py", "timeout": 10 }
+      ] },
+      { "matcher": "Agent", "hooks": [ { "type": "command", "command": "node ~/.claude/hooks/stack/agent-model-router.js" } ] },
+      { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "node ~/.claude/hooks/stack/secret-write-guard.js", "timeout": 10 } ] }
     ]
   }
 }
@@ -228,13 +237,14 @@ reads `soul/core.md`, `brain/now.md`, and `handoff.md` there. A `core` or `now.m
 the shipped template is announced in one line instead of injected. Other reference hooks keep
 their own path settings. Do not infer that all hooks are configured just because memory is.
 
-One path is deliberately NOT in `~/.assistant/`: your installed `STACK_VERSION` stamp. The install and
-upgrade interviews write it at your stack's repo **root** (the folder you cloned the template into),
-and that is the single source of truth, never copied into `~/.assistant/`. The update checker reads it
-from the absolute path named by `stackUpdateCheck.localVersionFile` in `~/.claude/settings.json`, which
-the install interview fills in with your real repo-root path. The checker reads the rest of its config
-(toggle, upstream) from that same `stackUpdateCheck` block; when a key or the file is absent it falls
-back to the constants at the top of the hook, and an absent stamp reads as v1.
+One path is deliberately NOT in `~/.assistant/`: your installed `STACK_VERSION` stamp. It lives at
+your stack's repo **root** (the folder you scaffolded or cloned the template into), and that is the
+single source of truth, never copied into `~/.assistant/`. The update checker finds it on its own
+when it runs from inside the stack, so there is nothing to configure. Only if you copied the hooks
+elsewhere, add `stackUpdateCheck.localVersionFile` (an absolute path to that stamp) to
+`~/.claude/settings.json`. The checker reads the rest of its config (toggle, upstream) from that
+same `stackUpdateCheck` block; when a key or the file is absent it falls back to the constants at
+the top of the hook, and an absent stamp reads as v1.
 
 ## What these deliberately do not do
 
@@ -244,12 +254,25 @@ pattern is identical whether the read hits a JSONL on disk or a vector index ove
 the loop working against files first, then swap the stub for your index when the file layer outgrows
 it. Start simple; the shape does not change.
 
+## Pointing other agents at the same memory (`memory-pointers.mjs`)
+
+Not a lifecycle hook. A one-shot installer for the shared pointer block (`memory/pointer-block.md`)
+that tells Claude Code, Codex and Gemini CLI where the map and the memory cards live. Usage:
+`node hooks/memory-pointers.mjs <stack-folder> [--project] [--check] [--only claude,codex,gemini]`.
+It is idempotent, appends after any block another tool manages, writes through symlinks, refuses
+on unbalanced markers, and `--check` changes nothing. These hooks capture for Claude Code only;
+the other CLIs share the files, not the capture.
+
 ## Diagnose memory without changing it
 
 Run `node hooks/memory-check.mjs .` from the installed template root. This read-only diagnostic
 reports missing, empty, or unreadable standard brain files without printing their contents.
 It does not inspect hook registration or claim that capture works. Follow
 [the memory acceptance check](../docs/memory-check.md) for fresh-session recall and corrections.
+
+`memory-check.mjs` also reads `memory/`: it flags a card with no pointer (orphaned), a pointer to a
+missing card (dangling), bad frontmatter, and an index past the 200-line cut a loader applies. It
+never edits the index.
 
 Developer checks: `node --test hooks/memory-check.test.mjs`.
 
@@ -265,5 +288,6 @@ prevents partially written files from being loaded. If several sessions share a 
 writer wins; use separate roots for separate projects. A process killed before SessionEnd runs
 cannot save its latest turn. This release does not add a per-turn checkpoint.
 
-Run `node --test hooks/memory-check.test.mjs hooks/memory-loop.test.mjs` to test the file contracts.
+Run `node --test hooks/memory-check.test.mjs hooks/memory-loop.test.mjs hooks/memory-pointers.test.mjs hooks/memory-cards.test.mjs`
+to test the file contracts.
 The live assistant test in `docs/memory-check.md` is still needed to verify hook registration.

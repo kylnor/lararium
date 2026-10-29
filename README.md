@@ -6,7 +6,7 @@ in it.*
 
 A clone-and-run scaffold for a personal agentic system. Six layers: a file-based knowledge
 **brain**, a layered **soul** (the assistant you actually talk to), a **clocktower** index over
-your data, a roster of **agents** the assistant dispatches, the **hooks** that make it feel alive
+your data, a few plain **agents** for the jobs that earn one, the **hooks** that make it feel alive
 session to session, and the **skills** it runs as slash commands.
 
 It ships empty on purpose. The architecture was never the moat: your life is. So you get the
@@ -14,7 +14,33 @@ shrine, and you bring your own gods.
 
 > **This is a template**, extracted from a working private system and depersonalized. It ships
 > structure, conventions, and hard-won patterns. It ships **none** of the original owner's data,
-> persona, or secrets. See `SCRUB.md` for exactly what was removed and how to verify nothing leaked.
+> persona, or secrets. See [`SCRUB.md`](https://github.com/kylnor/lararium/blob/main/SCRUB.md) in the upstream repo for exactly what was removed and how to verify nothing leaked.
+
+## Start here in five minutes
+
+You do not need the six layers below to get value. The starter is a map file, three folders
+(`notes/`, `people/`, `projects/`) and a memory index: one topic per file, lowercase-hyphen names,
+and an assistant that searches before it answers. Get the folder first (see "Getting it onto your
+machine" below: `npx lararium my-stack` is the one-line route), open it in Claude Code and say:
+
+```
+Run the starter in starter/README.md
+```
+
+It interviews you, writes your first three notes and proves the memory works. Everything after
+that is optional and labelled "when you outgrow the starter".
+
+## Memory across agents
+
+Files are the memory. Every agent CLI on your machine (Claude Code, Codex, Gemini CLI) is pointed
+at the same files, so what one learns the next already knows, and switching tools loses nothing.
+A short pointer block, installed into each CLI's instruction file by `hooks/memory-pointers.mjs`,
+says where the map is and how to search. Lessons live as one-fact cards in `memory/` with a
+one-line index. Two things fill it: the shipped hooks carry the last conversation forward without
+anyone asking (Claude Code today), and the pointer block tells every agent to write a card when
+it is corrected. Streams from your mail and calls can feed it too, once you stand up the index.
+A search miss is reported as "not found in X", never "it does not exist". Doctrine in
+`memory/README.md`, install steps in `INSTALL.md`.
 
 ## Why this instead of a prompt pack
 
@@ -27,7 +53,11 @@ It also installs itself. You open it in an AI coding assistant and say *"run the
 An agentic stack is installed by an agent. It interviews you, one question at a time, and writes
 your files while you answer.
 
-## The six layers
+## When you outgrow the starter: the six layers
+
+Optional from here on. Add a layer when its pain shows up. Two more optional pieces sit beside them:
+`governance/` (a rule that retires old rules, plus a small constitution) and `forge/` (briefs for
+agents that build), with `workspaces/` for projects that have earned their own folder.
 
 1. **`brain/`**: a human-navigable markdown knowledge store, scoped by life sphere, governed by a
    small set of laws (`brain/CLAUDE.md`). Files are canonical; the database is an index on top. The
@@ -44,15 +74,16 @@ your files while you answer.
    in `clocktower/connector-doctrine.md`. Coordination is a separate surface: `clocktower/queue-doctrine.md`
    runs multi-agent work natively on the tasks table you already have. Ships with
    an empty database and no credentials.
-4. **`agents/`**: a roster of specialized subagents (build, review, research, infra, adversarial,
-   memory) plus the dispatch doctrine for which to use when. The theme is yours to replace: the
-   re-theming interview (`agents/RETHEME.md`) rebuilds the whole roster in your own mythology,
-   doctrine intact. Bring your own gods, literally.
+4. **`agents/`**: the dispatch doctrine and three plain defaults (a reviewer, a researcher, a
+   verifier). Start with one assistant in one loop and put procedures in skills; add a subagent
+   only when it earns its place. A full themed roster is an opt-in example that is not in a default stack:
+   make the stack with `npx lararium my-stack --with-examples`, or browse it upstream. It comes
+   with an interview for rebuilding it in a theme of your own.
 5. **`hooks/`**: the loops that make it feel alive. Session-start briefing, the heartbeat that
    remembers yesterday, voice integrity, compaction continuity, safety rails, dispatch routing.
    Doctrine plus minimal reference implementations that run on plain files, no database required.
 6. **`skills/`**: slash-command skills for the session lifecycle (`/end`, `/handoff`, `/sessions`),
-   self-improvement (`/evolve`), and memory curation (`/muninn`), plus the doctrine for writing
+   self-improvement (`/evolve`), and memory curation (`/curate`), plus the doctrine for writing
    your own.
 
 Beside the six layers ships one optional tool: **`lab/`**, a disposable sandbox for untrusted
@@ -69,7 +100,7 @@ line into your session: type **`/upgrade`**. That skill fetches the latest templ
 upgrade interview in `UPGRADING.md` for you, applying the doc-only deltas directly and asking you only
 about the structural ones. You answer questions; your assistant does the typing. The manual fallback,
 for a stack that has not wired the hook yet: **Watch releases** on the upstream repo and read
-`CHANGELOG.md`, where each release maps to an entry that classifies it as a doc copy-in or a full
+[`CHANGELOG.md`](https://github.com/kylnor/lararium/blob/main/CHANGELOG.md), where each release maps to an entry that classifies it as a doc copy-in or a full
 interview and names exactly which files moved since your own `STACK_VERSION`.
 
 ## Getting it onto your machine
@@ -80,18 +111,28 @@ install interview *writes your files for you*, so it needs filesystem access.
 or API key). A browser chat can talk you through the interview but cannot write into your folder, so
 you would be copy-pasting; use the real tool.
 
-Get the template locally. Three ways in, pick your trust level:
+Get the template locally. For a personal stack, `npx` is the route:
 
 ```
-# Fast path: the scaffolder downloads the latest release and unpacks it
 npx lararium my-stack  &&  cd my-stack
+```
 
+The scaffolder leaves out the files that only matter to people working on Lararium itself
+(its tests, CI workflows, contributor guide and blog). Two other routes exist, and both are
+copies that include those contributor files:
+
+```
 # GitHub template repo: click "Use this template" to make your own copy, then
 git clone https://github.com/<you>/<your-copy>.git  &&  cd <your-copy>
 
 # Sent a zip: unzip it, then
 cd lararium
 ```
+
+One cleanup line for those two. If `AGENTS.md` starts with `<!-- lararium:contributor-file -->`,
+remove `AGENTS.md`, `SCRUB.md`, `CHANGELOG.md`, `npx/`, `tests/`, `docs/blog/`, `.github/` and
+`agents/examples/` (keep that last one only if you want the themed agent roster). Your assistant
+does this for you as step 0 of the starter and of the install interview.
 
 Wary of `npx`-ing a stranger's installer? Good instinct, it is the whole reason this stack
 exists. The scaffolder (`npx/index.js`) is about 200 lines of Node standard library with zero
@@ -109,13 +150,20 @@ lab/lab https://github.com/kylnor/lararium
 That vets the rest of the stack inside the box it ships. The tool's first job can be auditing
 its own supplier.
 
-Then open the folder in Claude Code (`claude` from inside it) and say:
+Then open the folder in Claude Code (`claude` from inside it) and start with the five-minute
+starter in `starter/README.md`:
+
+```
+Run the starter in starter/README.md
+```
+
+When you outgrow it, the full setup is the install interview:
 
 ```
 Run the install interview in INSTALL.md
 ```
 
-The interview is the setup step; downloading alone does not configure your assistant. Before adding optional layers, open a fresh conversation in the same folder and ask: "Read brain/CLAUDE.md and brain/now.md, then summarize my current priorities and name the files you used." This checks that your saved context can be read. Memory is on from the first conversation: the folder ships two hooks that save the end of each conversation and hand it, with `brain/now.md`, to the next one opened in the same folder. Say yes when Claude Code asks whether you trust the folder, or they do not run. It remembers the last conversation, not every conversation; anything worth keeping longer goes on a card.
+Either one is the setup step; downloading alone does not configure your assistant. Before adding optional layers, open a fresh conversation in the same folder and ask: "Read brain/CLAUDE.md and brain/now.md, then summarize my current priorities and name the files you used." This checks that your saved context can be read. Memory is on from the first conversation: the folder ships two hooks that save the end of each conversation and hand it, with `brain/now.md`, to the next one opened in the same folder. Say yes when Claude Code asks whether you trust the folder, or they do not run. It remembers the last conversation, not every conversation; anything worth keeping longer goes on a card.
 
 The brain and soul layers use plain files. The index (clocktower) is
 optional and wants your own database and embedding key, the day you decide you want search at scale.
@@ -144,7 +192,7 @@ last: leverage on top of a system that already works.
 5. Wire  hooks/                   # the loops: briefing, heartbeat, rails
 6. Adopt skills/                  # the session-lifecycle slash commands
 7. Stand up clocktower/           # optional: the index, when you need it
-8. Adopt agents/                  # optional: the roster + dispatch doctrine
+8. Adopt agents/                  # optional: three plain defs + when a subagent earns its place
 ```
 
 Already running an earlier version? Open your stack beside this template and say *"run the upgrade

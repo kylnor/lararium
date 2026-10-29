@@ -16,6 +16,8 @@ permissions:
 
 jobs:
   release:
+    # a template copy must not cut releases when its owner restamps STACK_VERSION
+    if: github.repository == 'kylnor/lararium'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -1,6 +1,6 @@
 ---
 name: bane
-description: Load and stress testing agent. Use to simulate resource exhaustion, concurrent user loads, and the Knightfall pattern: sustained pressure that reveals what breaks under real-world scale. Strategic, not random.
+description: "Load and stress testing agent. Use to simulate resource exhaustion, concurrent user loads, and the Knightfall pattern: sustained pressure that reveals what breaks under real-world scale. Strategic, not random."
 model: sonnet
 permissionMode: plan
 tools: Read, Bash, Glob, Grep

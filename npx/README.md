@@ -5,11 +5,13 @@ fetches the latest release, unpacks it into a new folder, and gets out of the wa
 node stdlib only.
 
 ```
-npx lararium [folder]
+npx lararium [folder] [--with-examples]
 ```
 
 That's the whole tool. It resolves the newest tagged release from GitHub, downloads that tarball,
-unpacks it into `folder` (default `lararium`), strips its own scaffolder code out of the copy,
+unpacks it into `folder` (default `lararium`), strips out what only the template's contributors
+need (this scaffolder, the repo's CI and tests, the contributor guide, the depersonalization checklist, release
+history and the blog), leaves out the themed example roster unless you pass `--with-examples`,
 runs `git init` with a first commit, and prints what to do next:
 
 ```
@@ -17,10 +19,11 @@ cd <folder>
 claude
 ```
 
-Then say: "Run the install interview in `INSTALL.md`". That interview is the actual install; this
-package only gets the files onto your disk.
+Then say: "Run the starter in `starter/README.md`". It interviews you, writes your first three
+notes and proves the memory works. When you outgrow it, the full install interview is in
+`INSTALL.md`. This package only gets the files onto your disk.
 
-**Note on versioning:** this package's own version (`0.1.0` and up) is unrelated to the template's
+**Note on versioning:** this package's own version (`0.2.0` and up) is unrelated to the template's
 `STACK_VERSION`. The scaffolder always fetches whatever the latest template release is at run time;
 bumping this package is only for fixing the scaffolder itself.
 

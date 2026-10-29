@@ -22,15 +22,15 @@
  * stdin payload: { "tool_name": "Agent", "tool_input": { "subagent_type": "...", ... } }
  *
  * Test standalone:
- *   echo '{"tool_name":"Agent","tool_input":{"subagent_type":"architect","prompt":"x"}}' | node agent-model-router.js
+ *   echo '{"tool_name":"Agent","tool_input":{"subagent_type":"reviewer","prompt":"x"}}' | node agent-model-router.js
  */
 'use strict'
 
 // agent name -> model it should run on. Rename to match your own roster.
 const MODEL_POLICY = {
-  architect: 'opus',
-  researcher: 'sonnet',
   reviewer: 'sonnet',
+  researcher: 'sonnet',
+  verifier: 'sonnet',
 }
 
 let input = ''

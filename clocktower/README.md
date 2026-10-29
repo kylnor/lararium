@@ -35,7 +35,7 @@ at. Do not copy corpora into markdown. The card points at the corpus; it does no
 ## What does NOT ship
 - The database itself. You stand up an empty one.
 - Any corpus, any row of real data.
-- Every token, connection string, and host. See `../SCRUB.md`.
+- Every token, connection string, and host. See [`SCRUB.md`](https://github.com/kylnor/lararium/blob/main/SCRUB.md) upstream.
 
 ## Gotchas worth inheriting
 - **Sessions may serialize.** Depending on the MCP transport, calls on a single session can queue;
@@ -66,9 +66,9 @@ The brain-watcher is a special case: it does a `git pull` on the brain repo befo
 pass. This means edits pushed from any session land in the index within the watcher's normal
 cadence without requiring a manual sync trigger.
 
-The Huginn/Muninn pattern overlays staging on top of a standard watcher. Huginn writes to a
+The gatherer/curator pattern overlays staging on top of a standard watcher. The gatherer writes to a
 staging workspace partition using the staging token (which is scoped so it cannot touch the live
-knowledge base). Muninn runs a separate pass to review staged items, optionally applying
+knowledge base). The curator runs a separate pass to review staged items, optionally applying
 confidence scoring, deduplication, or human-in-the-loop review, before promoting to live.
 Use this pattern when the source signal is high-volume and low-signal-density (e.g., email
 threads, web captures) and you want a quality gate before items are searchable by the assistant.
@@ -82,4 +82,4 @@ both.
 The schema (`schema/`), the tool surface, and the server config in this directory are the map. The
 running server, the watchers, and the database are yours to stand up: this layer is infrastructure
 you operate, not code you clone. When you have it running, walk `retrieval-doctrine.md` as the
-quality checklist, and if you ever share your implementation, strip credentials per `../SCRUB.md`.
+quality checklist, and if you ever share your implementation, strip credentials per [`SCRUB.md`](https://github.com/kylnor/lararium/blob/main/SCRUB.md) upstream.

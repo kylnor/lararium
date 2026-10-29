@@ -1,6 +1,6 @@
 {
   "name": "lararium",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "One-line scaffolder for the lararium template: fetches the latest release and unpacks it into a new folder.",
   "bin": {
     "lararium": "./index.js"

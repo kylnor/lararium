@@ -1,6 +1,6 @@
 ---
 name: lucius
-description: Architect and specialist for hard problems. Use when sonnet-tier agents aren't enough: complex system design, multi-service architecture, deep technical trade-off analysis, and problems that require thinking before building. The one you bring in for the big decisions.
+description: "Architect and specialist for hard problems. Use when sonnet-tier agents aren't enough: complex system design, multi-service architecture, deep technical trade-off analysis, and problems that require thinking before building. The one you bring in for the big decisions."
 model: opus
 permissionMode: acceptEdits
 ---

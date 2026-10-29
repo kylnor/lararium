@@ -1,6 +1,6 @@
 ---
 name: batgirl
-description: Silent pattern flagger for quick code scanning. Use for fast, cheap analysis: scanning code for issues, spotting anti-patterns, flagging concerns without detailed explanation. Instinct-driven, not verbose.
+description: "Silent pattern flagger for quick code scanning. Use for fast, cheap analysis: scanning code for issues, spotting anti-patterns, flagging concerns without detailed explanation. Instinct-driven, not verbose."
 model: haiku
 permissionMode: acceptEdits
 tools: Read, Glob, Grep

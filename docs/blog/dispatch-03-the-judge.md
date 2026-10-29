@@ -48,7 +48,7 @@ The design notes for this release contained a self-flag worth repeating: it was 
 
 ## What ships
 
-- **The Judge**, `agents/defs/harvey.md`: adversarial, read-only, per-claim verdicts with receipts, rules PASS / HOLD / REJECT.
+- **The Judge**, now the plain `agents/defs/verifier.md` (the themed original lives in the opt-in example roster): adversarial, read-only, per-claim verdicts with receipts, rules PASS / HOLD / REJECT.
 - **The patrol**, `agents/patrol/`: the template sweep script plus the four disciplines that keep it signal instead of noise. Its `ADAPT:` lines mark every seam that touches your own task store and scheduler.
 - **A rule**, in the operating doc: receipts or NOT VERIFIED, the Judge never fixes, no contract means nothing to judge against, gate before patrol.
 
