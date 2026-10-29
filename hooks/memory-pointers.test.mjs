@@ -96,16 +96,60 @@ test('writes through a symlinked instruction file and keeps it a link', () => {
   } finally { fs.rmSync(s.base, { recursive: true, force: true }); }
 });
 
-test('--project writes AGENTS.md and GEMINI.md in the stack folder and touches nothing else', () => {
+test('--project writes CLAUDE.md, AGENTS.md and GEMINI.md in the stack folder and touches nothing else', () => {
   const s = sandbox();
   try {
     const result = s.run('--project');
     assert.equal(result.status, 0, result.stdout + result.stderr);
-    for (const name of ['AGENTS.md', 'GEMINI.md']) assert.equal(count(fs.readFileSync(path.join(s.stack, name), 'utf8'), START), 1);
-    assert.equal(fs.existsSync(path.join(s.stack, 'CLAUDE.md')), false);
+    for (const name of ['CLAUDE.md', 'AGENTS.md', 'GEMINI.md']) assert.equal(count(fs.readFileSync(path.join(s.stack, name), 'utf8'), START), 1, name);
     for (const f of Object.values(s.files)) assert.equal(fs.existsSync(f), false);
+    assert.match(s.run('--project').stdout, /claude +unchanged/);
     assert.match(s.run('--project').stdout, /codex +unchanged/);
-    assert.equal(s.run('--project', '--only', 'claude').status, 2);
+    assert.equal(s.run('--project', '--only', 'nonsense').status, 2);
+  } finally { fs.rmSync(s.base, { recursive: true, force: true }); }
+});
+
+test('--project on an existing CLAUDE.md keeps every line of it and appends the block once, with the same protections', () => {
+  const s = sandbox();
+  try {
+    const mine = '# My map\n\nnotes live in notes/\n';
+    fs.writeFileSync(path.join(s.stack, 'CLAUDE.md'), mine);
+    assert.equal(s.run('--project').status, 0);
+    const after = fs.readFileSync(path.join(s.stack, 'CLAUDE.md'), 'utf8');
+    assert.ok(after.startsWith(mine.trimEnd() + '\n\n' + START), 'the owner\'s text comes first, untouched');
+    assert.equal(count(after, START), 1);
+    assert.equal(s.run('--project', '--check').status, 0, 'a second run has nothing to write');
+    // the foreign-block protections apply to CLAUDE.md like any other file
+    const foreign = '# Map\n<!-- other-tool:start -->\nunclosed\n';
+    fs.writeFileSync(path.join(s.stack, 'CLAUDE.md'), foreign);
+    const refused = s.run('--project');
+    assert.equal(refused.status, 1);
+    assert.match(refused.stdout, /claude +refused/);
+    assert.equal(fs.readFileSync(path.join(s.stack, 'CLAUDE.md'), 'utf8'), foreign);
+  } finally { fs.rmSync(s.base, { recursive: true, force: true }); }
+});
+
+test('--project in the full install starts a new CLAUDE.md with the nested brain map, once', () => {
+  const s = sandbox();
+  try {
+    fs.mkdirSync(path.join(s.stack, 'brain'));
+    fs.writeFileSync(path.join(s.stack, 'brain/CLAUDE.md'), '# brain map\n');
+    assert.equal(s.run('--project').status, 0);
+    const text = fs.readFileSync(path.join(s.stack, 'CLAUDE.md'), 'utf8');
+    assert.ok(text.startsWith('@brain/CLAUDE.md\n\n' + START), text);
+    assert.match(s.run('--project').stdout, /claude +unchanged/);
+    assert.equal(count(fs.readFileSync(path.join(s.stack, 'CLAUDE.md'), 'utf8'), '@brain/CLAUDE.md'), 1);
+  } finally { fs.rmSync(s.base, { recursive: true, force: true }); }
+});
+
+test('the rendered block has no bare relative memory path, so a global install cannot start a second index', () => {
+  const s = sandbox();
+  try {
+    assert.equal(s.run('--project').status, 0);
+    const block = fs.readFileSync(path.join(s.stack, 'AGENTS.md'), 'utf8');
+    const rest = block.split(`${s.stack}/memory/`).join('');
+    assert.ok(!/memory\//.test(rest), `a relative memory/ path remains:\n${rest.split('\n').filter(l => /memory\//.test(l)).join('\n')}`);
+    assert.ok(block.includes(`${s.stack}/memory/`));
   } finally { fs.rmSync(s.base, { recursive: true, force: true }); }
 });
 
@@ -186,14 +230,15 @@ test('the generated grep command runs against a stack path with spaces and quote
   }
 });
 
-test('--project says it covers one folder, that CLAUDE.md is not written, and where the template is', () => {
+test('--project says it covers one folder, names all three files, and where the blank map comes from', () => {
   const s = sandbox();
   try {
     const result = s.run('--project');
     assert.equal(result.status, 0, result.stdout + result.stderr);
     assert.doesNotMatch(result.stdout, /in any folder/);
-    assert.match(result.stdout, /only: open a new Codex or Gemini CLI session in that folder/);
-    assert.match(result.stdout, /CLAUDE\.md is not written by this command.*starter\/CLAUDE\.template\.md/);
+    assert.match(result.stdout, /CLAUDE\.md, AGENTS\.md and GEMINI\.md inside .* only: open a new Claude Code, Codex or Gemini CLI session in that folder/);
+    assert.doesNotMatch(result.stdout, /not written by this command/);
+    assert.match(result.stdout, /starter\/CLAUDE\.template\.md/);
     assert.match(s.run().stdout, /in any folder/);
   } finally { fs.rmSync(s.base, { recursive: true, force: true }); }
 });

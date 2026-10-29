@@ -30,8 +30,9 @@ Four cases, and only these:
    against writing is not enforcement. Running tests is the builder's job; the reviewer asks for
    the output.
 
-Review by a *different* model or CLI than the builder usually falls under case 4, and is worth
-doing for that reason alone: a second model does not share the first one's blind spots.
+Review is case 4 because it must not write. Running it on a *different* model or CLI than the
+builder is a bonus, not a separate reason: a second model does not share the first one's blind
+spots.
 
 Do not copy the org chart. One agent per team, per role title, or per problem type is an
 organisational choice, not an architecture. If you cannot say which of the four cases an agent

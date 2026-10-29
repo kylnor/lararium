@@ -5,9 +5,10 @@
 //   node hooks/memory-pointers.mjs <stack-folder> [--project] [--check] [--only claude,codex,gemini] [--home <dir>]
 //
 // Default scope is global: ~/.claude/CLAUDE.md, ~/.codex/AGENTS.md, ~/.gemini/GEMINI.md, for the CLIs
-// whose config folder exists. --project writes the same block into AGENTS.md and GEMINI.md inside the
-// stack folder instead (CLAUDE.md there is your map, which you write yourself), so nothing outside the
-// folder is touched.
+// whose config folder exists. --project writes the same block into CLAUDE.md, AGENTS.md and GEMINI.md
+// inside the stack folder instead, so nothing outside the folder is touched. A CLAUDE.md that is
+// already there keeps its content and gets the block appended; a new one starts with an import of
+// brain/CLAUDE.md when the stack has one (the full install), so the map still loads.
 //
 // Idempotent: the block lives between its own marker comments. A rerun replaces what is between
 // them and never adds a second copy. New blocks are appended after everything else in the file.
@@ -99,6 +100,7 @@ const block = template
 const home = homeArg ? path.resolve(homeArg) : os.homedir();
 const envDir = name => (homeArg ? '' : process.env[name] || '');
 const targets = project ? {
+  claude: { dir: root, file: 'CLAUDE.md' },
   codex: { dir: root, file: 'AGENTS.md' },
   gemini: { dir: root, file: 'GEMINI.md' },
 } : {
@@ -134,7 +136,7 @@ function openBlocks(markers) {
 }
 
 // Decide what the file should become. Returns { status, next }.
-function plan(text) {
+function plan(text, seed = '') {
   const starts = text.split(START).length - 1;
   const ends = text.split(END).length - 1;
   if (starts > 1 || ends > 1) return { status: 'refused: more than one shared-memory block, resolve by hand' };
@@ -148,7 +150,7 @@ function plan(text) {
   if (unclosed.length) return { status: `refused: the end of the file is inside an unclosed "${unclosed[unclosed.length - 1]}" block` };
   if (starts === 0) {
     const body = text.trimEnd();
-    return { status: 'written', next: (body ? body + '\n\n' : '') + block + '\n' };
+    return { status: 'written', next: (body ? body + '\n\n' : seed) + block + '\n' };
   }
   const inside = markers.find(m => m.at > s && m.at < e);
   if (inside) return { status: `refused: the shared-memory block contains another tool's "${inside.name}" marker, resolve by hand` };
@@ -189,7 +191,10 @@ for (const name of names) {
   }
   let text = '';
   try { text = fs.readFileSync(full, 'utf8'); } catch (e) { if (e.code !== 'ENOENT') { console.log(`${name.padEnd(7)} refused: ${e.code}`); problems++; continue; } }
-  const result = plan(text);
+  // A brand new project CLAUDE.md pulls in the full install's nested map, which Claude Code would
+  // otherwise load only after reading files under brain/.
+  const seed = project && name === 'claude' && fs.existsSync(path.join(root, 'brain', 'CLAUDE.md')) ? '@brain/CLAUDE.md\n\n' : '';
+  const result = plan(text, seed);
   const pending = result.next !== undefined;
   if (result.status.startsWith('refused')) problems++;
   else if (check && pending) problems++;
@@ -199,8 +204,8 @@ for (const name of names) {
 }
 if (!check) {
   if (project) {
-    console.log(`\nDone. The block is in AGENTS.md and GEMINI.md inside ${root} only: open a new Codex or Gemini CLI session in that folder to load it.`);
-    console.log('CLAUDE.md is not written by this command. Claude Code reads your own map: copy starter/CLAUDE.template.md to CLAUDE.md in that folder and fill it in.');
+    console.log(`\nDone. The block is in CLAUDE.md, AGENTS.md and GEMINI.md inside ${root} only: open a new Claude Code, Codex or Gemini CLI session in that folder to load it.`);
+    console.log('If CLAUDE.md is still the blank map, fill it in from starter/CLAUDE.template.md; the block you just added stays where it is.');
   } else {
     console.log('\nDone. Open a new session in each CLI, in any folder, to load the block.');
   }

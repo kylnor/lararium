@@ -8,6 +8,9 @@ permissions:
   contents: read
 jobs:
   test:
+    # contributor CI: a "Use this template" copy carries this file, and the scrub would fail on its
+    # owner's first real card, so it runs only in the upstream repository
+    if: github.repository == 'kylnor/lararium'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -22,4 +25,4 @@ jobs:
           python-version: '3.12'
       # the frontmatter test parses with real PyYAML and fails (not skips) when CI cannot find it
       - run: pip install pyyaml
-      - run: node --test hooks/memory-check.test.mjs hooks/memory-loop.test.mjs hooks/memory-pointers.test.mjs hooks/memory-cards.test.mjs tests/persona-scrub.test.mjs tests/agent-defs.test.mjs tests/scaffold.test.mjs
+      - run: node --test hooks/memory-check.test.mjs hooks/memory-loop.test.mjs hooks/memory-pointers.test.mjs hooks/memory-cards.test.mjs tests/persona-scrub.test.mjs tests/agent-defs.test.mjs tests/scaffold.test.mjs tests/workflows.test.mjs tests/docs.test.mjs

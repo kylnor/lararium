@@ -185,7 +185,8 @@ async function run() {
   console.log(`  cd ${folderArg}`);
   console.log('  claude');
   console.log('');
-  console.log('Then say: "Run the install interview in INSTALL.md".');
+  console.log('Then say: "Run the starter in starter/README.md".');
+  console.log('(When you outgrow it, the full setup is INSTALL.md.)');
   console.log('');
 }
 

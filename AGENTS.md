@@ -52,7 +52,11 @@ startup hook uses to tell a blank template from the user's own file; change them
   the scaffold test packs the git index, so stage new files first. The suite needs a git checkout
   (it runs `git ls-files` and `git archive`), not a source export. To audit one specific commit,
   set `LARARIUM_ARCHIVE_REF=HEAD` (or a SHA) so the scaffold test packs that ref instead of the index.
-- Anything a stranger should not receive is listed in `CONTRIBUTOR_ONLY` in `npx/index.js`.
+- Anything a stranger should not receive is listed in `CONTRIBUTOR_ONLY` in `npx/index.js`. The
+  template and zip routes copy everything, so the README, starter and INSTALL carry a one-line
+  cleanup of that same list, and `tests/scaffold.test.mjs` plays that route end to end. Every
+  contributor workflow job carries `if: github.repository == 'kylnor/lararium'`
+  (`tests/workflows.test.mjs`); a new job without it fails the suite.
 
 - `node --check` any `.mjs` you touch (`skills/defs/*/`, `npx/`).
 - Runnable pieces keep zero dependencies unless their SKILL.md says otherwise; do not add

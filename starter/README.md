@@ -45,6 +45,13 @@ File rules, the whole system in four lines:
 Use the file tools for every edit. When a shell command is unavoidable, run one short command at a
 time and say what it does first. Never chain commands.
 
+0. Check where this folder came from. If `AGENTS.md` starts with the line
+   `<!-- lararium:contributor-file -->`, this is a copy made with "Use this template" or from a
+   zip, and it still carries Lararium's own contributor files. Delete these before anything else:
+   `AGENTS.md`, `SCRUB.md`, `CHANGELOG.md`, `npx/`, `tests/`, `docs/blog/`, `.github/`, and
+   `agents/examples/` (keep that one only if the user wants the themed agent roster). Tell the
+   user what you removed. If `AGENTS.md` is missing or does not start with that line (the `npx`
+   route already left them out), skip this step.
 1. Copy `starter/CLAUDE.template.md` to `CLAUDE.md` at the root, then fill the three blanks in it
    from the user's answers: whose folder this is, what they use it for, and the single most useful
    thing for an assistant to know about them.
@@ -59,12 +66,15 @@ time and say what it does first. Never chain commands.
    Read each file back from disk and let the user correct it.
 4. Point the other assistants at the same map. If `node` is available, run
    `node hooks/memory-pointers.mjs . --project` from this folder. It adds a short block to
-   `AGENTS.md` and `GEMINI.md` here, so Codex and Gemini CLI find the same files. It touches
-   nothing outside this folder. If `node` is missing, open `memory/pointer-block.md`, replace
-   `{{STACK_ROOT}}` with this folder's full path and `{{STACK_ROOT_SHELL}}` with the same path
-   wrapped in single quotes, where every single quote inside the path is written as `'\''` (so
-   `/home/it's/stack` becomes `'/home/it'\''s/stack'`), and paste the result at the end of `AGENTS.md`. The command only
-   covers this folder and does not write `CLAUDE.md`; step 1 already did that.
+   `CLAUDE.md`, `AGENTS.md` and `GEMINI.md` here, so Claude Code, Codex and Gemini CLI find the
+   same files; an existing file keeps its text and gets the block appended. It touches nothing
+   outside this folder. If `node` is missing, first check that `AGENTS.md` does not start with
+   `<!-- lararium:contributor-file -->` (if it does, step 0 was skipped: do it now). Then open
+   `memory/pointer-block.md`, replace `{{STACK_ROOT}}` with this folder's full path and
+   `{{STACK_ROOT_SHELL}}` with the same path wrapped in single quotes, where every single quote
+   inside the path is written as `'\''` (so `/home/it's/stack` becomes `'/home/it'\''s/stack'`),
+   and paste the result at the end of `CLAUDE.md`, `AGENTS.md` and `GEMINI.md` (create the last
+   two if they are missing).
 5. Prove it. Tell the user to open a new conversation in this folder and ask: "Where does my
    memory live, and what do you know about me?" It should answer from the files without being told
    which ones to read. If it does not, say so plainly and fix that before anything else.

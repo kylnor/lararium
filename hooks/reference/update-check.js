@@ -39,12 +39,12 @@
  * Config. The hook resolves these knobs, each overridable:
  *   - templateUpstream: which repo to check. Default below; forks re-point it.
  *   - updateCheck: on/off. Default on.
- *   - localVersionFile: the absolute path to YOUR installed STACK_VERSION stamp.
- *     This is the one that must match reality: the install and upgrade interviews
- *     stamp STACK_VERSION at your stack's repo root, not in ~/.assistant, so the
- *     interview writes this key to that path. The constant fallback below is a
- *     last resort; when the key is unset and the fallback path is absent, the
- *     local version reads as v1 (always behind), which is the safe degrade.
+ *   - localVersionFile: the absolute path to your installed STACK_VERSION stamp.
+ *     Leave it unset in the normal case: the hook finds the STACK_VERSION at the
+ *     root of the stack it ships in, on its own, even if the folder moves. Set it
+ *     only if you copied the hooks somewhere else (for example ~/.claude/hooks/),
+ *     where that lookup cannot work. When the key is unset and no stamp is found,
+ *     the local version reads as v1 (always behind), which is the safe degrade.
  *   All three are read from your Claude Code settings.json under a "stackUpdateCheck"
  *   block (see hooks/settings.example.json); each falls back to the constant below
  *   when that file, block, or key is absent. The config key is resolved first, the
@@ -263,7 +263,8 @@ process.stdin.on('end', async () => {
       // that each passed sanitizeVersion; no remote body content reaches here.
       const context =
         `Template ${remote} is available (you are on ${local}). ` +
-        `Type /upgrade to apply, or see CHANGELOG.md upstream.`
+        `Type /upgrade to apply (or open skills/defs/upgrade/SKILL.md and follow it), ` +
+        `or see CHANGELOG.md upstream.`
       process.stdout.write(JSON.stringify({
         hookSpecificOutput: {
           hookEventName: 'SessionStart',

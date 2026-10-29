@@ -97,8 +97,9 @@ Run these in order. Every step only adds, so skip any the owner declines.
 
 As your **last act**, update the version stamp: overwrite the owner's `STACK_VERSION` with the
 version they just upgraded to (the newest applicable `CHANGELOG.md` entry). The stamp lives at the
-owner's stack repo root; if they wired the update-check hook, that path is exactly what its
-`stackUpdateCheck.localVersionFile` config names, so restamp the same file the hook reads. This is
+owner's stack repo root, and the update-check hook reads that same file on its own; only if the
+owner copied the hooks elsewhere and set `stackUpdateCheck.localVersionFile`, restamp the file
+that key names. This is
 what the next upgrade reads to know where they now stand; skip it and the next run re-offers
 everything you just applied. If step 0 found no entries newer than the owner's stamp, report that they are already up
 to date and stop; never lower the stamp. Then end with the same shape as the install: a short checklist of what was added, what was

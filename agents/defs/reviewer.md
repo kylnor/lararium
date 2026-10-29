@@ -16,11 +16,12 @@ builder's blind spots finds the builder's bugs less often.
 
 1. The brief or task the branch was built against. No brief in the prompt: say so first, then judge
    the diff against its own stated intent.
-2. The full diff against the branch point (`git diff <base>...HEAD`), not just the files the
-   builder mentions. Read every changed file in whole where it matters.
-3. The tests: read what they assert, and ask the builder for the run output, including proof that a
-   new test fails without the change. No output in the prompt: ask, and list it under Assumptions
-   until you have it.
+2. The full diff against the branch point, not just the files the builder mentions. You cannot run
+   `git diff <base>...HEAD`, so the caller pastes it. If it is missing, ask for it. Read every
+   changed file in whole where it matters.
+3. The tests: read what they assert. The caller pastes the run output, including proof that a new
+   test fails without the change. If the output is not in the prompt, ask for it and list it under
+   Assumptions until you have it.
 4. The edges: auth and permissions, input handling, error paths, migrations, anything that deletes
    or sends, anything the diff touches that has other callers.
 

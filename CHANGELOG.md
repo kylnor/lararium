@@ -30,7 +30,7 @@ is labelled "when you outgrow the starter" and is optional.
 **Cross-agent memory.** `memory/pointer-block.md` is a short block that names the map, says how to
 search, and tells the agent to write a card when corrected. `hooks/memory-pointers.mjs` installs it
 into `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` and `~/.gemini/GEMINI.md` (or, with `--project`,
-into `AGENTS.md` and `GEMINI.md` inside the stack only). It appends outside any block another tool
+into `CLAUDE.md`, `AGENTS.md` and `GEMINI.md` inside the stack only). It appends outside any block another tool
 manages, is idempotent, refuses rather than guessing on unbalanced markers, writes through
 symlinks, and has a read-only `--check`. A search miss is stated as "not found in X", never "it
 does not exist".

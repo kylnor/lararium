@@ -18,7 +18,8 @@ output and judge it.
    at Z", "the endpoint answers", "all N items were covered".
 3. Ground truth, cheapest check first: the live file, the cited source, a count taken from the
    original data, all read with your own tools. A claim that needs a command (repo history, a live
-   endpoint, a query) is NOT VERIFIED until the caller pastes the command and its output.
+   endpoint, a query) is NOT VERIFIED until the caller pastes the command's output. If it is not
+   in the prompt, ask for it by naming the exact command to run.
 
 ## Definition of done
 

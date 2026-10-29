@@ -2,8 +2,12 @@
 
 This is not a script. It is a prompt. An agentic stack is installed by an agent.
 
-**How to run it:** open this freshly-cloned template in a coding assistant with local file access (Claude Code is the reference setup) and say: *"Run the install interview in INSTALL.md against this repo."* The
+**How to run it:** open this folder in a coding assistant with local file access (Claude Code is the reference setup) and say: *"Run the install interview in INSTALL.md against this repo."* The
 assistant interviews you and writes your files. You answer questions; it does the typing.
+
+**The first question, before anything else:** do you want the five-minute starter or the full
+setup? The starter is the right answer for most people. Run it in `starter/README.md` and stop
+there; come back here only when you outgrow it.
 
 **The rules the assistant follows during the interview:**
 - Ask **one question at a time.** Never dump the whole questionnaire. This is a conversation, not a form.
@@ -33,7 +37,15 @@ pointer step if they already ran it.
 The phases below are the full install. Phase 1 is its base; every phase after it is optional.
 
 ## Phase 0: Read the map
-Before any question, read `brain/CLAUDE.md` (the laws) and `README.md` (the six layers). Tell the
+0. Check where this folder came from. If `AGENTS.md` starts with the line
+   `<!-- lararium:contributor-file -->`, this is a copy made with "Use this template" or from a
+   zip, and it still carries Lararium's own contributor files. Delete these before anything else:
+   `AGENTS.md`, `SCRUB.md`, `CHANGELOG.md`, `npx/`, `tests/`, `docs/blog/`, `.github/`, and
+   `agents/examples/` (keep that one only if the user wants the themed agent roster). Tell the
+   user what you removed. If `AGENTS.md` is missing or does not start with that line (the `npx`
+   route already left them out), skip this step.
+
+Then, before any question, read `brain/CLAUDE.md` (the laws) and `README.md` (the six layers). Tell the
 user, in two sentences, what they are about to set up. Then begin.
 
 Memory is already switched on, and it is the point: this folder ships `.claude/settings.json`, which
@@ -83,25 +95,30 @@ offer the longer save, recall, and correction test in `docs/memory-check.md`.
 Memory should not belong to one tool. If the user has Codex or Gemini CLI as well as Claude Code,
 install the shared pointer block so each reads the same files. Ask which CLIs they use, then:
 
-1. Run `node hooks/memory-pointers.mjs . --check` from this folder. It changes nothing and says
-   which instruction files would be written. Show the user.
-2. Ask whether they want it for this folder only or for every folder. For this folder only, run
-   `node hooks/memory-pointers.mjs . --project` (writes `AGENTS.md` and `GEMINI.md` here, nothing
-   outside). For every folder, run `node hooks/memory-pointers.mjs .` (writes to `~/.claude/CLAUDE.md`,
-   `~/.codex/AGENTS.md` and `~/.gemini/GEMINI.md`, for the CLIs that exist). The global form
-   edits files outside this folder: say that in plain words and get a yes first.
+1. Ask whether they want it for this folder only or for every folder.
+2. Run the read-only check for the scope they chose: `node hooks/memory-pointers.mjs . --project --check`
+   for this folder only, or `node hooks/memory-pointers.mjs . --check` for every folder. It changes
+   nothing and says which instruction files would be written. Exit code 1 means "would write",
+   not failure. Show the user, then run the same command without `--check`. For this folder only
+   that writes `CLAUDE.md`, `AGENTS.md` and `GEMINI.md` here, nothing outside. For every folder it
+   writes to `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` and `~/.gemini/GEMINI.md`, for the CLIs
+   that exist. The global form edits files outside this folder: say that in plain words and get a
+   yes first.
 3. The script puts a marked block at the end of each file, after any block another tool manages,
    and never twice: running it again says `unchanged`. It refuses, and tells the user, when a file
    has unbalanced markers or ends inside another tool's block. Do not edit around a refusal.
    It writes through a symlinked file and leaves the link in place, and refuses a symlink that
    points nowhere. It also refuses when our block overlaps, contains or sits inside another tool's
-   block. `--project` covers this folder only and does not write `CLAUDE.md`: that is the map the
-   user writes from `starter/CLAUDE.template.md`. It refuses inside a clone of the Lararium
-   repository itself; make the user's own stack first.
-4. Without `node`, do it by hand: copy `memory/pointer-block.md`, replace `{{STACK_ROOT}}` with
+   block. `--project` covers this folder only. An existing `CLAUDE.md` keeps its text and gets the
+   block appended; a new one starts with an import of `brain/CLAUDE.md`. It refuses inside a clone
+   of the Lararium repository itself; make the user's own stack first.
+4. Without `node`, do it by hand. First check that `AGENTS.md` does not start with
+   `<!-- lararium:contributor-file -->` (if it does, Phase 0 step 0 was skipped: do it now). Then
+   copy `memory/pointer-block.md`, replace `{{STACK_ROOT}}` with
    this folder's full path and `{{STACK_ROOT_SHELL}}` with the same path wrapped in single quotes,
    where every single quote inside the path is written as `'\''` (so `/home/it's/stack` becomes
-   `'/home/it'\''s/stack'`), and append it to each file. Check the file for an existing
+   `'/home/it'\''s/stack'`), and append it to `CLAUDE.md`, `AGENTS.md` and `GEMINI.md` (or the
+   global files, for the every-folder scope). Check each file for an existing
    `lararium:shared-memory:start` marker first.
 5. Test each CLI the user has, in a new session, with no hints: "In one line: where does my memory
    live and how do I search it?" It should name this folder's map and a grep. If it does not,
@@ -125,7 +142,7 @@ The goal is a `soul/core.md` that sounds like a specific someone.
 4. Write `soul/core.md` from the answers using the dimensions in `soul/character-craft.md`: trait
    tensions, the register gap, the anti-list, and at least three tone proofs (sample responses to
    real scenarios from their life). The samples are the spec. Name the persona's failure mode.
-4. Tell them the session-start hook already loads `core` from the next conversation on. What they
+5. Tell them the session-start hook already loads `core` from the next conversation on. What they
    still wire themselves is the drift monitor. Point them at `soul/README.md`.
 
 ## Phase 3: The rules and the loops (optional, but the cheapest leverage here)
@@ -190,8 +207,9 @@ Offer only what hurts today, one at a time, and skip the rest.
 ---
 
 ## Closing
-As your **last act**, stamp the version: copy this template's `STACK_VERSION` file into the root of
-the user's stack unchanged. It is a one-line file naming the template version they just installed
-from. It is what the upgrade interview reads later to know which changelog deltas apply, so a stack
-without it reads as v1. Then end the interview with a short checklist of what is done and what the
+As your **last act**, confirm `STACK_VERSION` is at the root of the user's stack, unchanged. It is a
+one-line file naming the template version they just installed from, and the scaffolder and the
+template both ship it already. It is what the upgrade interview and the update checker read to know
+which changelog deltas apply, so a stack without it reads as v1: if it is missing, copy it from the
+template. Then end the interview with a short checklist of what is done and what the
 user still owns (optional hooks, infra to stand up), and get out of the way. The system is theirs now.

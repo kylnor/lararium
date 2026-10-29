@@ -20,7 +20,8 @@ shrine, and you bring your own gods.
 
 You do not need the six layers below to get value. The starter is a map file, three folders
 (`notes/`, `people/`, `projects/`) and a memory index: one topic per file, lowercase-hyphen names,
-and an assistant that searches before it answers. Open the folder in Claude Code and say:
+and an assistant that searches before it answers. Get the folder first (see "Getting it onto your
+machine" below: `npx lararium my-stack` is the one-line route), open it in Claude Code and say:
 
 ```
 Run the starter in starter/README.md
@@ -110,18 +111,28 @@ install interview *writes your files for you*, so it needs filesystem access.
 or API key). A browser chat can talk you through the interview but cannot write into your folder, so
 you would be copy-pasting; use the real tool.
 
-Get the template locally. Three ways in, pick your trust level:
+Get the template locally. For a personal stack, `npx` is the route:
 
 ```
-# Fast path: the scaffolder downloads the latest release and unpacks it
 npx lararium my-stack  &&  cd my-stack
+```
 
+The scaffolder leaves out the files that only matter to people working on Lararium itself
+(its tests, CI workflows, contributor guide and blog). Two other routes exist, and both are
+copies that include those contributor files:
+
+```
 # GitHub template repo: click "Use this template" to make your own copy, then
 git clone https://github.com/<you>/<your-copy>.git  &&  cd <your-copy>
 
 # Sent a zip: unzip it, then
 cd lararium
 ```
+
+One cleanup line for those two. If `AGENTS.md` starts with `<!-- lararium:contributor-file -->`,
+remove `AGENTS.md`, `SCRUB.md`, `CHANGELOG.md`, `npx/`, `tests/`, `docs/blog/`, `.github/` and
+`agents/examples/` (keep that last one only if you want the themed agent roster). Your assistant
+does this for you as step 0 of the starter and of the install interview.
 
 Wary of `npx`-ing a stranger's installer? Good instinct, it is the whole reason this stack
 exists. The scaffolder (`npx/index.js`) is about 200 lines of Node standard library with zero
@@ -139,13 +150,20 @@ lab/lab https://github.com/kylnor/lararium
 That vets the rest of the stack inside the box it ships. The tool's first job can be auditing
 its own supplier.
 
-Then open the folder in Claude Code (`claude` from inside it) and say:
+Then open the folder in Claude Code (`claude` from inside it) and start with the five-minute
+starter in `starter/README.md`:
+
+```
+Run the starter in starter/README.md
+```
+
+When you outgrow it, the full setup is the install interview:
 
 ```
 Run the install interview in INSTALL.md
 ```
 
-The interview is the setup step; downloading alone does not configure your assistant. Before adding optional layers, open a fresh conversation in the same folder and ask: "Read brain/CLAUDE.md and brain/now.md, then summarize my current priorities and name the files you used." This checks that your saved context can be read. Memory is on from the first conversation: the folder ships two hooks that save the end of each conversation and hand it, with `brain/now.md`, to the next one opened in the same folder. Say yes when Claude Code asks whether you trust the folder, or they do not run. It remembers the last conversation, not every conversation; anything worth keeping longer goes on a card.
+Either one is the setup step; downloading alone does not configure your assistant. Before adding optional layers, open a fresh conversation in the same folder and ask: "Read brain/CLAUDE.md and brain/now.md, then summarize my current priorities and name the files you used." This checks that your saved context can be read. Memory is on from the first conversation: the folder ships two hooks that save the end of each conversation and hand it, with `brain/now.md`, to the next one opened in the same folder. Say yes when Claude Code asks whether you trust the folder, or they do not run. It remembers the last conversation, not every conversation; anything worth keeping longer goes on a card.
 
 The brain and soul layers use plain files. The index (clocktower) is
 optional and wants your own database and embedding key, the day you decide you want search at scale.

@@ -165,7 +165,7 @@ Every hook takes its payload on stdin, so you can exercise it without Claude Cod
 ```
 echo '{"source":"startup","session_id":"test","cwd":"/tmp"}' | node reference/session-start.js
 echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | node reference/pretooluse-guard.js
-echo '{"tool_name":"Agent","tool_input":{"subagent_type":"architect","prompt":"x"}}' | node reference/agent-model-router.js
+echo '{"tool_name":"Agent","tool_input":{"subagent_type":"reviewer","prompt":"x"}}' | node reference/agent-model-router.js
 echo '{"source":"startup"}' | STACK_UPDATE_CHECK_FIXTURE=v9.9 node reference/update-check.js
 echo '{"tool_name":"Bash","tool_input":{"command":"git status && rm -rf ~/.ssh"}}' | python3 reference/bash-deny-guard.py
 echo '{"tool_name":"Write","tool_input":{"file_path":"/tmp/x.py","content":"key=\"AKIAIOSFODNN7EXAMPLE\""}}' | node reference/secret-write-guard.js
@@ -190,9 +190,10 @@ conversations opened elsewhere.
 
 Copy the reference hooks to wherever you keep hook scripts (the example uses `~/.claude/hooks/stack/`)
 and add the `hooks` block from `settings.example.json` to your Claude Code `settings.json`. The block
-registers all six reference hooks against their events: two on `SessionStart` (the briefing and the
-update checker, both of whose stdout is injected), and two PreToolUse entries, one matched to `Bash`
-for the safety rail, one matched to `Agent` for the dispatch router. The example file also carries a
+registers all eight reference hooks against their events: two on `SessionStart` (the briefing and the
+update checker, both of whose stdout is injected), one on `SessionEnd` (the heartbeat), one on `Stop`
+(the voice log), and four PreToolUse hooks in three entries (two matched to `Bash` for the safety
+rails, one to `Agent` for the dispatch router, one to `Write|Edit` for the secret guard). The example file also carries a
 top-level `stackUpdateCheck` block, the config the update checker reads (toggle + upstream); copy it
 alongside the `hooks` block.
 
@@ -232,13 +233,14 @@ reads `soul/core.md`, `brain/now.md`, and `handoff.md` there. A `core` or `now.m
 the shipped template is announced in one line instead of injected. Other reference hooks keep
 their own path settings. Do not infer that all hooks are configured just because memory is.
 
-One path is deliberately NOT in `~/.assistant/`: your installed `STACK_VERSION` stamp. The install and
-upgrade interviews write it at your stack's repo **root** (the folder you cloned the template into),
-and that is the single source of truth, never copied into `~/.assistant/`. The update checker reads it
-from the absolute path named by `stackUpdateCheck.localVersionFile` in `~/.claude/settings.json`, which
-the install interview fills in with your real repo-root path. The checker reads the rest of its config
-(toggle, upstream) from that same `stackUpdateCheck` block; when a key or the file is absent it falls
-back to the constants at the top of the hook, and an absent stamp reads as v1.
+One path is deliberately NOT in `~/.assistant/`: your installed `STACK_VERSION` stamp. It lives at
+your stack's repo **root** (the folder you scaffolded or cloned the template into), and that is the
+single source of truth, never copied into `~/.assistant/`. The update checker finds it on its own
+when it runs from inside the stack, so there is nothing to configure. Only if you copied the hooks
+elsewhere, add `stackUpdateCheck.localVersionFile` (an absolute path to that stamp) to
+`~/.claude/settings.json`. The checker reads the rest of its config (toggle, upstream) from that
+same `stackUpdateCheck` block; when a key or the file is absent it falls back to the constants at
+the top of the hook, and an absent stamp reads as v1.
 
 ## What these deliberately do not do
 

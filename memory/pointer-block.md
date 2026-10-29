@@ -10,7 +10,7 @@ Files are the memory: no agent owns it and none keeps a private copy.
   index. Grep it before repeating a known mistake.
 - A search miss is not proof a fact is absent. Say "not found in <where you looked>", never "it does
   not exist". If this stack has a search index, it holds raw evidence the files do not.
-- When you are corrected or learn a durable fact, write a card in `memory/` (one fact per file,
+- When you are corrected or learn a durable fact, write a card in `{{STACK_ROOT}}/memory/` (one fact per file,
   frontmatter, a one-line pointer prepended to `MEMORY.md`), then read it back. Do not rely on
   remembering.
 <!-- lararium:shared-memory:end -->
