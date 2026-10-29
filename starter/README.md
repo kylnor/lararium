@@ -62,7 +62,8 @@ time and say what it does first. Never chain commands.
    `AGENTS.md` and `GEMINI.md` here, so Codex and Gemini CLI find the same files. It touches
    nothing outside this folder. If `node` is missing, open `memory/pointer-block.md`, replace
    `{{STACK_ROOT}}` with this folder's full path and `{{STACK_ROOT_SHELL}}` with the same path
-   wrapped in single quotes, and paste the result at the end of `AGENTS.md`. The command only
+   wrapped in single quotes, where every single quote inside the path is written as `'\''` (so
+   `/home/it's/stack` becomes `'/home/it'\''s/stack'`), and paste the result at the end of `AGENTS.md`. The command only
    covers this folder and does not write `CLAUDE.md`; step 1 already did that.
 5. Prove it. Tell the user to open a new conversation in this folder and ask: "Where does my
    memory live, and what do you know about me?" It should answer from the files without being told

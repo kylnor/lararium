@@ -56,7 +56,7 @@ step 0 below establishes from your `STACK_VERSION` and `CHANGELOG.md`.
 5. **`clocktower/retrieval-doctrine.md`.** If their index is live, walk it as a checklist against
    their implementation and note the gaps. If not, just copy the file in for the day it is.
 6. **Root docs.** Offer the v2 README, SCRUB, and INSTALL changes as diffs. If they plan to share
-   or publish their own derivative, point them at SCRUB.md's new "Going public" section and its
+   or publish their own derivative, point them at [`SCRUB.md`](https://github.com/kylnor/lararium/blob/main/SCRUB.md)'s new "Going public" section and its
    warning that commit author metadata leaks identity even when files grep clean.
 
 ## From v2.18 to v3.0 (memory across agents)
@@ -82,11 +82,15 @@ Run these in order. Every step only adds, so skip any the owner declines.
 6. **Agents and the rename.** The default roster is now three plain defs in `agents/defs/`
    (`reviewer.md`, `researcher.md`, `verifier.md`), and the themed roster moved to
    `agents/examples/`. Do not touch agent defs the owner already runs; offer the three new
-   ones beside them. The memory-curation skill was renamed: **`/muninn` is now `/curate`**
-   (`skills/defs/muninn/` is now `skills/defs/curate/`). Rename the folder, change the skill's
-   `name:` to `curate`, and update anything that dispatches it by the old name (cron wrappers,
-   watcher names, the owner's own notes). If the owner keeps a roster with their own names, keep
-   their names and only adopt the new description of the skill.
+   ones beside them. The memory-curation skill was renamed: **`/muninn` is now `/curate`**,
+   and its body changed too, so a rename alone is not an upgrade (the v2 body still has the old
+   command triggers, themed-agent references and a mandatory curator dispatch). Merge instead:
+   copy the new `skills/defs/curate/SKILL.md` in as `skills/defs/curate/SKILL.md`, then carry over
+   anything the owner customized in their old skill (their own thresholds, source lists, schedule
+   notes) by reading the old file beside the new one and asking before each carry-over. Update
+   every caller of the old name (cron wrappers, watcher names, the owner's notes), then retire
+   the old skill's folder with the owner's say-so, by moving it to an archive folder
+   rather than deleting it. If the owner keeps a roster with their own names, keep their names.
 7. **Stamp** `STACK_VERSION` as v3.0 in the closing step, as always.
 
 ## Closing

@@ -76,6 +76,6 @@ YOUR world.
 ## Scope note
 
 This craft applies to the ONE assistant you talk to (the soul) and, in lighter weight, to the
-agent roster's personas (the re-theming interview under `../agents/examples/`). The soul gets all eight dimensions; a dispatched
+agent roster's personas (the re-theming interview that ships with the opt-in example roster). The soul gets all eight dimensions; a dispatched
 agent needs three (identity tensions, communication style, failure mode) because its Voice Floor
 handles the rest.

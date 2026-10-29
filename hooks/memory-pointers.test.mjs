@@ -216,3 +216,21 @@ test('--project refuses inside a clone of the Lararium repository and leaves AGE
     assert.equal(s.run('--project').status, 0);
   } finally { fs.rmSync(s.base, { recursive: true, force: true }); }
 });
+
+test('--project refuses an AGENTS.md carrying the contributor marker, wherever the stack came from', () => {
+  const s = sandbox();
+  try {
+    const guide = '<!-- lararium:contributor-file -->\n# AGENTS.md\nContributor rules.\n';
+    fs.writeFileSync(path.join(s.stack, 'AGENTS.md'), guide);
+    for (const extra of [[], ['--check']]) {
+      const result = s.run('--project', ...extra);
+      assert.equal(result.status, 2);
+      assert.match(result.stderr, /contributor guide/);
+    }
+    assert.equal(fs.readFileSync(path.join(s.stack, 'AGENTS.md'), 'utf8'), guide);
+    assert.equal(fs.existsSync(path.join(s.stack, 'GEMINI.md')), false);
+    fs.writeFileSync(path.join(s.stack, 'AGENTS.md'), '# My own rules\n');
+    assert.equal(s.run('--project').status, 0);
+    assert.match(fs.readFileSync(path.join(s.stack, 'AGENTS.md'), 'utf8'), /^# My own rules/);
+  } finally { fs.rmSync(s.base, { recursive: true, force: true }); }
+});

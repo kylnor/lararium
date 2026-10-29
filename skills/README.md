@@ -51,7 +51,7 @@ A skill is a prompt, and prompts absorb specifics. The moment a skill touches yo
 starts accreting client names, absolute paths, hostnames, dollar amounts, and the name of your
 assistant. That is fine while it stays private. It is a leak the instant you hand the skill to
 someone else. Before sharing any skill, run the same three-pass scrub the rest of this template went
-through (see `../SCRUB.md`): secrets, data, identity. The cheapest leak to catch is the one you grep
+through (see [`SCRUB.md`](https://github.com/kylnor/lararium/blob/main/SCRUB.md) upstream): secrets, data, identity. The cheapest leak to catch is the one you grep
 for.
 
 ## Do not rewrite what already exists

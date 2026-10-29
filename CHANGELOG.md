@@ -50,11 +50,16 @@ work report, doctrine only). All of it ships empty or as marked templates.
 
 **Plain agent defaults.** The default install no longer ships a themed roster. `agents/defs/` now
 holds three plain definitions (`reviewer`, `researcher`, `verifier`), each with where to look,
-what done looks like and a self-check, and the reviewer and verifier are read-only. The dispatch
-doctrine is inline by default, procedures live in skills, and a subagent has to earn its place.
-The themed roster, its workflow chains and the re-theming interview moved to
-`agents/examples/gotham/`, opt-in. The `/muninn` skill is now `/curate`. A new test
-(`hooks/persona-scrub.test.mjs`) fails CI if a persona or owner name reaches the default install.
+what done looks like and a self-check. The reviewer and verifier carry only Read, Grep and Glob,
+so read-only is enforced by the tool list, not by a sentence; running tests is the builder's job.
+The dispatch doctrine is inline by default, procedures live in skills, and a subagent has to earn
+its place. The themed roster, its workflow chains and the re-theming interview moved to
+`agents/examples/`, opt-in. The `/muninn` skill is now `/curate`. `npx lararium` leaves out the
+contributor files, the blog, the themed roster (unless `--with-examples`) and the tests, so a
+scaffolded stack carries none of them. `hooks/memory-pointers.mjs --project` refuses a stack that
+still holds the contributor `AGENTS.md`. New tests under `tests/` fail CI if a persona name or
+private data reaches the scaffolded stack, if an agent def has invalid frontmatter, or if the
+scaffold path changes.
 
 Honest limits: the shipped capture hooks are wired for Claude Code only. Codex and Gemini CLI share
 the files and the pointer block; whether they save anything on their own is for you to verify.

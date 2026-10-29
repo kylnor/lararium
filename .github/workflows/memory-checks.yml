@@ -1,5 +1,6 @@
 name: memory-checks
-# No path filter: the persona-scrub test reads every tracked file, so any change can break it.
+# No path filter: the scrub tests read every tracked file and the scaffold test packs the whole repo,
+# so any change can break them.
 on:
   push:
   pull_request:
@@ -16,4 +17,4 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - run: node --test hooks/memory-check.test.mjs hooks/memory-loop.test.mjs hooks/memory-pointers.test.mjs hooks/memory-cards.test.mjs hooks/persona-scrub.test.mjs
+      - run: node --test hooks/memory-check.test.mjs hooks/memory-loop.test.mjs hooks/memory-pointers.test.mjs hooks/memory-cards.test.mjs tests/persona-scrub.test.mjs tests/agent-defs.test.mjs tests/scaffold.test.mjs

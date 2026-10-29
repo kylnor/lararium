@@ -161,8 +161,10 @@ one loop: it sees each skill's short description first and loads the full skill 
    `agents/README.md` applies: context bloat that measurably hurts the loop, parallel work that
    wants fresh context, one agent picking the wrong tool or holding conflicting instructions, or a
    job that needs separate permissions. Do not copy an org chart.
-3. Themed rosters live in `agents/examples/`. They are an opt-in example, not part of the install.
-   Mention them only if the user asks for a themed team.
+3. Themed rosters are an opt-in example and are not in a default stack. They ship only when the
+   stack was made with `npx lararium my-stack --with-examples` (they then live in
+   `agents/examples/`), or can be browsed in the upstream repository. Mention them only if the
+   user asks for a themed team.
 
 ## Phase 5: The index (optional: only when files outgrow grep-and-read)
 1. Tell them plainly: this is the heaviest phase and they can defer it indefinitely. The brain works

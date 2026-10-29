@@ -8,6 +8,8 @@ status: draft
 
 # The Skills, and Slash Commands for a Life
 
+> Update: the memory-curation skill described below as `/muninn` is now `/curate` (v3.0).
+
 You have typed the same multi-step instruction to your assistant three times this week. End this cleanly: write down where we are, save the state, commit what changed. You type it out longhand every time, slightly differently, and sometimes you forget a step. That repeated instruction is not a chore to tolerate. It is a skill waiting to be named.
 
 A skill is a reusable prompt that becomes a slash command. In the reference setup it is a single markdown file: frontmatter that carries a name and a description, and a body that is the instruction set the assistant follows when the skill fires. Type `/end` and the assistant runs the end skill as a prompt. That is the entire mechanism. There is no framework, no plugin API. It is a prompt you saved, given a name.

@@ -35,7 +35,7 @@ at. Do not copy corpora into markdown. The card points at the corpus; it does no
 ## What does NOT ship
 - The database itself. You stand up an empty one.
 - Any corpus, any row of real data.
-- Every token, connection string, and host. See `../SCRUB.md`.
+- Every token, connection string, and host. See [`SCRUB.md`](https://github.com/kylnor/lararium/blob/main/SCRUB.md) upstream.
 
 ## Gotchas worth inheriting
 - **Sessions may serialize.** Depending on the MCP transport, calls on a single session can queue;
@@ -82,4 +82,4 @@ both.
 The schema (`schema/`), the tool surface, and the server config in this directory are the map. The
 running server, the watchers, and the database are yours to stand up: this layer is infrastructure
 you operate, not code you clone. When you have it running, walk `retrieval-doctrine.md` as the
-quality checklist, and if you ever share your implementation, strip credentials per `../SCRUB.md`.
+quality checklist, and if you ever share your implementation, strip credentials per [`SCRUB.md`](https://github.com/kylnor/lararium/blob/main/SCRUB.md) upstream.

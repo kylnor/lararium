@@ -58,7 +58,17 @@ const isUpstream = url => {
   const bare = url.trim().toLowerCase().replace(/\/?(\.git)?\/?$/, '');
   return bare.endsWith(`github.com/${UPSTREAM}`) || bare.endsWith(`github.com:${UPSTREAM}`);
 };
+// The contributor guide carries this marker. A personal stack never should: the scaffolder drops the
+// file, and a stack that still has it (a manual copy, an old scaffold) must not get it appended to.
+const CONTRIBUTOR_MARKER = '<!-- lararium:contributor-file -->';
 if (project) {
+  let agentsText = '';
+  try { agentsText = fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8'); } catch { /* none yet: --project creates it */ }
+  if (agentsText.includes(CONTRIBUTOR_MARKER)) {
+    console.error(`${path.join(root, 'AGENTS.md')} is the Lararium contributor guide, and --project would append your memory pointers to it.`);
+    console.error('Delete or move that file out of your personal stack (it is for people editing the template), then run this again and a fresh AGENTS.md is created.');
+    process.exit(2);
+  }
   const remote = spawnSync('git', ['-C', root, 'remote', 'get-url', 'origin'], { encoding: 'utf8' });
   if (remote.status === 0 && isUpstream(remote.stdout)) {
     console.error(`${root} is a clone of the Lararium repository itself, and --project would append to its contributor AGENTS.md.`);

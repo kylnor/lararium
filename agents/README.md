@@ -26,7 +26,9 @@ Four cases, and only these:
 3. **One agent keeps picking the wrong tool or holding conflicting instructions.** Splitting the
    job gives each side one clear instruction set. Try fixing the instructions first.
 4. **Separate permissions.** A reviewer or verifier should not be able to write. Its tool list is
-   read-only on purpose, so it cannot quietly fix the thing it was asked to judge.
+   Read, Grep and Glob on purpose. Bash is left out because a shell can write, and a prose rule
+   against writing is not enforcement. Running tests is the builder's job; the reviewer asks for
+   the output.
 
 Review by a *different* model or CLI than the builder usually falls under case 4, and is worth
 doing for that reason alone: a second model does not share the first one's blind spots.
@@ -41,16 +43,15 @@ Plain definitions, no backstory, in `defs/`:
 
 | agent | use it for | tools |
 |---|---|---|
-| `reviewer` | adversarial review of a finished branch, ending in a `VERDICT` line | read-only, Bash for tests |
-| `researcher` | read-heavy questions that return a compact answer with `file:line` or URL evidence | read-only, web |
-| `verifier` | re-proving a non-code deliverable against ground truth before it is trusted | read-only, Bash for checks |
+| `reviewer` | adversarial review of a finished branch, ending in a `VERDICT` line | Read, Grep, Glob only; the builder supplies test output |
+| `researcher` | read-heavy questions that return a compact answer with `file:line` or URL evidence | no edit tools; Bash and web for reading, by instruction |
+| `verifier` | re-proving a non-code deliverable against ground truth before it is trusted | Read, Grep, Glob only; the caller supplies command output |
 
 Each one says where to look, what done looks like, and a self-check. That is deliberate: a persona
 backstory adds tokens and no measured quality, while "where to look, what done looks like, how to
 check yourself" is what changes the output.
 
-Themed rosters (a full cast with voices and opinions) live in `examples/`. They are opt-in and not
-installed by default.
+Themed rosters (a full cast with voices and opinions) are an opt-in example, not installed by default (see "To make it yours" below).
 
 ## The validated loops (the part worth copying)
 - **Build to a branch, then adversarial review, then merge.** A complex build goes: the builder
@@ -77,8 +78,9 @@ installed by default.
 1. Copy the files you want from `defs/` into your assistant's agent config (in Claude Code:
    `~/.claude/agents/`, one file per agent). Start with the three; add a fourth only when a skill
    cannot do the job and you can name the case above it serves.
-2. Want a themed team anyway? `examples/` holds one complete roster, and its `RETHEME.md` is an
-   interview that rebuilds it in a theme of your own. It is flavor: nothing in the default
-   install depends on it.
+2. Want a themed team anyway? One complete roster is available as an opt-in example
+   (`npx lararium my-stack --with-examples` puts it in `agents/examples/`, or browse it upstream).
+   Its `RETHEME.md` is an interview that rebuilds it in a theme of your own. It is flavor: nothing
+   in the default install depends on it.
 3. If you later re-derive this layer from your own live system to share it, scrub the defs per
-   `../SCRUB.md` first: agent prompts absorb owner specifics the same way skills do.
+   [`SCRUB.md`](https://github.com/kylnor/lararium/blob/main/SCRUB.md) (upstream) first: agent prompts absorb owner specifics the same way skills do.

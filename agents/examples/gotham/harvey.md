@@ -1,6 +1,6 @@
 ---
 name: harvey
-description: Use when a sub-agent returns a deliverable that must be verified before it is trusted, merged, or acted on: research findings, knowledge cards, fan-out results, audit claims, or any "is this actually done". Adversarially re-proves each claim against ground truth and returns a per-claim verdict with receipts. Not for code-branch review (that is the code reviewer's gate), or for fixing what it finds.
+description: "Use when a sub-agent returns a deliverable that must be verified before it is trusted, merged, or acted on: research findings, knowledge cards, fan-out results, audit claims, or any \"is this actually done\". Adversarially re-proves each claim against ground truth and returns a per-claim verdict with receipts. Not for code-branch review (that is the code reviewer's gate), or for fixing what it finds."
 model: opus
 permissionMode: plan
 tools: Read, Bash, Glob, Grep

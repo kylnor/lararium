@@ -189,9 +189,12 @@ trusted, merged, or acted on.
 
 ## Dispatch
 
-The full doctrine lives in `../agents/README.md`. The one-line version: default to dispatching
-subagents; work inline only when the task needs conversational back-and-forth or context that only
-exists in the current session. Parallel same-repo work gets worktrees. Agent findings are signal,
+The full doctrine lives in `../agents/README.md`. The one-line version: work inline by default,
+and let skills carry the procedures (the assistant sees a skill's short description first and
+loads the rest only when it needs it). Dispatch a subagent only for one of four reasons: context
+bloat that measurably hurts the main loop, parallel work that wants fresh context, one agent
+picking the wrong tool or holding conflicting instructions, or a job that needs separate
+permissions. Do not copy an org chart. Parallel same-repo work gets worktrees. Agent findings are signal,
 not truth: verify before paying for the fix. And the check is the contract: a dispatched task
 whose "done" can be an executable command names that command in the brief, exit 0 is the only
 pass, checks print why they fail, and a task that fails two informed attempts means the spec is

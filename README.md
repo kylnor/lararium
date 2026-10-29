@@ -6,7 +6,7 @@ in it.*
 
 A clone-and-run scaffold for a personal agentic system. Six layers: a file-based knowledge
 **brain**, a layered **soul** (the assistant you actually talk to), a **clocktower** index over
-your data, a roster of **agents** the assistant dispatches, the **hooks** that make it feel alive
+your data, a few plain **agents** for the jobs that earn one, the **hooks** that make it feel alive
 session to session, and the **skills** it runs as slash commands.
 
 It ships empty on purpose. The architecture was never the moat: your life is. So you get the
@@ -14,7 +14,7 @@ shrine, and you bring your own gods.
 
 > **This is a template**, extracted from a working private system and depersonalized. It ships
 > structure, conventions, and hard-won patterns. It ships **none** of the original owner's data,
-> persona, or secrets. See `SCRUB.md` for exactly what was removed and how to verify nothing leaked.
+> persona, or secrets. See [`SCRUB.md`](https://github.com/kylnor/lararium/blob/main/SCRUB.md) in the upstream repo for exactly what was removed and how to verify nothing leaked.
 
 ## Start here in five minutes
 
@@ -75,8 +75,9 @@ agents that build), with `workspaces/` for projects that have earned their own f
    an empty database and no credentials.
 4. **`agents/`**: the dispatch doctrine and three plain defaults (a reviewer, a researcher, a
    verifier). Start with one assistant in one loop and put procedures in skills; add a subagent
-   only when it earns its place. A full themed roster ships as an opt-in example in
-   `agents/examples/`, with an interview for rebuilding it in a theme of your own.
+   only when it earns its place. A full themed roster is an opt-in example that is not in a default stack:
+   make the stack with `npx lararium my-stack --with-examples`, or browse it upstream. It comes
+   with an interview for rebuilding it in a theme of your own.
 5. **`hooks/`**: the loops that make it feel alive. Session-start briefing, the heartbeat that
    remembers yesterday, voice integrity, compaction continuity, safety rails, dispatch routing.
    Doctrine plus minimal reference implementations that run on plain files, no database required.
@@ -98,7 +99,7 @@ line into your session: type **`/upgrade`**. That skill fetches the latest templ
 upgrade interview in `UPGRADING.md` for you, applying the doc-only deltas directly and asking you only
 about the structural ones. You answer questions; your assistant does the typing. The manual fallback,
 for a stack that has not wired the hook yet: **Watch releases** on the upstream repo and read
-`CHANGELOG.md`, where each release maps to an entry that classifies it as a doc copy-in or a full
+[`CHANGELOG.md`](https://github.com/kylnor/lararium/blob/main/CHANGELOG.md), where each release maps to an entry that classifies it as a doc copy-in or a full
 interview and names exactly which files moved since your own `STACK_VERSION`.
 
 ## Getting it onto your machine
@@ -173,7 +174,7 @@ last: leverage on top of a system that already works.
 5. Wire  hooks/                   # the loops: briefing, heartbeat, rails
 6. Adopt skills/                  # the session-lifecycle slash commands
 7. Stand up clocktower/           # optional: the index, when you need it
-8. Adopt agents/                  # optional: the roster + dispatch doctrine
+8. Adopt agents/                  # optional: three plain defs + when a subagent earns its place
 ```
 
 Already running an earlier version? Open your stack beside this template and say *"run the upgrade
