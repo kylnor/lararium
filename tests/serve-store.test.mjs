@@ -1235,3 +1235,27 @@ test('final watch-out 3: a release failure after the index landed does not make 
     assert.equal(parseJournal(fs.readFileSync(journalFile(s), 'utf8')).length, 1);
   } finally { s.done(); }
 });
+
+test('final check: a retry after a failed journal flush flushes the card and the journal again before it says saved', async () => {
+  const s = stack();
+  try {
+    const store = createStore({ root: s.memory });
+    const restore = failFsync({ nth: 2, code: 'EIO' }); // the second flush is the journal's
+    try {
+      await withUnlinkFailures(['reflush-me.md'], () => assert.rejects(() => store.remember(fact('reflush-me')), /residual card/));
+    } finally { restore(); }
+    const failAgain = failFsync({ nth: 2, code: 'EIO' }); // the retry flushes card then journal; the journal fails again
+    try {
+      await assert.rejects(() => store.remember(fact('reflush-me')), err => err instanceof InputError && /could not be flushed to disk \(EIO\)/.test(err.message) && !err.message.includes(s.memory));
+    } finally { failAgain(); }
+    assert.deepEqual(pointerNames(s), [], 'a retry whose flush failed is not acknowledged and adds no line');
+    const spy = spyOnFsync();
+    try {
+      assert.equal((await store.remember(fact('reflush-me'))).file, 'reflush-me.md');
+    } finally { spy.restore(); }
+    const ino = file => fs.statSync(path.join(s.memory, file)).ino;
+    const flushed = spy.calls.filter(c => !c.dir).map(c => c.ino);
+    assert.ok(flushed.includes(ino('reflush-me.md')) && flushed.includes(ino('.lararium-remembered')), 'card and journal were flushed by the retry');
+    assert.deepEqual(pointerNames(s), ['reflush-me.md']);
+  } finally { s.done(); }
+});

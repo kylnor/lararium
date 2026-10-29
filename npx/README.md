@@ -109,8 +109,11 @@ does not claim otherwise, and does not depend on it.
 **What is guaranteed.** On a local disk, an acknowledged `remember` is never lost, power loss
 included: the card file is created exclusively, written and flushed to disk (fsync), then the journal
 record is appended and flushed, then the index is replaced (written, flushed, renamed into place) and
-the memory folder is flushed so the rename itself holds. A failed flush fails the call and takes the
-same cleanup as a failed write. If the card or the journal record cannot be written in full (an error,
+the memory folder is flushed so the rename itself holds. That last step needs a filesystem that
+lets a folder be flushed; where the platform refuses (Windows, some filesystems), the server carries
+on without it, and a power cut right after a write can still lose that write. A retry of a call
+that failed after its card landed flushes the card and the journal again before it reports success.
+A failed flush fails the call and takes the same cleanup as a failed write. If the card or the journal record cannot be written in full (an error,
 a short write, a failed flush or a failed close), the call fails and removes the card it just made.
 That cleanup covers the card and journal steps only. A failure after journaling (the index write, or
 releasing the lock after the index landed) reports an error but leaves the journaled card, which repair

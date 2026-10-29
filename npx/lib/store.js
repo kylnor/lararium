@@ -285,6 +285,20 @@ function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT
     if (failure) throw failure;
   }
 
+  // A retry acknowledges a card an earlier call wrote, and that call may have failed on the very flush
+  // that makes the card or its journal record durable. Flush both again before saying it is saved.
+  function reflush(target) {
+    try {
+      for (const file of [target, path.join(realFolder(), JOURNAL_NAME)]) {
+        const fd = openNoFollow(file, fs.constants.O_RDONLY);
+        try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+      }
+    } catch (error) {
+      if (error instanceof GuardError) throw error;
+      throw new InputError(`the card or the memory journal could not be flushed to disk (${error && error.code ? error.code : 'flush error'}); send the request again`);
+    }
+  }
+
   // The valid journal records, oldest first, as a Map of card file to the { nonce, hash } pairs recorded
   // for it (a name can be remembered, deleted and remembered again). See parseJournal for what counts.
   function journaled() {
@@ -538,6 +552,7 @@ function createStore({ root, lockStaleMs = LOCK_STALE_MS, lockWaitMs = LOCK_WAIT
         if (!serverMade || onDisk !== cardText(card, id) || demotedFiles().has(file)) {
           throw new InputError(`a card named ${card.name} already exists; choose a different name`);
         }
+        reflush(target);
       }
       if (created) {
         try {
