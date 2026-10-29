@@ -88,7 +88,11 @@ write into the memory folder is trusted, because it can edit the cards directly.
 server avoids following symbolic links it did not create: the index, the lock file and the vector
 cache are opened without following a link and read or written through the open file, and the cache
 folder is checked again before anything is committed. It does not try to win a race against a hostile
-local writer. One accepted gap: rotating the tokens does not cancel a request that was already
+local writer. The index lock is only ever taken by one exclusive create, and a lock that looks
+abandoned is reclaimed under a second, short-lived marker file (`.memory-index.lock.reclaim`) after
+reading it again, so a live server's lock is never moved. A server that crashes inside that
+microsecond window can leave the marker behind; it is cleared once it is a few seconds old and its
+process is gone. One accepted gap: rotating the tokens does not cancel a request that was already
 authenticated and is still in flight; it finishes, and every request after it is refused.
 
 
