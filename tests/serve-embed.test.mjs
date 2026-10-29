@@ -129,15 +129,15 @@ test('model not pulled (server answers an error): falls back to full-text', asyn
 test('a failing embedding server never shows the caller a model path or endpoint', async () => {
   const f = folder();
   const ollama = await fakeOllama({ status: 503 });
-  const model = '/home/example/models/embedding.gguf';
+  const model = '/opt/models/private-embedding.gguf';
   try {
     const out = await toolSearch(f.store, createSemantic({ store: f.store, backend: 'llamacpp', url: ollama.url, model }), 'invoice');
     assert.match(out, /semantic search unavailable: embedding server answered 503/);
-    assert.doesNotMatch(out, /example\/models|embedding\.gguf/);
+    assert.doesNotMatch(out, /opt\/models|private-embedding/);
     assert.ok(!out.includes(ollama.url));
     const down = await toolSearch(f.store, createSemantic({ store: f.store, url: 'http://127.0.0.1:9', model }), 'invoice');
     assert.match(down, /embedding server not reachable/);
-    assert.ok(!down.includes('127.0.0.1:9') && !down.includes('embedding.gguf'));
+    assert.ok(!down.includes('127.0.0.1:9') && !down.includes('private-embedding'));
   } finally { ollama.close(); f.done(); }
 });
 
