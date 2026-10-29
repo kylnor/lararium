@@ -23,12 +23,16 @@ cloud app in on it, the server also speaks HTTP, and that needs a public HTTPS a
 tunnel you control. That part is optional, and it changes as the apps change, so it lives in a dated
 box in the guide.
 
-Every HTTP call needs a token. There are two. The read token can search and read. Only the write token
-can remember. Rotate them with the built-in command and the old ones stop working right away, no restart.
+Every memory call over HTTP needs a token. There are two. The read token can search and read. Only
+the write token can remember. Rotate them with the built-in command and the old ones stop working on
+the next call, no restart. (Tokens you set in environment variables are the exception. Change those
+and restart.)
 
-A remembered card is never lost. If two apps write at the same instant, the worst case is a card that
-is missing from the map for a moment, and the next write puts it back. The memory check shows it in
-between. A card you moved out of the map on purpose stays out.
+Once the server says a card is saved, the card is on disk. If two apps write at the same instant, the
+worst case is a card that drops off the map for a moment, and the next write or the next start puts it
+back. The memory check shows it in between. To take a card off the map on purpose, list it in
+DEMOTED.md and the server leaves it alone. It's built for a folder on your own disk, not a network
+share.
 
 Search is plain text by default. If you want it to find things by meaning, the server can use a small
 embedding model running on your own machine. It's off until you turn it on, it never sends your cards
