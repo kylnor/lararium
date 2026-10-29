@@ -80,8 +80,8 @@ Limits worth knowing: it serves `memory/` only; `remember` adds cards and never 
 correction is a new card); several servers on one folder take turns on `memory/MEMORY.md` through a
 lock file (`.memory-index.lock`), and a symbolic link in place of `MEMORY.md` or `.index/` is refused.
 The cards are canonical and the index line is derived: every card the server writes is also recorded
-in `memory/.lararium-remembered` (an append-only list of file names), and the index is brought back in
-line with it.
+in `memory/.lararium-remembered` (an append-only list of file names, one record each), and the index is
+brought back in line with it.
 
 **Threat model.** The server defends against the callers of its tools: HTTP and stdio clients,
 including cloud apps reaching it over a tunnel. They get a token tier, names that can only be plain
@@ -98,14 +98,27 @@ a lock is only taken over when its holder is gone. Removing a file by name in No
 then an unlink, so a process paused at exactly the wrong moment can still overlap another. The server
 does not claim otherwise, and does not depend on it.
 
-**What is guaranteed.** A remembered card is never lost: the card file is created exclusively and
-journaled before its index line is written. If a concurrent writer drops the index line, the line is
-restored on the next `remember` by any server on that folder, or when a server starts, using the
-card's own description. Until then `node hooks/memory-check.mjs .` shows the card as orphaned. The
-repair only touches cards the server itself wrote: a card you wrote by hand is never given a pointer,
-and a card you demoted (line removed from `MEMORY.md` and listed in `DEMOTED.md`) is never given one
-back. Local disks only: appends to the journal are not atomic on network filesystems, and the lock
-needs hard links.
+**What is guaranteed.** An acknowledged `remember` is never lost: the card file is created exclusively,
+then journaled, then its index line is written. If the journal record cannot be written in full, the
+call fails and removes the card it just made, so a failed `remember` leaves nothing behind. If a
+concurrent writer drops the index line, the line is restored on the next `remember` by any writable
+server on that folder, or when a writable server starts (a `--read-only` server never repairs), using
+the card's own description. Repair is best effort: it makes up to five passes per run and it gives up
+rather than guess when the index ends inside an unclosed `<!--` comment, so a startup repair that
+fails is not retried until the next `remember` or start. Until a line is restored,
+`node hooks/memory-check.mjs .` shows the card as orphaned. The repair only touches cards the server
+itself wrote: a card you wrote by hand is never given a pointer, and a card you demoted (line removed
+from `MEMORY.md` and listed in `DEMOTED.md`) is never given one back. A `remember` that names a card
+already on disk finishes that card's index line only when the card is in the journal and its bytes
+match; a hand-written card with identical bytes is refused and never journaled. Descriptions with an
+HTML comment marker (`<!--`, `-->`) or a control character are refused, so a caller cannot hide or
+inject index lines.
+
+**What is not guaranteed.** A crash (or kill) between creating a card and appending its journal record
+leaves a card that is not journaled. That call was never acknowledged, but nothing can tell the card
+from a hand-written one afterwards, so repair does not adopt it: `memory-check` reports it as
+orphaned, and the fix is to add its index line by hand or delete the file. Local disks only: appends to
+the journal are not atomic on network filesystems, and the lock needs hard links.
 One accepted gap: rotating the tokens does not cancel a request that was already
 authenticated and is still in flight; it finishes, and every request after it is refused.
 

@@ -29,7 +29,8 @@ MCP SDK, no database. Optional semantic search with a local EmbeddingGemma 2, of
 back to full-text whenever the model is missing. Details in `npx/README.md`. Rotating the tokens
 revokes on a server that is already running, the index and vector cache refuse symbolic links, the
 vector cache carries a model fingerprint, and several servers on one folder take turns on the index;
-if a race still drops an index line, the card is safe and the line is restored on the next write or start.
+if a race still drops an index line, the card is safe and the line is restored on the next write or on the start of a writable server
+(`--read-only` never repairs; a crash between creating a card and journaling it is the one case repair cannot adopt).
 
 **INSTALL.md Phase 5 is rewritten.** It used to describe the Postgres index. It is now the guided,
 local-first setup: start the server, add it to each tool, prove a round trip, then optionally add
