@@ -31,6 +31,11 @@ revokes on a server that is already running, the index and vector cache refuse s
 vector cache carries a model fingerprint, and several servers on one folder take turns on the index;
 if a race still drops an index line, the card is safe and the line is restored on the next write or on the start of a writable server
 (`--read-only` never repairs; a crash between creating a card and journaling it is the one case repair cannot adopt).
+Journal records are self-checking (`L1 <name>.md <id> <check>`) and each card carries the matching
+`lararium-id`, so a torn or failed append can never become a record later and a hand-written card of
+the same name is never adopted. If cleanup after a failed `remember` cannot remove the card, the
+error names it. The pointer rules in `hooks/memory-check.mjs` now match the server's, and C1 control
+characters are refused in descriptions.
 
 **INSTALL.md Phase 5 is rewritten.** It used to describe the Postgres index. It is now the guided,
 local-first setup: start the server, add it to each tool, prove a round trip, then optionally add

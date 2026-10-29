@@ -109,8 +109,9 @@ destroyed by a bad edit. Now a card is in exactly one of three states:
 - **orphaned**: neither. Something went wrong. Find out what before adding anything else.
 
 If the memory server (`npx lararium serve`) is in use, it also keeps `.lararium-remembered` in this
-folder: one file name per line for each card it wrote, so it can restore an index line that a
-concurrent writer dropped. It is not a card and not an index; leave it alone (it may be committed or
+folder: one self-checking record per card it wrote (the card carries a matching `lararium-id` line in
+its frontmatter), so it can restore an index line that a concurrent writer dropped. Leave the
+`lararium-id` line in place; a card without it is yours, and the server never touches it. It is not a card and not an index; leave it alone (it may be committed or
 ignored, as you prefer).
 
 `node hooks/memory-check.mjs .` reports all three, plus dangling pointers (a line for a file that

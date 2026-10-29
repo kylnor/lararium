@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const entry = path.join(repo, 'npx/index.js');
+const { journalRecord } = createRequire(import.meta.url)(path.join(repo, 'npx/lib/store.js'));
 const sdk = createRequire(path.join(repo, 'npx/package.json'));
 const { Client } = sdk('@modelcontextprotocol/sdk/client/index.js');
 const { StdioClientTransport } = sdk('@modelcontextprotocol/sdk/client/stdio.js');
@@ -60,9 +61,10 @@ test('stdio --read-only does not offer remember', async () => {
 test('stdio: a server start restores an index line a concurrent writer dropped; --read-only start writes nothing', async () => {
   const f = memoryFolder();
   try {
-    const card = '---\nname: dropped-line\ndescription: The line for this card was lost.\ntype: project\n---\n\nStill here.\n';
+    const nonce = 'c0ffee'.repeat(4);
+    const card = `---\nname: dropped-line\ndescription: The line for this card was lost.\ntype: project\nlararium-id: ${nonce}\n---\n\nStill here.\n`;
     fs.writeFileSync(path.join(f.memory, 'dropped-line.md'), card);
-    fs.writeFileSync(path.join(f.memory, '.lararium-remembered'), 'dropped-line.md\n');
+    fs.writeFileSync(path.join(f.memory, '.lararium-remembered'), journalRecord('dropped-line.md', nonce));
     const index = path.join(f.memory, 'MEMORY.md');
     const before = fs.readFileSync(index, 'utf8');
 

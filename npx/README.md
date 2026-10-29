@@ -80,8 +80,10 @@ Limits worth knowing: it serves `memory/` only; `remember` adds cards and never 
 correction is a new card); several servers on one folder take turns on `memory/MEMORY.md` through a
 lock file (`.memory-index.lock`), and a symbolic link in place of `MEMORY.md` or `.index/` is refused.
 The cards are canonical and the index line is derived: every card the server writes is also recorded
-in `memory/.lararium-remembered` (an append-only list of file names, one record each), and the index is
-brought back in line with it.
+in `memory/.lararium-remembered` (an append-only journal, one self-checking record per card), and the
+index is brought back in line with it. Each call also stamps its card with a random `lararium-id` in the
+frontmatter; a record is `\nL1 <name>.md <id> <check>\n`, where `<check>` is a sha-256 prefix of the rest
+of the line. The journal only vouches for a card whose id matches a valid record for its name.
 
 **Threat model.** The server defends against the callers of its tools: HTTP and stdio clients,
 including cloud apps reaching it over a tunnel. They get a token tier, names that can only be plain
@@ -99,8 +101,9 @@ then an unlink, so a process paused at exactly the wrong moment can still overla
 does not claim otherwise, and does not depend on it.
 
 **What is guaranteed.** An acknowledged `remember` is never lost: the card file is created exclusively,
-then journaled, then its index line is written. If the journal record cannot be written in full, the
-call fails and removes the card it just made, so a failed `remember` leaves nothing behind. If a
+then journaled, then its index line is written. If the journal record cannot be written in full (an
+error, a short write, or a failed close), the call fails and removes the card it just made. A failed
+`remember` leaves nothing behind unless that removal also fails; see below. If a
 concurrent writer drops the index line, the line is restored on the next `remember` by any writable
 server on that folder, or when a writable server starts (a `--read-only` server never repairs), using
 the card's own description. Repair is best effort: it makes up to five passes per run and it gives up
@@ -109,15 +112,25 @@ fails is not retried until the next `remember` or start. Until a line is restore
 `node hooks/memory-check.mjs .` shows the card as orphaned. The repair only touches cards the server
 itself wrote: a card you wrote by hand is never given a pointer, and a card you demoted (line removed
 from `MEMORY.md` and listed in `DEMOTED.md`) is never given one back. A `remember` that names a card
-already on disk finishes that card's index line only when the card is in the journal and its bytes
-match; a hand-written card with identical bytes is refused and never journaled. Descriptions with an
-HTML comment marker (`<!--`, `-->`) or a control character are refused, so a caller cannot hide or
-inject index lines.
+already on disk finishes that card's index line only when the card carries an id that a valid journal
+record recorded for that name and its bytes match what the call would write; a hand-written card of
+the same name, even a byte-for-byte copy without the id, is refused and never adopted. A torn or short
+journal append can never be completed into a record by what is appended later: a record needs its
+checksum and must be followed by a blank line or the end of the file. Descriptions with an HTML
+comment marker (`<!--`, `-->`) or a control character (C0, DEL or C1) are refused, so a caller cannot
+hide or inject index lines. The index parser counts `- name.md` and `- [text](path/name.md)` lines
+(anything may follow) outside `<!-- -->` blocks, and `memory-check` uses the same rules.
 
 **What is not guaranteed.** A crash (or kill) between creating a card and appending its journal record
 leaves a card that is not journaled. That call was never acknowledged, but nothing can tell the card
 from a hand-written one afterwards, so repair does not adopt it: `memory-check` reports it as
-orphaned, and the fix is to add its index line by hand or delete the file. Local disks only: appends to
+orphaned, and the fix is to add its index line by hand or delete the file. If the journal cannot be
+written and the server then also cannot remove the card it just created (a permissions problem, say),
+the tool error says the call failed and that a residual card may remain at `<name>.md` in the memory
+folder. Recover by deleting that file, after which the same `remember` works; or keep it by adding its
+line to `MEMORY.md` by hand. The residual card is not adopted by repair and an identical retry is
+refused, unless the journal record was written in full and only the close failed: that card is the
+server's own, and a retry finishes its index line. Local disks only: appends to
 the journal are not atomic on network filesystems, and the lock needs hard links.
 One accepted gap: rotating the tokens does not cancel a request that was already
 authenticated and is still in flight; it finishes, and every request after it is refused.
