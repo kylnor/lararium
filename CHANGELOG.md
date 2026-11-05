@@ -15,6 +15,22 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 
 ---
 
+## v3.2 (2026-11-05): additive-doc
+
+The lead with no hands. `agents/defs/lead.md` is an optional Claude Code dispatcher for running
+more than one piece of work at once. It answers first, sends every job to a background worker,
+and relays proof when the worker returns. No shell, edit or MCP tools: staying answerable is
+enforced by what it cannot do.
+
+**INSTALL.md Phase 4** offers the lead first, with its token cost, then the existing three defs.
+The default stays one assistant in one loop. Run the install interview in a normal `claude`
+session first, then start the lead with `claude --agent lead`.
+
+**To adopt:** copy `agents/defs/lead.md` into your agent config. Nothing else changes; existing
+stacks need no migration.
+
+---
+
 ## v3.1.1 (2026-11-05): additive-doc
 
 Memory that can disagree. A new card can explicitly supersede an older claim or contest it, and
