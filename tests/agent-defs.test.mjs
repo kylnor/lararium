@@ -94,8 +94,6 @@ test('the lead grants only dispatch and reading tools', () => {
   const block = frontmatter(fs.readFileSync(path.join(root, 'agents/defs/lead.md'), 'utf8'));
   const tools = /^tools: *(.*)$/m.exec(block)[1].split(',').map(s => s.trim());
   assert.deepEqual(tools, ['Agent', 'SendMessage', 'ListAgents', 'TaskStop', 'Read', 'Glob', 'Grep']);
-  assert.ok(!tools.some(tool => /^(Bash|Edit|Write)$/i.test(tool) || /^mcp/i.test(tool)),
-    'the lead must have no shell, edit, write or MCP tools');
 });
 
 const py = spawnSync('python3', ['-c', 'import yaml'], { encoding: 'utf8' });

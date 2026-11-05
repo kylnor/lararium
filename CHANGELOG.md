@@ -19,14 +19,14 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 
 The lead with no hands. `agents/defs/lead.md` is an optional Claude Code dispatcher for running
 more than one piece of work at once. It answers first, sends every job to a background worker,
-and relays proof when the worker returns. No shell, edit or MCP tools: staying answerable is
-enforced by what it cannot do.
+and relays proof when the worker returns. No shell, edit or MCP tools: doing the work itself is
+ruled out by what it cannot do.
 
 **INSTALL.md Phase 4** offers the lead first, with its token cost, then the existing three defs.
 The default stays one assistant in one loop. Run the install interview in a normal `claude`
 session first, then start the lead with `claude --agent lead`.
 
-**To adopt:** copy `agents/defs/lead.md` into your agent config, with `researcher.md` and
+**To adopt, if the owner wants it:** copy `agents/defs/lead.md` into your agent config, with `researcher.md` and
 `reviewer.md` beside it, because the lead sends reads and reviews to them. Nothing else changes;
 existing stacks need no migration.
 

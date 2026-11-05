@@ -176,9 +176,9 @@ default sees each skill's short description first and loads the full skill only 
    Every job becomes a subagent, so it costs more tokens than working inline. Claude Code only: copy it into
    `.claude/agents/` in the stack folder so `claude --agent lead` run from the stack finds it, or
    into `~/.claude/agents/` for every project. Run the install interview in a normal `claude`
-   session first, not in the lead, which has no file tools. The lead sends reads to `researcher`
+   session first, not in the lead, which has no write tools. The lead sends reads to `researcher`
    and reviews to `reviewer`, so install those beside it.
-   Then offer the other three plain defs in `agents/defs/`: `reviewer.md` (adversarial review, read-only),
+   Then offer the rest of the plain defs in `agents/defs/` (all three if the lead was declined): `reviewer.md` (adversarial review, read-only),
    `researcher.md` (read-heavy questions, compact answers) and `verifier.md` (re-proves a
    deliverable against ground truth, read-only). Copy the ones they want into their assistant's agent
    config. The reviewer works best on a different model or CLI than the builder.

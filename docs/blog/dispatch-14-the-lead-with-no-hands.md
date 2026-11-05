@@ -20,7 +20,7 @@ A missing tool is a rule. A sentence in a prompt is a suggestion.
 
 The lead in v3.2 has no shell, no edit tools and no MCP tools. It can dispatch workers, send them
 messages, stop them and read the proof they return. It cannot disappear into a build because it
-cannot begin one. Every job goes to a background worker, even the small ones.
+cannot begin one. Every job goes to a background worker, apart from a one-file lookup it can answer itself.
 
 Its whole job is to stay answerable. Answer the owner first. Send the work out. When a worker
 returns, check the evidence and bring it back. Leave room for the next question while the first
@@ -33,4 +33,5 @@ work to keep moving at once.
 This is an optional Claude Code definition. Run the install interview in a normal `claude`
 session first, then copy `agents/defs/lead.md` into your agent config, with `researcher.md` and `reviewer.md`
 beside it, and run `claude --agent lead`.
+
 The lead stays within reach because the work is elsewhere.

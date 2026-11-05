@@ -80,7 +80,7 @@ Run these in order. Every step only adds, so skip any the owner declines.
 5. **Optional operating shape.** Offer `governance/`, `forge/`, `workspaces/` and the ops guards
    one at a time and only where the owner feels the pain. Never scaffold a workspace in advance.
 6. **Agents and the rename.** The roster is now four plain defs in `agents/defs/`
-   (`lead.md`, optional, `reviewer.md`, `researcher.md`, `verifier.md`), and the themed roster moved to
+   (`lead.md`, optional and new in v3.2, see its CHANGELOG entry for the cost and the sibling defs it needs, `reviewer.md`, `researcher.md`, `verifier.md`), and the themed roster moved to
    `agents/examples/`. Do not touch agent defs the owner already runs; offer the four plain
    ones beside them. The memory-curation skill was renamed: **`/muninn` is now `/curate`**,
    and its body changed too, so a rename alone is not an upgrade (the v2 body still has the old
