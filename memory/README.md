@@ -160,7 +160,9 @@ outdated card through `DEMOTED.md` using the order below.
 - prefers-short-replies.md - Jane wants replies under five lines unless she asks for detail.
 ```
 
-Prepend new lines below any pinned cards. The startup hook injects the first 200 lines (about 24 KB) and drops the rest,
+Prepend new lines below the consecutive pinned entries at the top. A card pinned by hand farther
+down does not move the insertion point; move its index line to the top to keep it above new entries.
+The startup hook injects the first 200 lines (about 24 KB) and drops the rest,
 so an oldest-first index loses the newest card first, silently, on the day it is written.
 
 A card with no line in the index is **pull-tier**: found by search, never pushed into context.
@@ -188,7 +190,9 @@ If the memory server (`npx lararium serve`) is in use, it also keeps `.lararium-
 folder: one self-checking record per card it wrote (the card carries a matching `lararium-id` line in
 its frontmatter and the record holds a hash of the card's exact bytes), so it can restore an index
 line that a concurrent writer dropped. Leave the `lararium-id` line in place. Server state changes append a fresh record with the same id when the old bytes were vouched for.
-A card you wrote or edited by hand is yours: once its bytes differ from what the server wrote, the server never touches it.
+A card you wrote or edited by hand is not automatically re-adopted for index repair. Explicit
+relations and resolution can still rewrite its frontmatter while preserving its body bytes.
+A hand-written card without `origin: user` is not protected by the hold.
 `.lararium-remembered` is not a card and not an index; leave it alone (it may be committed or ignored,
 as you prefer).
 

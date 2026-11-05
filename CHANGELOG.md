@@ -30,6 +30,8 @@ list surface states, pins remain above new index lines, and `stale_days` offers 
 without automatic eviction. Reads record timestamps in a sidecar, never in a card; read-tier callers
 write nothing.
 
+Explicit relations and resolution can rewrite hand-edited cards' frontmatter, preserving body bytes; the hold requires `origin: user`.
+
 **To adopt:** update the server package and copy the card-state documentation from
 `memory/README.md` and `npx/README.md`. Existing v3.1 cards with no status remain active, with no
 migration. The files stay canonical, with no database and no new dependency.

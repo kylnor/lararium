@@ -48,7 +48,7 @@ const FRONTMATTER_RE = /^---\r?\n(?:([\s\S]*?)\r?\n)?---(?:\r?\n|$)/;
 // same parser (it ships standalone); tests/serve-store.test.mjs runs both against one fixture table.
 const ENTRY_RE = /^- (?:\[[^\]]*\]\(([^)]+\.md)\)|([A-Za-z0-9][A-Za-z0-9._-]*\.md)(?![A-Za-z0-9._-]))/;
 const HTML_COMMENT_MARK = /<!--|-->/;
-const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/; // C0, DEL and C1 (U+009B is a one-character CSI)
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/; // C0, DEL, C1 and Unicode line separators
 const HEAL_PASSES = 5; // re-reads of the index after a commit before giving up (the next remember or start retries)
 const CARD_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MAX_CARD_NAME = 80;
@@ -82,8 +82,10 @@ function parseCard(file, text) {
   const m = text.match(FRONTMATTER_RE);
   if (!m) return card;
   const front = m[1] || '';
+  const frontLines = front.split(/\r?\n/);
   const field = key => {
-    const found = front.match(new RegExp(`^${key}:[ \\t]*(.*)$`, 'm'));
+    const pattern = new RegExp(`^${key}:[ \\t]*([\\s\\S]*)$`);
+    const found = frontLines.map(line => line.match(pattern)).find(Boolean);
     if (!found) return '';
     const raw = found[1].trim();
     if (raw.startsWith('"')) { // written by yamlLine below: a JSON string is a YAML double-quoted scalar
@@ -172,8 +174,9 @@ function pointersOf(indexText) {
 function withEntry(indexText, entry, pinned = new Set(), isPinned = false) {
   const { lines, entries } = parseIndex(indexText);
   if (entries.length) {
-    const pins = entries.filter(e => pinned.has(e.file));
-    const at = !isPinned && pins.length ? pins[pins.length - 1].at + 1 : entries[0].at;
+    let k = 0;
+    while (k < entries.length && pinned.has(entries[k].file)) k++;
+    const at = isPinned || k === 0 ? entries[0].at : entries[k - 1].at + 1;
     lines.splice(at, 0, entry);
     return lines.join('\n');
   }
@@ -426,9 +429,13 @@ function createStore({ root, readOnly = false, log = stderrLog, lockStaleMs = LO
   function heldCards() {
     const held = pinAuxDir(folder, '_held');
     if (!held) return [];
-    const cards = fs.readdirSync(held.path).filter(f => f.endsWith('.md') && !NOT_CARDS.has(f)).map(file => {
-      const bytes = readFileNoFollow(resolveInside(held.path, file), null);
-      return { file, text: bytes.toString('utf8'), hash: contentHash(bytes), held: true, ...parseCard(file, bytes.toString('utf8')) };
+    const cards = fs.readdirSync(held.path).filter(f => f.endsWith('.md') && !NOT_CARDS.has(f) && /^[A-Za-z0-9]/.test(f)).flatMap(file => {
+      try {
+        const bytes = readFileNoFollow(resolveInside(held.path, file), null);
+        if (bytes === null) throw new GuardError(`${file} is no longer there`);
+        const text = bytes.toString('utf8');
+        return [{ file, text, hash: contentHash(bytes), held: true, ...parseCard(file, text) }];
+      } catch (error) { if (error instanceof GuardError) return []; throw error; }
     });
     held.check();
     return cards;
@@ -618,15 +625,20 @@ function createStore({ root, readOnly = false, log = stderrLog, lockStaleMs = LO
     const root = card.held ? pinAuxDir(folder, '_held') : null;
     const target = resolveInside(root ? root.path : folder, card.file);
     const bytes = readFileNoFollow(target, null);
-    const old = bytes.toString('utf8');
+    // Latin1 gives one character per byte, so delimiter offsets remain raw byte offsets.
+    const old = bytes.toString('latin1');
     const match = old.match(FRONTMATTER_RE);
     if (!match) throw new InputError(`${card.name} has no valid frontmatter`);
-    const vouched = vouches(journaled(root ? root.path : realFolder()), card.file, parseCard(card.file, old).id, contentHash(bytes));
+    const vouched = vouches(journaled(root ? root.path : realFolder()), card.file, parseCard(card.file, bytes.toString('utf8')).id, contentHash(bytes));
     const eol = old.startsWith('---\r\n') ? '\r\n' : '\n';
-    const lines = (match[1] || '').split(/\r?\n/).filter(line => !Object.keys(changes).some(key => line.startsWith(`${key}:`)));
+    const opening = old.match(/^---\r?\n/)[0];
+    const closing = match[0].match(/---(?:\r?\n|$)$/)[0];
+    const front = match[0].slice(opening.length, match[0].length - closing.length);
+    const lines = (front.match(/[^\n]*\n|[^\n]+$/g) || []).filter(line => !Object.keys(changes).some(key => line.startsWith(`${key}:`)));
     const added = metadataLines(changes);
-    const front = `---${eol}${lines.join(eol)}${added ? eol + added.replace(/\n/g, eol) : ''}${eol}---${match[0].endsWith('\n') ? eol : ''}`;
-    const next = Buffer.concat([Buffer.from(front), bytes.subarray(Buffer.byteLength(match[0]))]);
+    const next = Buffer.concat([Buffer.from(opening + lines.join(''), 'latin1'),
+      Buffer.from(added ? added.replace(/\n/g, eol) + eol : '', 'utf8'),
+      Buffer.from(closing, 'latin1'), bytes.subarray(match[0].length)]);
     if (bytes.equals(next)) {
       if (vouched) reflush(target, root ? root.path : realFolder());
       fsyncDir(root ? root.path : realFolder());
@@ -775,7 +787,9 @@ function createStore({ root, readOnly = false, log = stderrLog, lockStaleMs = LO
     let refRetry = false;
     return withIndexLock(lock => {
       if (card.ref) {
-        const existing = [...cardFiles().map(loadCard), ...heldCards()].find(c => c.ref === card.ref);
+        const existing = [...cardFiles().flatMap(file => {
+          try { return [loadCard(file)]; } catch (error) { if (error instanceof GuardError) return []; throw error; }
+        }), ...heldCards()].find(c => c.ref === card.ref);
         if (existing) {
           const root = existing.held ? pinAuxDir(folder, '_held').path : realFolder();
           // Locally written or edited cards still own their refs, but are never auto-repaired.
@@ -796,7 +810,16 @@ function createStore({ root, readOnly = false, log = stderrLog, lockStaleMs = LO
         }
       }
       const heldExisting = heldCards().find(c => c.name === card.name);
-      if (heldExisting) throw new InputError(`a card named ${card.name} already exists in _held; choose a different name`);
+      if (heldExisting) {
+        const held = pinAuxDir(folder, '_held');
+        if (!vouches(journaled(held.path), heldExisting.file, heldExisting.id, heldExisting.hash) || !sameRequest(heldExisting, card)) {
+          throw new InputError(`a card named ${card.name} already exists in _held; choose a different name`);
+        }
+        reflush(resolveInside(held.path, heldExisting.file), held.path);
+        held.check();
+        fsyncDir(held.path);
+        return { name: heldExisting.name, file: heldExisting.file, held: true, alreadyExists: true };
+      }
       const exists = fs.existsSync(resolveInside(folder, card.name));
       if (exists) {
         const existing = loadCard(`${card.name}.md`);

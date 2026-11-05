@@ -29,6 +29,169 @@ async function conflict(f, extra = {}) {
   return f.store.remember(fact('coffee', { relation: 'conflicts_with', target: 'tea', ...extra }));
 }
 
+for (const stray of ['linked.md', 'Meeting notes.md']) {
+  test(`round3 blocker 1: ref scans skip root ${stray}`, async t => {
+    const f = fixture(t);
+    await f.store.remember(fact('tea'));
+    if (stray === 'linked.md') fs.symlinkSync('tea.md', path.join(f.root, stray));
+    else fs.writeFileSync(path.join(f.root, stray), 'Handwritten notes.\n');
+    await f.store.remember(fact('coffee', { ref: 'stray-file-retry' }));
+    const retry = await f.store.remember(fact('water', { ref: 'stray-file-retry' }));
+    assert.equal(retry.name, 'coffee');
+    assert.equal(retry.alreadyExists, true);
+    assert.equal(f.card('coffee').ref, 'stray-file-retry');
+  });
+}
+
+for (const stray of ['.#coffee.md', 'coffee copy.md', '._coffee.md', 'linked.md']) {
+  for (const operation of ['remember', 'resolve', 'list held']) {
+    test(`round3 blocker 1: ${operation} skips held ${stray}`, async t => {
+      const f = fixture(t);
+      await f.store.remember(fact('tea', { origin: 'user' }));
+      await f.store.remember(fact('coffee', { relation: 'supersedes', target: 'tea' }));
+      const dest = path.join(f.root, '_held', stray);
+      if (['.#coffee.md', 'linked.md'].includes(stray)) fs.symlinkSync('missing-editor-lock', dest);
+      else fs.writeFileSync(dest, 'Editor metadata.\n');
+      if (operation === 'remember') {
+        const result = await f.store.remember(fact('cobalt', { relation: undefined, description: 'Cobalt upholstery.', body: 'Cobalt upholstery.' }));
+        assert.equal(result.file, 'cobalt.md');
+      } else if (operation === 'resolve') {
+        await f.store.resolve({ winner: 'coffee', loser: 'tea', reason: 'Owner chose' });
+        assert.equal(f.card('coffee').status, 'active');
+        assert.equal(f.card('tea').status, 'superseded');
+      } else assert.deepEqual(f.store.list({ status: 'held' }).map(c => c.name), ['coffee']);
+      assert.ok(fs.lstatSync(dest));
+    });
+  }
+}
+
+for (const eol of ['\n', '\r\n']) {
+  for (const operation of ['conflict', 'supersedes', 'cleanup', 'resolve', 'held wins', 'held loses']) {
+    test(`round3 blocker 4: ${operation} preserves raw frontmatter and body with ${JSON.stringify(eol)}`, async t => {
+      const f = fixture(t);
+      const saved = [];
+      const makeRaw = (name, held = false) => {
+        const source = f.bytes(name, held).toString();
+        const match = source.match(/^---\n([\s\S]*?)\n---\n/);
+        // Include mixed line endings and both invalid UTF-8 and valid multibyte bytes.
+        const kept = Buffer.concat([Buffer.from('custom: Caf'), Buffer.from([0xe9]), Buffer.from(' snowman ☃\r\n')]);
+        const body = Buffer.concat([Buffer.from(`${eol}Prefers tea.  ${eol}---${eol}`), Buffer.from([0xff, 0x80, 0x00])]);
+        const bytes = Buffer.concat([Buffer.from(`---${eol}${match[1].replace(/\n/g, eol)}${eol}`), kept, Buffer.from(`---${eol}`), body]);
+        fs.writeFileSync(path.join(f.root, held ? '_held' : '', `${name}.md`), bytes);
+        saved.push({ name, held, kept, body });
+      };
+      if (operation.startsWith('held')) {
+        await f.store.remember(fact('tea', { origin: 'user' }));
+        await f.store.remember(fact('coffee', { relation: 'supersedes', target: 'tea' }));
+        makeRaw('tea');
+        makeRaw('coffee', true);
+        const wins = operation === 'held wins';
+        await f.store.resolve({ winner: wins ? 'coffee' : 'tea', loser: wins ? 'tea' : 'coffee', reason: 'Owner confirmed café' });
+        if (wins) saved.find(c => c.name === 'coffee').held = false;
+      } else if (operation === 'resolve') {
+        await conflict(f);
+        // Exercise the winner's completion marker as well as both resolution rewrites.
+        const coffee = path.join(f.root, 'coffee.md');
+        fs.writeFileSync(coffee, f.bytes('coffee').toString().replace('relation_applied: true\n', ''));
+        makeRaw('tea');
+        makeRaw('coffee');
+        await f.store.resolve({ winner: 'coffee', loser: 'tea', reason: 'Owner confirmed café' });
+        assert.equal(f.card('coffee').relation_applied, true);
+      } else if (operation === 'cleanup') {
+        await conflict(f);
+        await f.store.remember(fact('water', { relation: 'conflicts_with', target: 'tea' }));
+        makeRaw('water');
+        await f.store.remember(fact('cocoa', { relation: 'supersedes', target: 'tea' }));
+        assert.equal(f.card('water').status, 'active');
+      } else {
+        await f.store.remember(fact('tea'));
+        makeRaw('tea');
+        await f.store.remember(fact('coffee', { relation: operation === 'conflict' ? 'conflicts_with' : 'supersedes', target: 'tea' }));
+      }
+      for (const { name, held, kept, body } of saved) {
+        const after = f.bytes(name, held);
+        const front = after.toString('latin1').match(/^---\r?\n(?:[\s\S]*?\r?\n)?---(?:\r?\n|$)/)[0];
+        assert.deepEqual(after.subarray(front.length), body, `${name} body bytes`);
+        assert.ok(after.includes(kept), `${name} kept frontmatter bytes`);
+      }
+    });
+  }
+}
+
+for (const leadingPin of [false, true]) {
+  test(`round3 blocker 2: a hand-pinned middle entry does not sink new lines, leading pin ${leadingPin}`, async t => {
+    const f = fixture(t);
+    for (const name of ['oldest', 'second', 'third', 'fourth']) await f.store.remember(fact(name));
+    const second = path.join(f.root, 'second.md');
+    fs.writeFileSync(second, f.bytes('second').toString().replace('type: feedback\n', 'type: feedback\npinned: true\n'));
+    if (leadingPin) await f.store.remember(fact('top', { pinned: true }));
+    await f.store.remember(fact('newest'));
+    const entries = f.index().split('\n').filter(line => line.startsWith('- ')).map(line => line.split(' ')[1]);
+    assert.deepEqual(entries, [...(leadingPin ? ['top.md'] : []), 'newest.md', 'fourth.md', 'third.md', 'second.md', 'oldest.md']);
+  });
+}
+
+for (const separator of ['\u2028', '\u2029']) {
+  for (const key of ['ref', 'evidence', 'reason']) {
+    test(`round3 blocker 3: ${key} rejects U+${separator.charCodeAt(0).toString(16)} before writing`, async t => {
+      const f = fixture(t);
+      await conflict(f);
+      const before = Object.fromEntries(fs.readdirSync(f.root).map(n => [n, hash(fs.readFileSync(path.join(f.root, n)))]));
+      if (key === 'reason') await assert.rejects(f.store.resolve({ winner: 'coffee', loser: 'tea', reason: `confirmed${separator}again` }), /one-line/);
+      else await assert.rejects(f.store.remember(fact('water', { [key]: `msg-42${separator}target: other`, relation: 'conflicts_with', target: 'tea' })), /one-line/);
+      assert.deepEqual(Object.fromEntries(fs.readdirSync(f.root).map(n => [n, hash(fs.readFileSync(path.join(f.root, n)))])), before);
+    });
+  }
+  test(`round3 blocker 3: U+${separator.charCodeAt(0).toString(16)} in existing evidence cannot shadow physical fields`, async t => {
+    const f = fixture(t);
+    await f.store.remember(fact('tea', { origin: 'user' }));
+    await f.store.remember(fact('other', { origin: 'user' }));
+    await f.store.remember(fact('coffee', { relation: 'supersedes', target: 'tea', evidence: 'x' }));
+    const file = path.join(f.root, '_held/coffee.md');
+    const evidence = `x${separator}target: other${separator}relation: conflicts_with${separator}ref: fake${separator}pinned: true${separator}status: superseded${separator}supersedes: other${separator}conflicts_with: [other]${separator}relation_applied: true${separator}y`;
+    fs.writeFileSync(file, f.bytes('coffee', true).toString().replace('evidence: x', `evidence: ${JSON.stringify(evidence)}`));
+    const held = createStore({ root: path.join(f.root, '_held'), readOnly: true }).loadCard('coffee.md');
+    assert.equal(held.evidence, evidence);
+    assert.equal(held.ref, '');
+    assert.equal(held.pinned, false);
+    assert.equal(held.status, 'active');
+    assert.equal(held.supersedes, 'tea');
+    assert.deepEqual(held.conflicts_with, []);
+    assert.equal(held.relation_applied, false);
+    const listed = f.store.list({ status: 'held' })[0];
+    assert.equal(listed.target, 'tea');
+    assert.equal(listed.relation, 'supersedes');
+    await f.store.resolve({ winner: 'coffee', loser: 'tea', reason: 'Confirmed' });
+    assert.equal(f.card('other').status, 'active');
+    assert.equal(f.card('tea').status, 'superseded');
+  });
+}
+
+for (const relation of ['supersedes', 'conflicts_with']) {
+  test(`round3 W1: identical held ${relation} retries without ref return the existing proposal`, async t => {
+    const f = fixture(t);
+    await f.store.remember(fact('tea', { origin: 'user' }));
+    await f.store.remember(fact('other', { origin: 'user' }));
+    const request = fact('coffee', { relation, target: 'tea' });
+    await f.store.remember(request);
+    const before = f.bytes('coffee', true);
+    const journal = fs.readFileSync(path.join(f.root, '_held/.lararium-remembered'));
+    const index = f.index();
+    const retry = await createStore({ root: f.root }).remember(request);
+    assert.equal(retry.name, 'coffee');
+    assert.equal(retry.held, true);
+    assert.equal(retry.alreadyExists, true);
+    assert.deepEqual(f.bytes('coffee', true), before);
+    assert.deepEqual(fs.readFileSync(path.join(f.root, '_held/.lararium-remembered')), journal);
+    assert.equal(f.index(), index);
+    for (const change of [{ body: 'Different claim.' }, { target: 'other' }, { relation: relation === 'supersedes' ? 'conflicts_with' : 'supersedes' }]) {
+      await assert.rejects(f.store.remember({ ...request, ...change }), /choose a different name/);
+    }
+    fs.appendFileSync(path.join(f.root, '_held/coffee.md'), 'Edited by hand.\n');
+    await assert.rejects(f.store.remember(request), /choose a different name/);
+  });
+}
+
 test('explicit conflict marks both cards contested and retains both index lines', async t => {
   const f = fixture(t);
   await conflict(f);
