@@ -89,7 +89,8 @@ function parseCard(file, text) {
     if (raw.startsWith('"')) { // written by yamlLine below: a JSON string is a YAML double-quoted scalar
       try { return String(JSON.parse(raw)); } catch { /* fall through to the loose reader */ }
     }
-    return raw.replace(/^["']|["']$/g, '');
+    // Bare scalars can end in quotes; only paired outer quotes are delimiters.
+    return raw.replace(/^(["'])(.*)\1$/, '$2');
   };
   card.description = field('description');
   card.type = field('type');
@@ -656,7 +657,8 @@ function createStore({ root, readOnly = false, log = stderrLog, lockStaleMs = LO
   // arrive after that list was cleared, or after only some of the survivors were rewritten.
   function retireConflicts(name, lock) {
     for (const file of cardFiles()) {
-      const card = loadCard(file);
+      let card;
+      try { card = loadCard(file); } catch (error) { if (error instanceof GuardError) continue; throw error; }
       if (!card.conflicts_with.includes(name)) continue;
       const conflicts = card.conflicts_with.filter(opponent => opponent !== name);
       rewrite(card, { conflicts_with: conflicts,
@@ -723,7 +725,8 @@ function createStore({ root, readOnly = false, log = stderrLog, lockStaleMs = LO
       if (!pointersOf(index).has(win.file)) index = insertEntry(index, `- ${win.file} - ${hookFor(win)}`, win.pinned);
       writeFileAtomic(indexPath, index, { beforeCommit: () => lock.assertOwned() });
       converge(lock, indexPath);
-      if (win.relation && !win.relation_applied) rewrite(loadCard(win.file), { relation_applied: true }, lock);
+      // Resolving another opponent leaves this card's original relation pending.
+      if (win.relation && win.target === loser && !win.relation_applied) rewrite(loadCard(win.file), { relation_applied: true }, lock);
       return { winner, loser, reason };
     });
   }
@@ -782,7 +785,8 @@ function createStore({ root, readOnly = false, log = stderrLog, lockStaleMs = LO
           if (existing.held || existing.status === 'superseded' || existing.relation_applied) return { name: existing.name, file: existing.file, alreadyExists: true, held: Boolean(existing.held) };
           // A ref identifies the recorded request, even if the caller retries with another name.
           const original = originalRelation(existing);
-          input = { name: existing.name, description: existing.description, type: existing.type, body: existing.body,
+          // cardText adds exactly one newline after the validated body.
+          input = { name: existing.name, description: existing.description, type: existing.type, body: existing.body.replace(/\n$/, ''),
             origin: existing.origin || 'agent', relation: original.relation,
             ...(original.target ? { target: original.target } : {}), ref: existing.ref,
             ...(existing.evidence ? { evidence: existing.evidence } : {}),

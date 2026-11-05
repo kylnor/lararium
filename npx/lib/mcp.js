@@ -133,7 +133,7 @@ function createMcpServer({ store, semantic = null, role, version, log = stderrLo
     }, input => guarded('remember', log, async () => {
       const saved = await store.remember(input);
       if (saved.candidates) return text(`Nothing was written. Call remember again with relation: new, supersedes or conflicts_with (and target for the latter two). Nearest cards:\n${saved.candidates.map(c => `- ${c.name} [${c.status}] ${c.description}`).join('\n')}`);
-      if (saved.alreadyExists) return text(`${saved.name} already exists${saved.held ? ' (held for the owner)' : ''}; any interrupted write is complete.`);
+      if (saved.alreadyExists) return text(`${saved.name} already exists${saved.held ? ' (held for the owner)' : ''}. Locally edited cards are returned without repair.`);
       if (saved.held) return text(`Held ${saved.file} in _held/ for the owner; the target card is unchanged.`);
       const warn = saved.indexOverBudget ? ' The index is now past 200 lines or 24 KB: tell the owner to demote older cards.' : '';
       return text(`Saved ${saved.file} and added to the index: ${saved.indexLine}${warn}`);

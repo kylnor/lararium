@@ -406,6 +406,113 @@ async function interrupted(f, point, operation) {
   return createStore({ root: f.root });
 }
 
+for (const [label, fields] of [
+  ['double quotes', { description: 'Prefers "tea"', evidence: 'Said "tea"' }],
+  ['single quotes', { description: "Prefers 'tea'", evidence: "Said 'tea'" }],
+  ['quotes and backslashes', { description: 'Prefers "tea" from C:\\notes\\tea', evidence: 'Said: "tea" from C:\\notes\\tea' }],
+  ['maximum body', { body: 'x'.repeat(20000) }],
+]) {
+  for (const relation of ['new', 'conflicts_with', 'supersedes']) {
+    test(`round2 blocker 1: reopened ref retry preserves ${label} for ${relation}`, async t => {
+      const f = fixture(t);
+      const request = fact('coffee', { ...fields, relation, ref: 'saved-request',
+        ...(relation !== 'new' ? { target: 'tea' } : {}) });
+      let reopened;
+      if (relation === 'new') {
+        await f.store.remember(request);
+        reopened = createStore({ root: f.root });
+      } else {
+        await f.store.remember(fact('tea'));
+        reopened = await interrupted(f, 'rename:tea.md', () => f.store.remember(request));
+        assert.equal(f.card('tea').status, 'active');
+        assert.equal(f.card('coffee').relation_applied, false);
+      }
+      const result = await reopened.remember(fact('water', { ref: request.ref }));
+      assert.equal(result.name, 'coffee');
+      assert.equal(result.alreadyExists, true);
+      assert.equal(fs.existsSync(path.join(f.root, 'water.md')), false);
+      assert.equal(f.card('coffee').description, request.description);
+      assert.equal(f.card('coffee').body, request.body + '\n');
+      if (request.evidence) assert.equal(f.card('coffee').evidence, request.evidence);
+      assert.match(f.index(), /- coffee.md/);
+      if (relation === 'conflicts_with') {
+        assert.equal(f.card('tea').status, 'contested');
+        assert.deepEqual(f.card('tea').conflicts_with, ['coffee']);
+        assert.deepEqual(f.card('coffee').conflicts_with, ['tea']);
+      } else if (relation === 'supersedes') {
+        assert.equal(f.card('tea').status, 'superseded');
+        assert.equal(f.card('tea').superseded_by, 'coffee');
+        assert.doesNotMatch(f.index(), /- tea.md/);
+        assert.match(fs.readFileSync(path.join(f.root, 'DEMOTED.md'), 'utf8'), /- tea.md - superseded by coffee.md/);
+      }
+      const before = Object.fromEntries(['coffee.md', 'MEMORY.md', '.lararium-remembered'].map(file =>
+        [file, hash(fs.readFileSync(path.join(f.root, file)))]));
+      await createStore({ root: f.root }).remember(request);
+      for (const [file, checksum] of Object.entries(before)) assert.equal(hash(fs.readFileSync(path.join(f.root, file))), checksum);
+    });
+  }
+}
+
+test('round2 blocker 2: an unrelated resolution leaves the winning remember pending for ref recovery', async t => {
+  const f = fixture(t);
+  await f.store.remember(fact('alpha'));
+  const request = fact('bravo', { relation: 'conflicts_with', target: 'alpha', ref: 'pending-bravo' });
+  const reopened = await interrupted(f, 'rename:alpha.md', () => f.store.remember(request));
+  await reopened.remember(fact('charlie', { relation: 'conflicts_with', target: 'bravo' }));
+  await reopened.resolve({ winner: 'bravo', loser: 'charlie', reason: 'Confirmed bravo' });
+  assert.equal(f.card('alpha').status, 'active');
+  assert.deepEqual(f.card('alpha').conflicts_with, []);
+  const pending = !f.card('bravo').relation_applied;
+  const result = await createStore({ root: f.root }).remember(fact('water', { ref: request.ref }));
+  assert.equal(result.name, 'bravo');
+  assert.equal(result.alreadyExists, true);
+  for (const [name, opponent] of [['alpha', 'bravo'], ['bravo', 'alpha']]) {
+    assert.equal(f.card(name).status, 'contested');
+    assert.deepEqual(f.card(name).conflicts_with, [opponent]);
+    assert.match(f.index(), new RegExp(`- ${name}.md`));
+  }
+  assert.equal(pending, true, 'the unrelated resolution did not complete the recorded relation');
+  assert.equal(f.card('bravo').relation_applied, true);
+  assert.equal(f.card('charlie').status, 'superseded');
+  assert.doesNotMatch(f.index(), /- charlie.md/);
+});
+
+test('round2 blocker 3: non-ref supersession and identical retry skip an unrelated symlink', async t => {
+  const f = fixture(t);
+  await f.store.remember(fact('tea'));
+  fs.symlinkSync('tea.md', path.join(f.root, 'linked.md'));
+  const request = fact('coffee', { relation: 'supersedes', target: 'tea' });
+  await f.store.remember(request);
+  await createStore({ root: f.root }).remember(request);
+  assert.equal(f.card('tea').status, 'superseded');
+  assert.equal(f.card('tea').superseded_by, 'coffee');
+  assert.equal(f.card('coffee').status, 'active');
+  assert.equal(f.card('coffee').relation_applied, true);
+  assert.doesNotMatch(f.index(), /- tea.md|- linked.md/);
+  assert.match(f.index(), /- coffee.md/);
+  assert.match(fs.readFileSync(path.join(f.root, 'DEMOTED.md'), 'utf8'), /- tea.md - superseded by coffee.md/);
+  assert.equal(fs.readlinkSync(path.join(f.root, 'linked.md')), 'tea.md');
+});
+
+test('round2 watch-out: an unvouched ref reply does not claim interrupted writes are complete', async t => {
+  const f = fixture(t);
+  await f.store.remember(fact('tea'));
+  const request = fact('coffee', { relation: 'conflicts_with', target: 'tea', ref: 'edited-request' });
+  await interrupted(f, 'rename:tea.md', () => f.store.remember(request));
+  fs.appendFileSync(path.join(f.root, 'coffee.md'), 'Local edit.\n');
+  const before = Object.fromEntries(fs.readdirSync(f.root).map(file =>
+    [file, hash(fs.readFileSync(path.join(f.root, file)))]));
+  const client = await clientFor(t, createStore({ root: f.root }));
+  const reply = await call(client, 'remember', fact('water', { ref: request.ref }));
+  assert.match(reply, /coffee already exists/);
+  assert.doesNotMatch(reply, /any interrupted write is complete/);
+  assert.match(reply, /locally edited cards.*without.*repair/i);
+  assert.equal(f.card('tea').status, 'active');
+  assert.equal(f.card('coffee').relation_applied, false);
+  assert.deepEqual(fs.readdirSync(f.root), Object.keys(before));
+  for (const [file, checksum] of Object.entries(before)) assert.equal(hash(fs.readFileSync(path.join(f.root, file))), checksum);
+});
+
 for (const changed of ['target', 'relation']) {
   test(`round1 blocker 1: changed ${changed} is refused before any target changes`, async t => {
     const f = fixture(t);
