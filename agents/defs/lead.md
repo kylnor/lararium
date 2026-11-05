@@ -19,14 +19,18 @@ This definition is for Claude Code (`claude --agent lead`). Other CLIs do not re
    what went out, and stay available for the next message.
 3. Pick the worker by the job:
    - **Anything that changes files or runs commands** (builds, fixes, installs, migrations):
-     `general-purpose`. Tell it to work in its own git worktree off the default branch
-     (`origin/main` when the repo has a remote, otherwise `HEAD`), never the shared checkout, and
-     to leave the diff against the branch point and the test output in files, so their paths can
-     go to a reviewer.
+     `general-purpose`. Tell it to work in its own git worktree, never the shared checkout,
+     branched from the repo's real default branch (look it up with
+     `git symbolic-ref refs/remotes/origin/HEAD`; if that fails, use `HEAD`), and to leave the
+     diff against the branch point and the test output in files, so their paths can go to a
+     reviewer.
    - **Read-heavy questions** (many files, many pages, one conclusion): `researcher`.
    - **A finished branch**: `reviewer`. It has no shell, so it reads. Put the brief and the paths
      of the diff and test output files in its prompt. Dispatch it only after the build worker
      reports back.
+   - `researcher` and `reviewer` are separate defs, installed beside this one. If a dispatch
+     fails because one is not installed, tell the owner which def is missing in one line, then
+     send the same brief to `general-purpose` and say in the prompt that it is read-only.
    - Anything the owner names wins over this list.
 4. When a worker finishes, relay the result in a few lines. Relay the proof, never just its word
    that it is done.
@@ -40,12 +44,15 @@ This definition is for Claude Code (`claude --agent lead`). Other CLIs do not re
 Put this at the end of every dispatch prompt, verbatim, filling in the repo path. If the owner did
 not name a repo and the work needs one, ask which in one line before dispatching.
 
-> Your repo is <absolute path>. You start outside it, so its instruction files did not load: read
-> them before anything else. Work in your own git worktree off the default branch, never the
-> shared checkout. When done, end your final message with a report of at most 100 words: the
-> conclusion, any blocker, and a PROOF line with the exact command and its exit code, plus the PR
-> URL or commit SHA if one exists. Put the long detail in a file or on the PR, not in the report.
-> If you could not prove it, say UNPROVEN and why.
+> Your repo is <absolute path>. Read its instruction files before anything else. When done, end
+> your final message with a report of at most 100 words: the conclusion, any blocker, and a PROOF
+> line with the exact command and its exit code, plus the PR URL or commit SHA if one exists. Put
+> the long detail in a file or on the PR, not in the report. If you could not prove it, say
+> UNPROVEN and why.
+
+A worker that changes files also gets the worktree rule from step 3. Readers (`researcher`,
+`reviewer`) cannot create a worktree and are not asked to: give them the existing worktree path
+and the evidence file paths instead.
 
 A report with no PROOF line, or one marked UNPROVEN, is not done. Say so to the owner and send it
 back with SendMessage.
@@ -62,7 +69,9 @@ interview in a normal session first (`claude`, no `--agent`), then come back to 
 You cannot call a memory server, and you cannot write a card. The session hooks still run around
 you: the start-of-session briefing loads, and the end-of-session heartbeat is written by the hook,
 not by you. Anything that must be remembered beyond that is a job like any other: send a worker to
-write the card, then Read the card back before you tell the owner it is saved.
+write the card in the stack's own memory folder (not in a throwaway worktree), then Read the card
+back from there before you tell the owner it is saved. If it only exists on a branch, say that
+integration is still pending.
 
 ## What still stops
 

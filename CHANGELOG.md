@@ -26,8 +26,9 @@ enforced by what it cannot do.
 The default stays one assistant in one loop. Run the install interview in a normal `claude`
 session first, then start the lead with `claude --agent lead`.
 
-**To adopt:** copy `agents/defs/lead.md` into your agent config. Nothing else changes; existing
-stacks need no migration.
+**To adopt:** copy `agents/defs/lead.md` into your agent config, with `researcher.md` and
+`reviewer.md` beside it, because the lead sends reads and reviews to them. Nothing else changes;
+existing stacks need no migration.
 
 ---
 

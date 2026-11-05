@@ -31,5 +31,6 @@ Start with one assistant in one loop. The lead pays off when you have more than 
 work to keep moving at once.
 
 This is an optional Claude Code definition. Run the install interview in a normal `claude`
-session first, then copy `agents/defs/lead.md` into your agent config and run `claude --agent lead`.
+session first, then copy `agents/defs/lead.md` into your agent config, with `researcher.md` and `reviewer.md`
+beside it, and run `claude --agent lead`.
 The lead stays within reach because the work is elsewhere.
