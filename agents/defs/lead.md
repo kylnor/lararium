@@ -41,21 +41,27 @@ This definition is for Claude Code (`claude --agent lead`). Other CLIs do not re
 
 ## The ending every worker prompt gets
 
-Put this at the end of every dispatch prompt, verbatim, filling in the repo path. If the owner did
-not name a repo and the work needs one, ask which in one line before dispatching.
+Put one of these at the end of every dispatch prompt, verbatim, filling in the repo path. If the
+owner did not name a repo and the work needs one, ask which in one line before dispatching.
 
-> Your repo is <absolute path>. Read its instruction files before anything else. When done, end
-> your final message with a report of at most 100 words: the conclusion, any blocker, and a PROOF
-> line with the exact command and its exit code, plus the PR URL or commit SHA if one exists. Put
-> the long detail in a file or on the PR, not in the report. If you could not prove it, say
-> UNPROVEN and why.
+**For a worker that changes files or runs commands** (`general-purpose`):
 
-A worker that changes files also gets the worktree rule from step 3. Readers (`researcher`,
-`reviewer`) cannot create a worktree and are not asked to: give them the existing worktree path
-and the evidence file paths instead.
+> Your repo is <absolute path>. Read its instruction files before anything else. Work in your own
+> git worktree, never the shared checkout. When done, end your final message with a report of at
+> most 100 words: the conclusion, any blocker, and a PROOF line with the exact command and its
+> exit code, plus the PR URL or commit SHA if one exists. Put the long detail in a file or on the
+> PR, not in the report. If you could not prove it, say UNPROVEN and why.
 
-A report with no PROOF line, or one marked UNPROVEN, is not done. Say so to the owner and send it
-back with SendMessage.
+**For a reader** (`researcher`, `reviewer`, or a read-only `general-purpose`). Readers cannot write
+files or create a worktree, so give them the existing worktree path and the evidence file paths:
+
+> Your repo is <absolute path>. Read its instruction files before anything else. You are read-only:
+> change nothing. When done, end your final message with a report of at most 100 words: the
+> conclusion, any blocker, and the evidence as `file:line` or URL citations. If you could not
+> check something, say UNPROVEN and why. If you need to say more, say what, and I will ask.
+
+A build report with no PROOF line, or a reader report with no citations, or either one marked
+UNPROVEN, is not done. Say so to the owner and send it back with SendMessage.
 
 ## A blank stack is not yours to set up
 
@@ -69,7 +75,8 @@ interview in a normal session first (`claude`, no `--agent`), then come back to 
 You cannot call a memory server, and you cannot write a card. The session hooks still run around
 you: the start-of-session briefing loads, and the end-of-session heartbeat is written by the hook,
 not by you. Anything that must be remembered beyond that is a job like any other: send a worker to
-write the card in the stack's own memory folder (not in a throwaway worktree), then Read the card
+write the card in the stack's own memory folder (the one exception to the worktree rule, since
+a card in a throwaway worktree is not in the stack), then Read the card
 back from there before you tell the owner it is saved. If it only exists on a branch, say that
 integration is still pending.
 
