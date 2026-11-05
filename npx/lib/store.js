@@ -42,6 +42,7 @@ const JOURNAL_LINE_MAX = 256;
 const JOURNAL_LEAD = '#\n'; // the first byte of every append is not a newline, so it can never complete a torn line
 const CARD_ID_KEY = 'lararium-id';
 const CARD_ID_RE = /^[0-9a-f]{24}$/;
+const FRONTMATTER_RE = /^---\r?\n(?:([\s\S]*?)\r?\n)?---(?:\r?\n|$)/;
 // An index entry line: `- name.md` or `- [text](path/name.md)`, followed by anything (usually ` - hook`).
 // Names are kept loose so hand-written cards still show as indexed. hooks/memory-check.mjs carries the
 // same parser (it ships standalone); tests/serve-store.test.mjs runs both against one fixture table.
@@ -78,7 +79,7 @@ class InputError extends Error {
 // means the card carries no id.
 function parseCard(file, text) {
   const card = { name: file.slice(0, -3), description: '', type: '', id: '', status: 'active', conflicts_with: [], pinned: false, body: text };
-  const m = text.match(/^---\r?\n(?:([\s\S]*?)\r?\n)?---(?:\r?\n|$)/);
+  const m = text.match(FRONTMATTER_RE);
   if (!m) return card;
   const front = m[1] || '';
   const field = key => {
@@ -94,6 +95,7 @@ function parseCard(file, text) {
   card.type = field('type');
   card.status = field('status') || 'active';
   for (const key of ['supersedes', 'superseded_by', 'origin', 'evidence', 'ref', 'resolved_reason', 'relation', 'target']) card[key] = field(key);
+  card.relation_applied = field('relation_applied') === 'true';
   card.pinned = field('pinned') === 'true';
   const conflicts = field('conflicts_with');
   if (conflicts.startsWith('[') && conflicts.endsWith(']')) {
@@ -309,9 +311,9 @@ function createStore({ root, readOnly = false, log = stderrLog, lockStaleMs = LO
 
   // A retry acknowledges a card an earlier call wrote, and that call may have failed on the very flush
   // that makes the card or its journal record durable. Flush both again before saying it is saved.
-  function reflush(target) {
+  function reflush(target, root = realFolder()) {
     try {
-      for (const file of [target, path.join(realFolder(), JOURNAL_NAME)]) {
+      for (const file of [target, path.join(root, JOURNAL_NAME)]) {
         const fd = openNoFollow(file, fs.constants.O_RDONLY);
         try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
       }
@@ -471,17 +473,25 @@ function createStore({ root, readOnly = false, log = stderrLog, lockStaleMs = LO
       }
       cards.push({ name: card.name, description: card.description, type: card.type, status: card.status,
         pinned: card.pinned, conflicts_with: card.conflicts_with, superseded_by: card.superseded_by,
+        ...(card.held ? { relation: card.relation, target: card.target } : {}),
         held: Boolean(card.held), inIndex: !card.held && indexed.has(card.file) });
     }
     return cards.sort((a, b) => Number(b.pinned) - Number(a.pinned) || a.name.localeCompare(b.name));
   }
 
-  function read(name, { recordRead = true } = {}) {
-    const full = resolveInside(folder, name);
+  function read(name, { recordRead = true, held = false } = {}) {
+    const heldName = typeof name === 'string' ? name.replace(/\.md$/, '') : '';
+    if (held && (!CARD_NAME_RE.test(heldName) || heldName.length > MAX_CARD_NAME || NOT_CARDS.has(`${heldName}.md`))) {
+      throw new InputError('held selector requires a card name');
+    }
+    const aux = held ? pinAuxDir(folder, '_held') : null;
+    if (held && !aux) throw new InputError('no such held card');
+    const full = resolveInside(aux ? aux.path : folder, name);
     const text = readFileNoFollow(full);
+    if (aux) aux.check();
     if (text === null) throw new InputError('no such card');
     const cardName = path.basename(full, '.md');
-    if (!readOnly && recordRead && !NOT_CARDS.has(path.basename(full))) {
+    if (!held && !readOnly && recordRead && !NOT_CARDS.has(path.basename(full))) {
       try {
         const times = readTimes();
         Object.defineProperty(times, cardName, { value: Date.now(), enumerable: true, configurable: true, writable: true });
@@ -598,6 +608,7 @@ function createStore({ root, readOnly = false, log = stderrLog, lockStaleMs = LO
     if (pinned !== undefined) card.pinned = pinned;
     if (relation === 'supersedes') card.supersedes = target;
     if (relation === 'conflicts_with') { card.status = 'contested'; card.conflicts_with = [target]; }
+    if (relation && relation !== 'new') { card.relation = relation; card.target = target; }
     return card;
   }
 
@@ -607,7 +618,7 @@ function createStore({ root, readOnly = false, log = stderrLog, lockStaleMs = LO
     const target = resolveInside(root ? root.path : folder, card.file);
     const bytes = readFileNoFollow(target, null);
     const old = bytes.toString('utf8');
-    const match = old.match(/^---\r?\n(?:([\s\S]*?)\r?\n)?---(?:\r?\n|$)/);
+    const match = old.match(FRONTMATTER_RE);
     if (!match) throw new InputError(`${card.name} has no valid frontmatter`);
     const vouched = vouches(journaled(root ? root.path : realFolder()), card.file, parseCard(card.file, old).id, contentHash(bytes));
     const eol = old.startsWith('---\r\n') ? '\r\n' : '\n';
@@ -615,7 +626,11 @@ function createStore({ root, readOnly = false, log = stderrLog, lockStaleMs = LO
     const added = metadataLines(changes);
     const front = `---${eol}${lines.join(eol)}${added ? eol + added.replace(/\n/g, eol) : ''}${eol}---${match[0].endsWith('\n') ? eol : ''}`;
     const next = Buffer.concat([Buffer.from(front), bytes.subarray(Buffer.byteLength(match[0]))]);
-    if (bytes.equals(next)) return { ...card, ...changes };
+    if (bytes.equals(next)) {
+      if (vouched) reflush(target, root ? root.path : realFolder());
+      fsyncDir(root ? root.path : realFolder());
+      return { ...card, ...changes };
+    }
     // Journal first: if replacing the bytes fails, the previous record still vouches for the old
     // card; if the rename lands but its flush fails, the new record already vouches for the retry.
     if (vouched) journalAppend(card.file, card.id, contentHash(next), root ? root.path : realFolder());
@@ -637,6 +652,18 @@ function createStore({ root, readOnly = false, log = stderrLog, lockStaleMs = LO
     return current.lines.filter((_, i) => !current.entries.some(e => e.file === card.file && e.at === i)).join('\n');
   }
 
+  // Scan survivors instead of relying on the retired card's old adjacency list: a retry may
+  // arrive after that list was cleared, or after only some of the survivors were rewritten.
+  function retireConflicts(name, lock) {
+    for (const file of cardFiles()) {
+      const card = loadCard(file);
+      if (!card.conflicts_with.includes(name)) continue;
+      const conflicts = card.conflicts_with.filter(opponent => opponent !== name);
+      rewrite(card, { conflicts_with: conflicts,
+        ...(card.status !== 'superseded' ? { status: conflicts.length ? 'contested' : 'active' } : {}) }, lock);
+    }
+  }
+
   async function resolveNow({ winner, loser, reason }) {
     if (readOnly) throw new InputError('the memory server is read-only');
     for (const name of [winner, loser]) {
@@ -653,22 +680,27 @@ function createStore({ root, readOnly = false, log = stderrLog, lockStaleMs = LO
         return matches[0];
       };
       let win = find(winner);
-      const lose = find(loser);
+      let lose = find(loser);
       const heldPair = [win, lose].some((c, i, pair) => c.held && c.status !== 'superseded' && c.target === pair[1 - i].name && RELATIONS.slice(1).includes(c.relation));
       const contested = win.status === 'contested' && lose.status === 'contested' && win.conflicts_with.includes(loser) && lose.conflicts_with.includes(winner);
-      if (!heldPair && !contested) throw new InputError('resolve requires a contested pair or a held card against its target');
-      if (win.status === 'superseded' || lose.status === 'superseded') throw new InputError('cannot resolve a superseded card');
+      const resuming = lose.status === 'superseded' && lose.superseded_by === winner && lose.resolved_reason === reason;
+      if (!resuming && !heldPair && !contested) throw new InputError('resolve requires a contested pair or a held card against its target');
+      if (win.status === 'superseded' || (lose.status === 'superseded' && !resuming)) throw new InputError('cannot resolve a superseded card');
       const indexPath = path.join(realFolder(), 'MEMORY.md');
       let index = readFileNoFollow(indexPath) || '# Memory\n';
       if (parseIndex(index).unclosed) throw new InputError('MEMORY.md ends inside an unclosed comment');
       const demoted = readFileNoFollow(path.join(realFolder(), 'DEMOTED.md'));
       if (demoted && parseIndex(demoted).unclosed) throw new InputError('DEMOTED.md ends inside an unclosed comment');
       journaled();
+      // This card is the resolution record. Commit the decision before changing the winner;
+      // the same winner/loser/reason can then finish every subsequent step after a restart.
+      lose = rewrite(lose, { status: 'superseded', superseded_by: winner, resolved_reason: reason,
+        conflicts_with: [] }, lock);
+      retireConflicts(loser, lock);
+      win = find(winner);
       const conflicts = win.conflicts_with.filter(name => name !== loser);
       win = rewrite(win, { status: conflicts.length ? 'contested' : 'active', conflicts_with: conflicts,
         superseded_by: null, ...(win.held && win.relation === 'supersedes' ? { supersedes: loser } : {}) }, lock);
-      rewrite(lose, { status: 'superseded', superseded_by: winner, resolved_reason: reason,
-        conflicts_with: lose.conflicts_with.filter(name => name !== winner) }, lock);
       if (win.held) {
         const aux = pinAuxDir(folder, '_held');
         const dest = resolveInside(folder, win.file);
@@ -676,36 +708,56 @@ function createStore({ root, readOnly = false, log = stderrLog, lockStaleMs = LO
         lock.assertOwned();
         aux.check();
         const vouched = vouches(journaled(aux.path), win.file, win.id, win.hash);
-        fs.renameSync(resolveInside(aux.path, win.file), dest);
+        // Vouch in the destination before moving. A failed move leaves the held bytes intact;
+        // a successful move is adoptable even if its directory flush or the next step fails.
         if (vouched) journalAppend(win.file, win.id, win.hash);
+        fs.renameSync(resolveInside(aux.path, win.file), dest);
         fsyncDir(aux.path);
         fsyncDir(realFolder());
         win.held = false;
       }
+      fsyncDir(realFolder());
+      const aux = pinAuxDir(folder, '_held');
+      if (aux) fsyncDir(aux.path);
       index = demote(lose, winner, index, lock);
       if (!pointersOf(index).has(win.file)) index = insertEntry(index, `- ${win.file} - ${hookFor(win)}`, win.pinned);
       writeFileAtomic(indexPath, index, { beforeCommit: () => lock.assertOwned() });
       converge(lock, indexPath);
+      if (win.relation && !win.relation_applied) rewrite(loadCard(win.file), { relation_applied: true }, lock);
       return { winner, loser, reason };
     });
   }
 
-  // State edits are server-owned and do not change the fact an identical remember retried.
+  // State edits are server-owned. Original relation and target are compared separately below;
+  // absent legacy origin and the default agent line represent the same original request.
   function withoutState(text) {
-    const match = text.match(/^---\r?\n(?:([\s\S]*?)\r?\n)?---(?:\r?\n|$)/);
+    const match = text.match(FRONTMATTER_RE);
     if (!match) return text;
-    const front = match[0].replace(/^(?:status|superseded_by|conflicts_with|resolved_reason):[^\n]*\n/gm, '');
+    const front = match[0].replace(/^(?:status|superseded_by|conflicts_with|resolved_reason|relation|target|relation_applied):[^\n]*\n/gm, '')
+      .replace(/^origin: agent\r?\n/gm, '');
     return front + text.slice(match[0].length);
+  }
+
+  function originalRelation(card) {
+    return { relation: card.relation || (card.supersedes ? 'supersedes' : 'new'),
+      target: card.target || card.supersedes || '' };
+  }
+
+  function sameRequest(existing, requested) {
+    const original = originalRelation(existing);
+    const next = originalRelation(requested);
+    return original.relation === next.relation && original.target === next.target &&
+      withoutState(existing.text) === withoutState(cardText(requested, existing.id));
   }
 
   // Writes one card, journals it, and prepends its index line, under the index lock. Never
   // overwrites: a name that exists is refused, with one exception that makes a retry safe. If the
   // card on disk carries a nonce and has exact bytes that one valid journal record holds for that name
   // (so this server wrote these bytes; a hand-written or edited card cannot match), is byte for byte
-  // what this call would write and was not demoted, an earlier call wrote the card and then failed
-  // (a lost lock, a failed release, a stop before the index). This call finishes the index line if it
-  // is missing, writes no second record, and succeeds: the card is saved, so the retry is not told to
-  // pick another name. Durability: the card and the journal record are fsynced before the call is
+  // what this call would write apart from later server state edits and was not demoted, an earlier
+  // call wrote the card and then failed (a lost lock, a failed release, a stop before the index).
+  // This call completes pending relation and index steps without creating a second card. Completed
+  // retries add no journal records. Durability: the card and journal are fsynced before the call is
   // acknowledged, and the index replacement is fsynced with its directory (see guard.writeFileAtomic).
   // A failed flush fails the call and takes the same cleanup path as a failed write.
   // The index and the journal are read (through no-follow descriptors) before the card is written,
@@ -716,15 +768,43 @@ function createStore({ root, readOnly = false, log = stderrLog, lockStaleMs = LO
   // concurrent writer dropped is restored (see converge).
   async function rememberNow(input) {
     if (readOnly) throw new InputError('the memory server is read-only');
-    const card = validate(input);
+    let card = validate(input);
+    let refRetry = false;
     return withIndexLock(lock => {
       if (card.ref) {
         const existing = [...cardFiles().map(loadCard), ...heldCards()].find(c => c.ref === card.ref);
-        if (existing) return { name: existing.name, file: existing.file, alreadyExists: true, held: Boolean(existing.held) };
+        if (existing) {
+          const root = existing.held ? pinAuxDir(folder, '_held').path : realFolder();
+          // Locally written or edited cards still own their refs, but are never auto-repaired.
+          if (!vouches(journaled(root), existing.file, existing.id, existing.hash)) return { name: existing.name, file: existing.file, alreadyExists: true, held: Boolean(existing.held) };
+          reflush(resolveInside(root, existing.file), root);
+          fsyncDir(root);
+          if (existing.held || existing.status === 'superseded' || existing.relation_applied) return { name: existing.name, file: existing.file, alreadyExists: true, held: Boolean(existing.held) };
+          // A ref identifies the recorded request, even if the caller retries with another name.
+          const original = originalRelation(existing);
+          input = { name: existing.name, description: existing.description, type: existing.type, body: existing.body,
+            origin: existing.origin || 'agent', relation: original.relation,
+            ...(original.target ? { target: original.target } : {}), ref: existing.ref,
+            ...(existing.evidence ? { evidence: existing.evidence } : {}),
+            ...(/^pinned:/m.test(existing.text.match(FRONTMATTER_RE)[0]) ? { pinned: existing.pinned } : {}) };
+          card = validate(input);
+          refRetry = true;
+        }
       }
       const heldExisting = heldCards().find(c => c.name === card.name);
       if (heldExisting) throw new InputError(`a card named ${card.name} already exists in _held; choose a different name`);
       const exists = fs.existsSync(resolveInside(folder, card.name));
+      if (exists) {
+        const existing = loadCard(`${card.name}.md`);
+        if (!vouches(journaled(), existing.file, existing.id, existing.hash) ||
+            !sameRequest(existing, card) ||
+            (demotedFiles().has(existing.file) && existing.status !== 'superseded')) {
+          throw new InputError(`a card named ${card.name} already exists; choose a different name`);
+        }
+        reflush(resolveInside(folder, existing.file));
+        fsyncDir(realFolder());
+        if (existing.status === 'superseded' || existing.relation_applied) return { name: existing.name, file: existing.file, alreadyExists: true };
+      }
       if (!exists && input.relation === undefined) {
         const candidates = searchText(`${card.name.replace(/-/g, ' ')} ${card.description} ${card.body}`, { limit: Number.MAX_SAFE_INTEGER })
           .filter(c => c.status !== 'superseded' && c.score >= NEAR_SCORE && c.coverage >= 0.6).slice(0, 5);
@@ -733,7 +813,7 @@ function createStore({ root, readOnly = false, log = stderrLog, lockStaleMs = LO
       let related = null;
       if (input.relation && input.relation !== 'new') {
         related = loadCard(`${input.target}.md`);
-        if (!/^---\r?\n(?:([\s\S]*?)\r?\n)?---(?:\r?\n|$)/.test(related.text)) throw new InputError(`${related.name} has no valid frontmatter`);
+        if (!FRONTMATTER_RE.test(related.text)) throw new InputError(`${related.name} has no valid frontmatter`);
         if (related.status === 'superseded' && (!exists || related.superseded_by !== card.name || input.relation !== 'supersedes')) throw new InputError(`${related.name} is superseded by ${related.superseded_by || 'an unnamed card'}`);
         if (related.origin === 'user' && card.origin !== 'user') {
           const held = pinAuxDir(folder, '_held', { create: true });
@@ -777,7 +857,7 @@ function createStore({ root, readOnly = false, log = stderrLog, lockStaleMs = LO
         const onDisk = bytes === null ? null : bytes.toString('utf8');
         const id = onDisk === null ? '' : parseCard(file, onDisk).id;
         const serverMade = bytes !== null && vouches(known, file, id, contentHash(bytes));
-        if (!serverMade || withoutState(onDisk) !== withoutState(cardText(card, id)) || (demotedFiles().has(file) && parseCard(file, onDisk).status !== 'superseded')) {
+        if (!serverMade || !sameRequest({ text: onDisk, ...parseCard(file, onDisk) }, card) || (demotedFiles().has(file) && parseCard(file, onDisk).status !== 'superseded')) {
           throw new InputError(`a card named ${card.name} already exists; choose a different name`);
         }
         reflush(target);
@@ -800,7 +880,8 @@ function createStore({ root, readOnly = false, log = stderrLog, lockStaleMs = LO
       let base = indexText;
       if (related) {
         if (input.relation === 'supersedes') {
-          rewrite(related, { status: 'superseded', superseded_by: card.name }, lock);
+          rewrite(related, { status: 'superseded', superseded_by: card.name, conflicts_with: [] }, lock);
+          retireConflicts(related.name, lock);
           base = demote(related, card.name, base, lock);
         } else {
           rewrite(related, { status: 'contested', conflicts_with: [...new Set([...related.conflicts_with, card.name])] }, lock);
@@ -810,12 +891,16 @@ function createStore({ root, readOnly = false, log = stderrLog, lockStaleMs = LO
       if (updated !== indexText) writeFileAtomic(indexPath, updated, { beforeCommit: () => lock.assertOwned() }); // flushes the folder too
       else fsyncDir(realFolder()); // no rename to flush it: make the card's and the journal's entries durable here
       converge(lock, indexPath);
+      // The completion bit is part of this card, not a separate transaction log. Until every
+      // relationship, demotion and index write is durable, ref retries run the steps again.
+      if (related) rewrite(loadCard(file), { relation_applied: true }, lock);
       const finalText = readFileNoFollow(indexPath) || updated;
       const lineCount = finalText.split('\n').length;
       const bytes = Buffer.byteLength(finalText);
       return {
         name: card.name,
         file,
+        ...(refRetry ? { alreadyExists: true } : {}),
         indexLine: entry,
         indexOverBudget: lineCount > INDEX_MAX_LINES || bytes > INDEX_MAX_BYTES,
       };

@@ -1,6 +1,6 @@
 // Card states, owner-held changes and read tracking. Set LARARIUM_TEST_LIB to a copied older lib
 // directory to prove these regressions fail there, without changing the checkout under test.
-import { test } from 'node:test';
+import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -253,7 +253,8 @@ test('search ranks active above contested and superseded cards while retaining s
   const found = f.store.searchText('tea coffee beverage');
   assert.equal(found[0].status, 'active');
   assert.equal(found.at(-1).status, 'superseded');
-  assert.ok(found.some(c => c.status === 'contested' && c.conflicts_with.includes('coffee')));
+  assert.equal(f.card('tea').status, 'active');
+  assert.deepEqual(f.card('tea').conflicts_with, []);
 });
 
 async function clientFor(t, store, role = 'write') {
@@ -371,3 +372,228 @@ test('held directory links are refused without touching the user card or link de
   assert.equal(hash(f.bytes('tea')), before);
   assert.deepEqual(fs.readdirSync(outside), []);
 });
+
+// The same fs mock seam used by serve-store tests. Fail a single real I/O boundary, then
+// reopen the store to ensure recovery depends on canonical files rather than process state.
+async function interrupted(f, point, operation) {
+  let fired = false;
+  const failure = () => { fired = true; throw Object.assign(new Error('injected I/O failure'), { code: 'EIO' }); };
+  const [kind, file, phase = 'before', occurrence = '1'] = point.split(':');
+  let seen = 0;
+  const realRename = fs.renameSync;
+  const realWrite = fs.writeSync;
+  const rename = mock.method(fs, 'renameSync', (from, to) => {
+    const matches = !fired && kind === 'rename' && to === path.join(f.root, file) && ++seen === Number(occurrence);
+    if (matches && phase === 'before') failure();
+    const result = realRename(from, to);
+    if (matches && phase === 'after') failure();
+    return result;
+  });
+  const write = mock.method(fs, 'writeSync', (fd, data, ...rest) => {
+    const journal = path.join(f.root, path.dirname(file), '.lararium-remembered');
+    const matchingJournal = fs.existsSync(journal) && fs.fstatSync(fd).ino === fs.statSync(journal).ino;
+    if (!fired && kind === 'journal' && matchingJournal && Buffer.isBuffer(data) && data.toString().startsWith(`#\nL1 ${path.basename(file)} `) && ++seen === Number(occurrence)) {
+      if (phase === 'short') realWrite(fd, data.subarray(0, 3));
+      if (phase === 'after') realWrite(fd, data, ...rest);
+      failure();
+    }
+    return realWrite(fd, data, ...rest);
+  });
+  try {
+    await assert.rejects(operation(), /injected I\/O failure/);
+    assert.equal(fired, true, `fault reached: ${point}`);
+  } finally { rename.mock.restore(); write.mock.restore(); }
+  return createStore({ root: f.root });
+}
+
+for (const changed of ['target', 'relation']) {
+  test(`round1 blocker 1: changed ${changed} is refused before any target changes`, async t => {
+    const f = fixture(t);
+    await f.store.remember(fact('tea'));
+    await f.store.remember(fact('water'));
+    const first = fact('coffee', changed === 'target' ? { relation: 'conflicts_with', target: 'tea' } : {});
+    await f.store.remember(first);
+    const before = Object.fromEntries(['tea', 'water', 'coffee'].map(n => [n, hash(f.bytes(n))]));
+    const retry = { ...first, relation: 'conflicts_with', target: 'water' };
+    await assert.rejects(f.store.remember(retry), /already exists/);
+    for (const [name, checksum] of Object.entries(before)) assert.equal(hash(f.bytes(name)), checksum);
+  });
+}
+
+const targetFaults = ['journal:tea.md', 'journal:tea.md:short', 'journal:tea.md:after', 'rename:tea.md', 'rename:tea.md:after'];
+const finalFaults = ['rename:DEMOTED.md', 'rename:DEMOTED.md:after', 'rename:MEMORY.md', 'rename:MEMORY.md:after'];
+for (const relation of ['supersedes', 'conflicts_with']) {
+  for (const point of [...targetFaults, ...finalFaults.filter(p => relation === 'supersedes' || !p.includes('DEMOTED')),
+    'journal:coffee.md:before:2', 'rename:coffee.md', 'rename:coffee.md:after']) {
+    test(`round1 blocker 2: ref retry completes ${relation} after ${point}`, async t => {
+      const f = fixture(t);
+      await f.store.remember(fact('tea'));
+      const request = fact('coffee', { relation, target: 'tea', ref: 'interrupted-request' });
+      const resumed = await interrupted(f, point, () => f.store.remember(request));
+      const result = await resumed.remember(fact('water', { ref: request.ref }));
+      assert.equal(result.name, 'coffee');
+      assert.equal(result.alreadyExists, true);
+      if (relation === 'supersedes') {
+        assert.equal(f.card('tea').status, 'superseded');
+        assert.equal(f.card('tea').superseded_by, 'coffee');
+        assert.doesNotMatch(f.index(), /- tea.md/);
+        assert.match(fs.readFileSync(path.join(f.root, 'DEMOTED.md'), 'utf8'), /- tea.md - superseded by coffee.md/);
+      } else {
+        for (const [name, opponent] of [['tea', 'coffee'], ['coffee', 'tea']]) {
+          assert.equal(f.card(name).status, 'contested');
+          assert.deepEqual(f.card(name).conflicts_with, [opponent]);
+        }
+        assert.match(f.index(), /- tea.md/);
+      }
+      assert.match(f.index(), /- coffee.md/);
+      const before = fs.readFileSync(path.join(f.root, '.lararium-remembered'), 'utf8');
+      await resumed.remember(request);
+      assert.equal(fs.readFileSync(path.join(f.root, '.lararium-remembered'), 'utf8'), before);
+      fs.writeFileSync(path.join(f.root, 'MEMORY.md'), '# Memory\n');
+      assert.equal(await resumed.heal(), relation === 'supersedes' ? 1 : 2);
+    });
+  }
+}
+
+for (const held of [false, true]) {
+  const points = [...targetFaults, 'journal:coffee.md', 'rename:coffee.md', 'rename:coffee.md:after', ...finalFaults];
+  if (held) points.push('journal:coffee.md:after');
+  for (const point of points) {
+    test(`round1 blocker 3: ${held ? 'held' : 'contested'} resolution resumes after ${point}`, async t => {
+      const f = fixture(t);
+      if (held) {
+        await f.store.remember(fact('tea', { origin: 'user' }));
+        await f.store.remember(fact('coffee', { relation: 'supersedes', target: 'tea' }));
+      } else await conflict(f);
+      const request = { winner: 'coffee', loser: 'tea', reason: 'Owner confirmed' };
+      const resumed = await interrupted(f, point, () => f.store.resolve(request));
+      await resumed.resolve(request);
+      assert.equal(f.card('coffee').status, 'active');
+      assert.equal(f.card('tea').status, 'superseded');
+      assert.equal(f.card('tea').resolved_reason, request.reason);
+      assert.deepEqual(f.card('coffee').conflicts_with, []);
+      assert.deepEqual(f.card('tea').conflicts_with, []);
+      assert.doesNotMatch(f.index(), /- tea.md/);
+      assert.match(f.index(), /- coffee.md/);
+      const demoted = fs.readFileSync(path.join(f.root, 'DEMOTED.md'), 'utf8');
+      assert.equal((demoted.match(/- tea.md - superseded by coffee.md/g) || []).length, 1);
+      await assert.rejects(resumed.resolve({ ...request, reason: 'Different decision' }));
+      await resumed.resolve(request);
+      assert.equal(fs.existsSync(path.join(f.root, '_held/coffee.md')), false);
+      fs.writeFileSync(path.join(f.root, 'MEMORY.md'), '# Memory\n');
+      assert.equal(await resumed.heal(), 1, 'promoted winner retains root provenance');
+    });
+  }
+}
+
+for (const resolve of [false, true]) {
+  test(`round1 blocker 4: ${resolve ? 'resolution' : 'supersession'} retires all incident conflicts`, async t => {
+    const f = fixture(t);
+    await conflict(f);
+    await f.store.remember(fact('water', { relation: 'conflicts_with', target: 'tea' }));
+    if (resolve) await f.store.resolve({ winner: 'coffee', loser: 'tea', reason: 'Confirmed' });
+    else await f.store.remember(fact('cocoa', { relation: 'supersedes', target: 'tea' }));
+    assert.equal(f.card('water').status, 'active');
+    assert.deepEqual(f.card('water').conflicts_with, []);
+    assert.deepEqual(f.card('tea').conflicts_with, []);
+    if (!resolve) {
+      assert.equal(f.card('coffee').status, 'active');
+      assert.deepEqual(f.card('coffee').conflicts_with, []);
+    }
+    await f.store.remember(fact('milk', { relation: 'conflicts_with', target: 'water' }));
+    await f.store.resolve({ winner: 'water', loser: 'milk', reason: 'Confirmed again' });
+    assert.equal(f.card('water').status, 'active');
+  });
+}
+
+test('round1 blocker 5: reconnected MCP readers can inspect held proposals and discover their targets', async t => {
+  const f = fixture(t);
+  await f.store.remember(fact('tea', { origin: 'user' }));
+  await f.store.remember(fact('coffee', { relation: 'supersedes', target: 'tea', evidence: 'Owner said: coffee # today' }));
+  const reader = await clientFor(t, createStore({ root: f.root }), 'read');
+  const listing = await call(reader, 'list', { status: 'held' });
+  assert.match(listing, /supersedes.*tea/);
+  const full = await call(reader, 'read', { name: 'coffee', held: true });
+  assert.match(full, /coffee is the selected setting/);
+  assert.match(full, /evidence: "Owner said: coffee # today"/);
+  assert.match(full, /relation: supersedes\ntarget: tea/);
+  const before = hash(f.bytes('coffee', true));
+  assert.equal(f.store.read('coffee', { held: true }).text, full);
+  assert.equal(hash(f.bytes('coffee', true)), before);
+  assert.equal(fs.existsSync(path.join(f.root, '.lararium-reads.json')), false);
+  for (const name of ['../tea', '_held/coffee', 'MEMORY', '.lararium-remembered']) {
+    assert.equal((await reader.callTool({ name: 'read', arguments: { name, held: true } })).isError, true);
+  }
+  fs.symlinkSync(path.join(f.root, 'tea.md'), path.join(f.root, '_held/linked.md'));
+  assert.equal((await reader.callTool({ name: 'read', arguments: { name: 'linked', held: true } })).isError, true);
+  fs.unlinkSync(path.join(f.root, '_held/linked.md'));
+  fs.renameSync(path.join(f.root, '_held'), path.join(f.root, 'proposals'));
+  fs.symlinkSync(path.join(f.root, 'proposals'), path.join(f.root, '_held'));
+  assert.equal((await reader.callTool({ name: 'read', arguments: { name: 'coffee', held: true } })).isError, true);
+});
+
+test('round1 legacy: original v3.1 requests retry before and after state rewrites', async t => {
+  const f = fixture(t);
+  const nonce = '0123456789abcdef01234567';
+  const text = `---\nname: tea\ndescription: tea preference.\ntype: feedback\nlararium-id: ${nonce}\n---\n\ntea is the selected setting.\n`;
+  fs.writeFileSync(path.join(f.root, 'tea.md'), text);
+  const { journalRecord } = createRequire(import.meta.url)(path.join(lib, 'store.js'));
+  fs.writeFileSync(path.join(f.root, '.lararium-remembered'), journalRecord('tea.md', nonce, hash(Buffer.from(text))));
+  const request = fact('tea', { relation: undefined });
+  await f.store.remember(request);
+  assert.match(f.index(), /- tea.md/);
+  await f.store.remember(fact('coffee', { relation: 'conflicts_with', target: 'tea' }));
+  await f.store.remember(request);
+  assert.equal(f.card('tea').status, 'contested');
+  await f.store.resolve({ winner: 'coffee', loser: 'tea', reason: 'Confirmed' });
+  assert.equal((await f.store.remember(request)).alreadyExists, true);
+  assert.doesNotMatch(f.index(), /- tea.md/);
+});
+
+for (const relation of ['conflicts_with', 'supersedes']) {
+  test(`round1 blocker 2: held ${relation} ref retry after resolution preserves the decision`, async t => {
+    const f = fixture(t);
+    await f.store.remember(fact('tea', { origin: 'user' }));
+    await f.store.remember(fact('coffee', { relation, target: 'tea', ref: 'held-resolution' }));
+    await f.store.resolve({ winner: 'coffee', loser: 'tea', reason: 'Confirmed' });
+    const before = hash(f.bytes('tea'));
+    assert.equal((await createStore({ root: f.root }).remember(fact('water', { ref: 'held-resolution' }))).name, 'coffee');
+    assert.equal(hash(f.bytes('tea')), before);
+    assert.equal(f.card('coffee').status, 'active');
+  });
+}
+
+for (const point of ['journal:_held/coffee.md', 'rename:_held/coffee.md', 'rename:_held/coffee.md:after', 'rename:MEMORY.md', 'rename:MEMORY.md:after']) {
+  test(`round1 blocker 3: held loser resolution resumes after ${point}`, async t => {
+    const f = fixture(t);
+    await f.store.remember(fact('tea', { origin: 'user' }));
+    await f.store.remember(fact('coffee', { relation: 'conflicts_with', target: 'tea' }));
+    const request = { winner: 'tea', loser: 'coffee', reason: 'Retain owner evidence' };
+    const resumed = await interrupted(f, point, () => f.store.resolve(request));
+    await resumed.resolve(request);
+    await resumed.resolve(request);
+    assert.equal(f.card('tea').status, 'active');
+    assert.equal(f.card('coffee', true).status, 'superseded');
+    assert.match(f.index(), /- tea.md/);
+    assert.doesNotMatch(f.index(), /- coffee.md/);
+  });
+}
+
+for (const resolve of [false, true]) {
+  for (const point of ['journal:water.md', 'rename:water.md', 'rename:water.md:after']) {
+    test(`round1 blocker 4: interrupted incident cleanup resumes during ${resolve ? 'resolution' : 'supersession'} at ${point}`, async t => {
+      const f = fixture(t);
+      await conflict(f);
+      await f.store.remember(fact('water', { relation: 'conflicts_with', target: 'tea' }));
+      const decision = { winner: 'coffee', loser: 'tea', reason: 'Confirmed' };
+      const request = fact('cocoa', { relation: 'supersedes', target: 'tea', ref: 'cleanup-request' });
+      const resumed = await interrupted(f, point, () => resolve ? f.store.resolve(decision) : f.store.remember(request));
+      if (resolve) await resumed.resolve(decision);
+      else await resumed.remember(request);
+      assert.equal(f.card('water').status, 'active');
+      assert.deepEqual(f.card('water').conflicts_with, []);
+      assert.equal(f.card('tea').status, 'superseded');
+      assert.doesNotMatch(f.index(), /- tea.md/);
+    });
+  }
+}

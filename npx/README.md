@@ -36,7 +36,7 @@ official MCP SDK, no database. The files stay the memory; the server never keeps
 | tool | does |
 |---|---|
 | `search` | full-text by default; also by meaning when semantic search is on |
-| `read` | one card in full (`MEMORY` opens the index) |
+| `read` | one card in full (`MEMORY` opens the index); `held: true` selects a held proposal |
 | `list` | cards with type, status and description; filters `type`, `status`, `stale_days`; pins first |
 | `remember` | writes a card and its index line, or returns near matches or an owner-held proposal |
 | `resolve` | write tier only: choose `winner`, `loser`, `reason` for a contested or held pair |
@@ -48,7 +48,11 @@ official MCP SDK, no database. The files stay the memory; the server never keeps
 `body`. It also accepts `relation: new | supersedes | conflicts_with`, `target` (a card name, required
 for the last two relations), `origin: user | agent | third_party` (default `agent`), `evidence`,
 `ref`, and `pinned`. Origin is declared by the caller: the server cannot verify it. A repeated `ref`
-in the card folder or `_held/` returns the original card and writes nothing.
+in the card folder or `_held/` returns the original card. If its earlier write was interrupted,
+the retry finishes the recorded relation, demotion and index steps before acknowledging it.
+Completed retries write nothing. Without a ref, retries must also match the original relation
+and target, independently of later conflict state. For identical v3.1 retries, an absent origin
+line compares as the default `agent`, including after a state rewrite.
 
 Without `relation`, full-text search over the proposed name, description and body returns up to five
 non-superseded near matches instead of writing. The threshold is a score of at least 18 and at least
@@ -60,10 +64,17 @@ contested and retains both pointers. A superseded target is refused with its rep
 
 An `agent` or `third_party` write against a `user` target is held in `_held/` for the owner instead
 of changing the target. Held cards are never searched or indexed, and appear only in `list` with
-`status: held`. `resolve` accepts `winner`, `loser`, `reason`: it resolves a contested pair or a held
+`status: held`, with relation and target in each listing. Open the full proposal with
+`read({ name: "proposal-name", held: true })`, including its body and evidence. The selector accepts
+plain card names only and retains symlink protections. Held reads never update read timestamps.
+`resolve` accepts `winner`, `loser`, `reason`: it resolves a contested pair or a held
 card against its target. A held winner moves into the folder and index; a held loser stays held and
 superseded. The loser records the winner and reason and loses its pointer. The resolved conflict
-links are removed; other conflicts remain contested. No card is deleted.
+links to the retired loser are removed from all surviving cards; a survivor with no remaining
+conflicts becomes active. Other conflicts remain contested. No card is deleted. The loser records
+the winner and reason before subsequent changes, so the same resolution call can finish an
+interrupted rewrite, promotion, demotion or index update after a restart. A promoted winner's root
+journal record is durable before the move.
 
 Optional card frontmatter, also documented in `memory/README.md`:
 
@@ -77,7 +88,8 @@ Optional card frontmatter, also documented in `memory/README.md`:
 | `ref` | Caller id for idempotent writes |
 | `pinned` | `true` sorts first and keeps new index lines below pinned lines |
 | `resolved_reason` | One-line explanation on a resolved loser |
-| `relation`, `target` | Held proposal's relation and target card name |
+| `relation`, `target` | Original relation and target, on root cards and held proposals |
+| `relation_applied` | Server-owned completion bit, set only after relation and index maintenance |
 
 Values with YAML syntax are quoted. Rewrites change frontmatter only, under the index lock, and
 renew journal provenance only for bytes previously vouched for. A hand-written card stays

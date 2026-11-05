@@ -82,6 +82,8 @@ Rules:
 All of these frontmatter fields are optional. Existing v3.1 cards need no migration: an absent
 `status` means `active`. The server writes `origin: agent` unless the caller declares another origin.
 Origin is a caller declaration, which the server cannot verify, rather than proof of authorship.
+For identical retries of v3.1 requests, an absent origin line compares as the default `agent`,
+including after state rewrites.
 
 | Field | Values or meaning |
 |---|---|
@@ -91,9 +93,11 @@ Origin is a caller declaration, which the server cannot verify, rather than proo
 | `conflicts_with` | One card name, or a YAML flow list such as `[tea, coffee]` |
 | `origin` | `user`, `agent`, or `third_party` |
 | `evidence` | One line holding the quoted span that supports the claim |
-| `ref` | Caller id; a repeated id returns the existing card without writing |
+| `ref` | Caller id; a retry returns the original card and completes any interrupted steps |
 | `pinned` | `true` keeps a card first in lists and above new index lines |
 | `resolved_reason` | One-line explanation recorded on the losing card after resolution |
+| `relation`, `target` | Original relation and target, retained independently of mutable conflict state |
+| `relation_applied` | Server-owned completion bit after relation, demotion and index steps are durable |
 
 Use YAML quoting for values containing a colon, a comment marker or other YAML syntax. For example,
 this invented illustration belongs in documentation, not in a populated template card:
@@ -122,12 +126,18 @@ again with an explicit relation. There is no model call in this decision.
 An agent or third party proposing to supersede or conflict with a `user` card writes only to
 `_held/`. The user card's bytes stay unchanged. Held frontmatter also carries `relation` and
 `target`. Held cards are excluded from search, the index and normal lists. Ask for `list` with
-`status: held` to review them. `resolve` is a write tool: choose `winner`, `loser`, and a one-line
+`status: held` to review their relation and target, then use `read` with `held: true` and the plain
+card name to inspect the body and evidence. Held reads never update read timestamps.
+`resolve` is a write tool: choose `winner`, `loser`, and a one-line
 `reason` for a contested pair or a held card against its target. A held winner moves into the card
 folder and gains a pointer. A held loser stays in `_held/` as superseded. The loser records
-`superseded_by` and `resolved_reason`. The pair's conflict links are removed; unrelated conflicts
-stay contested until resolved. Files are never deleted by these operations. Rewrites change only
-frontmatter and retain the body bytes.
+`superseded_by` and `resolved_reason` before subsequent steps, so the same resolution call can
+complete interrupted rewrites, promotion, demotion and index changes after a restart. All links to
+the retired loser are removed; surviving cards become active when no conflicts remain. Unrelated
+conflicts stay contested until resolved. Files are never deleted by these operations. Rewrites
+change only frontmatter and retain the body bytes. Original relation and target are retained on
+the new card so a retry cannot silently change the request; a ref retry completes that recorded
+request rather than using a changed payload.
 
 `list` accepts `status: active`, `contested`, `superseded`, or `held`. Search includes state labels
 and ranks active cards before contested cards and superseded cards. At session start, review the

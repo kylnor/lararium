@@ -86,10 +86,10 @@ function createMcpServer({ store, semantic = null, role, version, log = stderrLo
 
   server.registerTool('read', {
     title: 'Read a memory card',
-    description: 'Open one card in full by name (for example "prefers-short-replies"). `MEMORY` opens the index.',
-    inputSchema: { name: z.string().min(1).max(120) },
+    description: 'Open one card in full by name (for example "prefers-short-replies"). Set held: true to inspect an owner-held proposal. `MEMORY` opens the root index.',
+    inputSchema: { name: z.string().min(1).max(120), held: z.boolean().optional() },
     annotations: { readOnlyHint: true, openWorldHint: false },
-  }, ({ name }) => guarded('read', log, () => text(store.read(name, { recordRead: role === 'write' }).text)));
+  }, ({ name, held = false }) => guarded('read', log, () => text(store.read(name, { held, recordRead: role === 'write' }).text)));
 
   server.registerTool('list', {
     title: 'List memory cards',
@@ -100,7 +100,7 @@ function createMcpServer({ store, semantic = null, role, version, log = stderrLo
     const cards = store.list(input);
     const advice = input.stale_days !== undefined ? ' Ask the owner to demote stale cards through DEMOTED.md; nothing is demoted automatically.' : '';
     if (!cards.length) return text(`No cards yet.${advice}`);
-    return text(`${cards.length} card(s).${advice}\n${cards.map(c => `- ${c.name} [${c.type}] [${c.status}]${c.held ? ' [held]' : ''}${c.pinned ? ' [pinned]' : ''}${c.inIndex ? '' : ' (not in index)'} ${c.description}`).join('\n')}`);
+    return text(`${cards.length} card(s).${advice}\n${cards.map(c => `- ${c.name} [${c.type}] [${c.status}]${c.held ? ` [held] [${c.relation} ${c.target}]` : ''}${c.pinned ? ' [pinned]' : ''}${c.inIndex ? '' : ' (not in index)'} ${c.description}`).join('\n')}`);
   }));
 
   if (role === 'write') {
@@ -133,7 +133,7 @@ function createMcpServer({ store, semantic = null, role, version, log = stderrLo
     }, input => guarded('remember', log, async () => {
       const saved = await store.remember(input);
       if (saved.candidates) return text(`Nothing was written. Call remember again with relation: new, supersedes or conflicts_with (and target for the latter two). Nearest cards:\n${saved.candidates.map(c => `- ${c.name} [${c.status}] ${c.description}`).join('\n')}`);
-      if (saved.alreadyExists) return text(`${saved.name} already exists${saved.held ? ' (held for the owner)' : ''}; nothing was written.`);
+      if (saved.alreadyExists) return text(`${saved.name} already exists${saved.held ? ' (held for the owner)' : ''}; any interrupted write is complete.`);
       if (saved.held) return text(`Held ${saved.file} in _held/ for the owner; the target card is unchanged.`);
       const warn = saved.indexOverBudget ? ' The index is now past 200 lines or 24 KB: tell the owner to demote older cards.' : '';
       return text(`Saved ${saved.file} and added to the index: ${saved.indexLine}${warn}`);
