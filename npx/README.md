@@ -36,18 +36,77 @@ official MCP SDK, no database. The files stay the memory; the server never keeps
 | tool | does |
 |---|---|
 | `search` | full-text by default; also by meaning when semantic search is on |
-| `read` | one card in full (`MEMORY` opens the index) |
-| `list` | every card with its type and one-line description |
-| `remember` | writes one card (`name`, `description`, `type`, `body`) and its index line, in the format `memory/README.md` defines; never overwrites |
+| `read` | one card in full (`MEMORY` opens the index); `held: true` selects a held proposal |
+| `list` | cards with type, status and description; filters `type`, `status`, `stale_days`; pins first |
+| `remember` | writes a card and its index line, or returns near matches or an owner-held proposal |
+| `resolve` | write tier only: choose `winner`, `loser`, `reason` for a contested or held pair |
 
 `read` and `remember` refuse any name that is not a plain card file inside the memory folder
 (no path separators, no `..`, no symlinks).
 
+**Relations and owner review (v3.1.1).** `remember` still takes `name`, `description`, `type` and
+`body`. It also accepts `relation: new | supersedes | conflicts_with`, `target` (a card name, required
+for the last two relations), `origin: user | agent | third_party` (default `agent`), `evidence`,
+`ref`, and `pinned`. Origin is declared by the caller: the server cannot verify it. A repeated `ref`
+in the card folder or `_held/` returns the original card. If its earlier write was interrupted,
+the retry finishes the recorded relation, demotion and index steps before acknowledging it.
+Completed retries write nothing. Without a ref, retries must also match the original relation
+and target, independently of later conflict state. For identical v3.1 retries, an absent origin
+line compares as the default `agent`, including after a state rewrite.
+
+Without `relation`, full-text search over the proposed name, description and body returns up to five
+non-superseded near matches instead of writing. The threshold is a score of at least 18 and at least
+60 percent of distinct query terms matched after stopword removal. Each term scores 4 in the name,
+3 in the description and up to 5 body occurrences, plus 6 times the matched fraction. Call again with
+an explicit relation after judging the candidates. This uses no model. `supersedes` marks the target
+superseded and replaces its index pointer with a `DEMOTED.md` entry. `conflicts_with` marks both cards
+contested and retains both pointers. A superseded target is refused with its replacement's name.
+
+An `agent` or `third_party` write against a `user` target is held in `_held/` for the owner instead
+of changing the target. Held cards are never searched or indexed, and appear only in `list` with
+`status: held`, with relation and target in each listing. Open the full proposal with
+`read({ name: "proposal-name", held: true })`, including its body and evidence. The selector accepts
+plain card names only and retains symlink protections. Held reads never update read timestamps.
+`resolve` accepts `winner`, `loser`, `reason`: it resolves a contested pair or a held
+card against its target. A held winner moves into the folder and index; a held loser stays held and
+superseded. The loser records the winner and reason and loses its pointer. The resolved conflict
+links to the retired loser are removed from all surviving cards; a survivor with no remaining
+conflicts becomes active. Other conflicts remain contested. No card is deleted. The loser records
+the winner and reason before subsequent changes, so the same resolution call can finish an
+interrupted rewrite, promotion, demotion or index update after a restart. A promoted winner's root
+journal record is durable before the move.
+
+Optional card frontmatter, also documented in `memory/README.md`:
+
+| Field | Meaning |
+|---|---|
+| `status` | `active`, `contested`, `superseded`; absent means active, no migration |
+| `supersedes`, `superseded_by` | Related card name |
+| `conflicts_with` | One card name or a YAML flow list of names |
+| `origin` | `user`, `agent`, `third_party` |
+| `evidence` | One line containing the supporting quoted span |
+| `ref` | Caller id for idempotent writes |
+| `pinned` | `true` sorts first and keeps new index lines below pinned lines |
+| `resolved_reason` | One-line explanation on a resolved loser |
+| `relation`, `target` | Original relation and target, on root cards and held proposals |
+| `relation_applied` | Server-owned completion bit, set only after relation and index maintenance |
+
+Values with YAML syntax are quoted. Rewrites change frontmatter only, under the index lock, and
+renew journal provenance only for bytes previously vouched for. A hand-written card stays
+unjournaled. `search` labels contested and superseded matches and ranks them below active matches.
+At session start call `list` for `contested` and `held` and raise both with the owner.
+
+`list` accepts `status: active | contested | superseded | held` and `stale_days`. The latter returns
+active, unpinned cards not read for that many days, falling back to file mtime. Writable reads record
+times atomically in `.lararium-reads.json` without changing card bytes; a sidecar symlink is refused,
+and sidecar failure is logged without failing a read. `--read-only` and read-tier HTTP calls never
+record reads. Nothing is demoted automatically: ask the owner to demote through `DEMOTED.md`.
+
 **Two transports.** `--stdio` speaks MCP over stdin and stdout and opens no port, so it needs no
 token. The default is streamable HTTP on `127.0.0.1:8787`, and HTTP always requires a bearer token:
 
-- a **write token** (`lrw_...`) can call all four tools;
-- a **read token** (`lrr_...`) is served a server that has no `remember` at all.
+- a **write token** (`lrw_...`) can call all five tools;
+- a **read token** (`lrr_...`) is served a server that has no `remember` or `resolve`.
 
 No token, or a wrong one, gets a 401. Tokens are created on first start in a private file
 (`~/.config/lararium/serve.json`, mode 0600; set `LARARIUM_SERVE_HOME` to move it), or come from
@@ -76,8 +135,7 @@ model behind the same name and size). `--reindex` rebuilds and exits; start the 
 Redirects from the embedding server are refused. If the model is missing, down, or the cache cannot be
 read or written, search falls back to full-text and says so.
 
-Limits worth knowing: it serves `memory/` only; `remember` adds cards and never edits one (a
-correction is a new card); several servers on one folder take turns on `memory/MEMORY.md` through a
+Limits worth knowing: it serves `memory/` only; `remember` adds cards and changes related frontmatter (body bytes stay unchanged); several servers on one folder take turns on `memory/MEMORY.md` through a
 lock file (`.memory-index.lock`), and a symbolic link in place of `MEMORY.md` or `.index/` is refused.
 The cards are canonical and the index line is derived: every card the server writes is also recorded
 in `memory/.lararium-remembered` (an append-only journal, one self-checking record per card), and the
@@ -86,13 +144,14 @@ frontmatter, which `read` shows. A journal append is `#\nL1 <name>.md <id> <sha2
 is the hash of the card file's exact bytes and `<check>` is a sha-256 prefix of the rest of the line.
 The journal only vouches for a card whose id AND exact bytes match one valid record for its name. The id
 alone proves nothing, since anyone who can `read` the card sees it; it is the hash that binds the record
-to what the server wrote. Edit a card and the server stops vouching for it (repair no longer restores
+to what the server wrote. Server state changes renew the journal record with the same nonce when the old bytes matched.
+Edit a card by hand and the server stops vouching for it (repair no longer restores
 its index line), which is the safe direction.
 
 **Threat model.** The server defends against the callers of its tools: HTTP and stdio clients,
 including cloud apps reaching it over a tunnel. They get a token tier, names that can only be plain
 card files in the memory folder, errors with no local paths in them (the full error goes to the
-server's own log), and a read tier that has no `remember` at all. A local process that can already
+server's own log), and a read tier that has no `remember` or `resolve`. A local process that can already
 write into the memory folder is trusted, because it can edit the cards directly, and that includes
 appending raw bytes to the journal: that is out of scope, and nothing here claims to defeat it. What
 the server is exact about is what it wrote itself. Inside that model the
@@ -163,7 +222,7 @@ authenticated and is still in flight; it finishes, and every request after it is
 Behavior change since `0.2.x`: `npx lararium serve` is now this command. To scaffold a folder that
 is literally named `serve`, write `npx lararium ./serve`.
 
-**Note on versioning:** this package's own version (`0.3.0` today) is unrelated to the template's
+**Note on versioning:** this package's own version (`0.3.1` today) is unrelated to the template's
 `STACK_VERSION`. The scaffolder always fetches whatever the latest template release is at run time, so
 a template release never needs a package release. Bump this package when `index.js`, `serve.js` or
 anything in `lib/` changes: the memory server ships in it.

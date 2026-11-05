@@ -1,16 +1,17 @@
 'use strict';
-// The four tools, built per caller. A read-tier caller gets a server that does not have `remember`
-// at all, so the refusal does not depend on a check inside a handler.
+// The tools, built per caller. A read-tier caller gets a server that does not have `remember`
+// or `resolve`, so the refusal does not depend on a check inside a handler.
 const crypto = require('node:crypto');
 const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { z } = require('zod');
-const { InputError, GuardError, CARD_TYPES } = require('./store');
+const { InputError, GuardError, CARD_TYPES, CARD_STATUSES } = require('./store');
 const { SemanticUnavailable } = require('./embed');
 
 const INSTRUCTIONS = [
   'This is the owner\'s own memory: small cards, one fact per file, kept in a folder their coding agents also read.',
   'Use `search` before answering questions about the owner, their work, or their preferences. Use `read` to open a card in full.',
   'Use `remember` (if offered) to save one durable fact the moment you learn it. One fact per card; say why it is true and when it applies.',
+  'At session start, call `list` with status `contested` and `held` and raise them with the owner.',
   'Never save secrets, credentials or raw transcripts.',
 ].join(' ');
 
@@ -59,7 +60,7 @@ function createMcpServer({ store, semantic = null, role, version, log = stderrLo
     if (semantic) {
       try {
         const bySemantic = await semantic.rank(query, 50);
-        names = fuse([byText, bySemantic], limit);
+        names = fuse([byText, bySemantic], 50);
         mode = 'hybrid (full-text + EmbeddingGemma 2)';
       } catch (error) {
         // Whatever went wrong on the semantic path (model down, cache unreadable, disk full), the
@@ -74,36 +75,55 @@ function createMcpServer({ store, semantic = null, role, version, log = stderrLo
     const rows = names.map(name => {
       if (known.has(name)) return known.get(name);
       const card = store.loadCard(`${name}.md`);
-      return { name, description: card.description, type: card.type, score: 0, snippet: card.body.replace(/\s+/g, ' ').slice(0, 200) };
+      return { name, description: card.description, type: card.type, status: card.status, conflicts_with: card.conflicts_with, superseded_by: card.superseded_by, score: 0, snippet: card.body.replace(/\s+/g, ' ').slice(0, 200) };
     });
+    rows.sort((a, b) => CARD_STATUSES.indexOf(a.status || 'active') - CARD_STATUSES.indexOf(b.status || 'active'));
+    rows.splice(limit);
     if (!rows.length) return text(`No cards matched "${query}". Search mode: ${mode}.`);
-    const lines = rows.map(r => `- ${r.name} [${r.type}] ${r.description}\n  ${r.snippet}`);
+    const lines = rows.map(r => `- ${r.name} [${r.type}]${r.status === 'contested' ? ` [contested with ${(r.conflicts_with || []).join(', ')}]` : r.status === 'superseded' ? ` [superseded by ${r.superseded_by}]` : ''} ${r.description}\n  ${r.snippet}`);
     return text(`${rows.length} match(es). Search mode: ${mode}.\n${lines.join('\n')}`);
   }));
 
   server.registerTool('read', {
     title: 'Read a memory card',
-    description: 'Open one card in full by name (for example "prefers-short-replies"). `MEMORY` opens the index.',
-    inputSchema: { name: z.string().min(1).max(120) },
+    description: 'Open one card in full by name (for example "prefers-short-replies"). Set held: true to inspect an owner-held proposal. `MEMORY` opens the root index.',
+    inputSchema: { name: z.string().min(1).max(120), held: z.boolean().optional() },
     annotations: { readOnlyHint: true, openWorldHint: false },
-  }, ({ name }) => guarded('read', log, () => text(store.read(name).text)));
+  }, ({ name, held = false }) => guarded('read', log, () => text(store.read(name, { held, recordRead: role === 'write' }).text)));
 
   server.registerTool('list', {
     title: 'List memory cards',
-    description: 'List every card with its type and one-line description, optionally only one type.',
-    inputSchema: { type: z.enum(CARD_TYPES).optional() },
+    description: 'List every card with its type and one-line description, optionally filter by type, status or stale_days. Stale cards are active, unpinned and unread for that many days (mtime before the first read); ask the owner to demote them through DEMOTED.md.',
+    inputSchema: { type: z.enum(CARD_TYPES).optional(), status: z.enum([...CARD_STATUSES, 'held']).optional(), stale_days: z.number().min(0).optional() },
     annotations: { readOnlyHint: true, openWorldHint: false },
-  }, ({ type }) => guarded('list', log, () => {
-    const cards = store.list({ type });
-    if (!cards.length) return text('No cards yet.');
-    return text(`${cards.length} card(s).\n${cards.map(c => `- ${c.name} [${c.type}]${c.inIndex ? '' : ' (not in index)'} ${c.description}`).join('\n')}`);
+  }, input => guarded('list', log, () => {
+    const cards = store.list(input);
+    const advice = input.stale_days !== undefined ? ' Ask the owner to demote stale cards through DEMOTED.md; nothing is demoted automatically.' : '';
+    if (!cards.length) return text(`No cards yet.${advice}`);
+    return text(`${cards.length} card(s).${advice}\n${cards.map(c => `- ${c.name} [${c.type}] [${c.status}]${c.held ? ` [held] [${c.relation} ${c.target}]` : ''}${c.pinned ? ' [pinned]' : ''}${c.inIndex ? '' : ' (not in index)'} ${c.description}`).join('\n')}`);
   }));
 
   if (role === 'write') {
+    server.registerTool('resolve', {
+      title: 'Resolve a memory conflict',
+      description: 'Owner resolution of a contested pair, or a held card against its target. Keep winner and supersede loser with a one-line reason.',
+      inputSchema: { winner: z.string().min(1).max(80), loser: z.string().min(1).max(80), reason: z.string().min(1) },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    }, input => guarded('resolve', log, async () => {
+      const result = await store.resolve(input);
+      return text(`Resolved: ${result.winner} wins; ${result.loser} is superseded. Reason: ${result.reason}`);
+    }));
+
     server.registerTool('remember', {
       title: 'Remember a fact',
-      description: 'Save one durable fact as its own card and add it to the index. One fact per call. Refuses a name that already exists.',
+      description: 'Save one durable fact as its own card and add it to the index. One fact per call. Without relation, near matches require a second call with an explicit relation. Agent or third_party changes against user-origin cards are held for the owner. origin defaults to agent and is caller-declared; the server cannot verify it. ref makes retries idempotent.',
       inputSchema: {
+        relation: z.enum(['new', 'supersedes', 'conflicts_with']).optional(),
+        target: z.string().min(1).max(80).optional().describe('card name required for supersedes or conflicts_with'),
+        origin: z.enum(['user', 'agent', 'third_party']).optional(),
+        evidence: z.string().min(1).optional(),
+        ref: z.string().min(1).optional(),
+        pinned: z.boolean().optional(),
         name: z.string().min(1).max(80).describe('kebab-case, a short sentence that states the claim'),
         description: z.string().min(1).max(300).describe('one line, specific enough to decide relevance without opening the card'),
         type: z.enum(CARD_TYPES).describe('user: who they are; feedback: a correction or confirmed way of working; project: true about a piece of work, dated; reference: where a thing lives'),
@@ -112,6 +132,9 @@ function createMcpServer({ store, semantic = null, role, version, log = stderrLo
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     }, input => guarded('remember', log, async () => {
       const saved = await store.remember(input);
+      if (saved.candidates) return text(`Nothing was written. Call remember again with relation: new, supersedes or conflicts_with (and target for the latter two). Nearest cards:\n${saved.candidates.map(c => `- ${c.name} [${c.status}] ${c.description}`).join('\n')}`);
+      if (saved.alreadyExists) return text(`${saved.name} already exists${saved.held ? ' (held for the owner)' : ''}. Locally edited cards are returned without repair.`);
+      if (saved.held) return text(`Held ${saved.file} in _held/ for the owner; the target card is unchanged.`);
       const warn = saved.indexOverBudget ? ' The index is now past 200 lines or 24 KB: tell the owner to demote older cards.' : '';
       return text(`Saved ${saved.file} and added to the index: ${saved.indexLine}${warn}`);
     }));

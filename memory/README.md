@@ -77,6 +77,81 @@ Rules:
 - Capture the corrected positive lesson, never the failure event or a negative tool claim.
   `rules/OPERATING.md` has the full anti-corpus rule.
 
+## Card states and evidence
+
+All of these frontmatter fields are optional. Existing v3.1 cards need no migration: an absent
+`status` means `active`. The server writes `origin: agent` unless the caller declares another origin.
+Origin is a caller declaration, which the server cannot verify, rather than proof of authorship.
+For identical retries of v3.1 requests, an absent origin line compares as the default `agent`,
+including after state rewrites.
+
+| Field | Values or meaning |
+|---|---|
+| `status` | `active`, `contested`, or `superseded` |
+| `supersedes` | Name of the older card replaced by this card |
+| `superseded_by` | Name of the replacement card |
+| `conflicts_with` | One card name, or a YAML flow list such as `[tea, coffee]` |
+| `origin` | `user`, `agent`, or `third_party` |
+| `evidence` | One line holding the quoted span that supports the claim |
+| `ref` | Caller id; a retry returns the original card and completes any interrupted steps |
+| `pinned` | `true` keeps a card first in lists and above new index lines |
+| `resolved_reason` | One-line explanation recorded on the losing card after resolution |
+| `relation`, `target` | Original relation and target, retained independently of mutable conflict state |
+| `relation_applied` | Server-owned completion bit after relation, demotion and index steps are durable |
+
+Use YAML quoting for values containing a colon, a comment marker or other YAML syntax. For example,
+this invented illustration belongs in documentation, not in a populated template card:
+
+```yaml
+status: contested
+conflicts_with: [tea, coffee]
+origin: user
+evidence: "I prefer tea: that is my choice."
+ref: "example-call: 1"
+pinned: true
+```
+
+`remember` can explicitly write a `new` card, one that `supersedes` a target, or one that
+`conflicts_with` a target. Superseding marks the target superseded, removes its pointer and adds
+`- old.md - superseded by new.md` to `DEMOTED.md`. A conflict marks both cards contested and keeps
+both pointers. A superseded target is refused with the name of its replacement.
+
+Without a relation, the server searches the new name, description and body against non-superseded
+cards. A near match scores at least 18 under the full-text scorer and matches at least 60 percent of
+the distinct query terms after stopword removal. Each term scores 4 for a name match, 3 for a
+description match and up to 5 body occurrences, plus 6 times the matched fraction. Up to five nearest
+cards are returned and nothing is written. The calling agent must judge the candidates and call
+again with an explicit relation. There is no model call in this decision.
+
+An agent or third party proposing to supersede or conflict with a `user` card writes only to
+`_held/`. The user card's bytes stay unchanged. Held frontmatter also carries `relation` and
+`target`. Held cards are excluded from search, the index and normal lists. Ask for `list` with
+`status: held` to review their relation and target, then use `read` with `held: true` and the plain
+card name to inspect the body and evidence. Held reads never update read timestamps.
+`resolve` is a write tool: choose `winner`, `loser`, and a one-line
+`reason` for a contested pair or a held card against its target. A held winner moves into the card
+folder and gains a pointer. A held loser stays in `_held/` as superseded. The loser records
+`superseded_by` and `resolved_reason` before subsequent steps, so the same resolution call can
+complete interrupted rewrites, promotion, demotion and index changes after a restart. All links to
+the retired loser are removed; surviving cards become active when no conflicts remain. Unrelated
+conflicts stay contested until resolved. Files are never deleted by these operations. Rewrites
+change only frontmatter and retain the body bytes. Original relation and target are retained on
+the new card so a retry cannot silently change the request; a ref retry completes that recorded
+request rather than using a changed payload.
+
+`list` accepts `status: active`, `contested`, `superseded`, or `held`. Search includes state labels
+and ranks active cards before contested cards and superseded cards. At session start, review the
+contested and held lists with the owner.
+
+## Read-driven review
+
+Reading a card never rewrites it. Writable reads record a timestamp in `.lararium-reads.json`,
+written atomically beside the cards. A symlink there is refused, and sidecar failures are logged
+without failing the read. Read-only servers and read-tier HTTP callers do not write timestamps.
+`list` with `stale_days` returns only active, unpinned cards unread for that many days, using file
+mtime until the first read. Nothing is automatically demoted or deleted. The owner can demote an
+outdated card through `DEMOTED.md` using the order below.
+
 ## The index
 
 `MEMORY.md` is the index: one line per card, newest first, in the form
@@ -85,7 +160,9 @@ Rules:
 - prefers-short-replies.md - Jane wants replies under five lines unless she asks for detail.
 ```
 
-Prepend new lines. The startup hook injects the first 200 lines (about 24 KB) and drops the rest,
+Prepend new lines below the consecutive pinned entries at the top. A card pinned by hand farther
+down does not move the insertion point; move its index line to the top to keep it above new entries.
+The startup hook injects the first 200 lines (about 24 KB) and drops the rest,
 so an oldest-first index loses the newest card first, silently, on the day it is written.
 
 A card with no line in the index is **pull-tier**: found by search, never pushed into context.
@@ -112,8 +189,10 @@ destroyed by a bad edit. Now a card is in exactly one of three states:
 If the memory server (`npx lararium serve`) is in use, it also keeps `.lararium-remembered` in this
 folder: one self-checking record per card it wrote (the card carries a matching `lararium-id` line in
 its frontmatter and the record holds a hash of the card's exact bytes), so it can restore an index
-line that a concurrent writer dropped. Leave the `lararium-id` line in place. A card you wrote or
-edited by hand is yours: once its bytes differ from what the server wrote, the server never touches it.
+line that a concurrent writer dropped. Leave the `lararium-id` line in place. Server state changes append a fresh record with the same id when the old bytes were vouched for.
+A card you wrote or edited by hand is not automatically re-adopted for index repair. Explicit
+relations and resolution can still rewrite its frontmatter while preserving its body bytes.
+A hand-written card without `origin: user` is not protected by the hold.
 `.lararium-remembered` is not a card and not an index; leave it alone (it may be committed or ignored,
 as you prefer).
 

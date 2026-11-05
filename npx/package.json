@@ -1,6 +1,6 @@
 {
   "name": "lararium",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "The lararium template scaffolder, plus `lararium serve`: your memory folder as a small MCP server for Claude, ChatGPT and your coding agents.",
   "bin": {
     "lararium": "./index.js"
@@ -13,6 +13,9 @@
   ],
   "engines": {
     "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test ../tests/serve-*.test.mjs"
   },
   "license": "MIT",
   "repository": {

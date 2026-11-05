@@ -27,7 +27,7 @@ function stack() {
   return { root, memory: path.join(root, 'memory'), validate, done: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
 
-const fact = (name, extra = {}) => ({ name, description: `One line about ${name}.`, type: 'feedback', body: `The fact for ${name}.\n\n**Why:** a reason.\n\n**How to apply:** a rule.`, ...extra });
+const fact = (name, extra = {}) => ({ relation: 'new', name, description: `One line about ${name}.`, type: 'feedback', body: `The fact for ${name}.\n\n**Why:** a reason.\n\n**How to apply:** a rule.`, ...extra });
 
 test('remember writes one card file plus a newest-first index line that the shipped validator accepts', async () => {
   const s = stack();
@@ -40,8 +40,8 @@ test('remember writes one card file plus a newest-first index line that the ship
     assert.equal(second.indexOverBudget, false);
 
     const card = fs.readFileSync(path.join(s.memory, 'prefers-short-replies.md'), 'utf8');
-    assert.match(card, /^---\nname: prefers-short-replies\ndescription: One line about prefers-short-replies\.\ntype: feedback\nlararium-id: [0-9a-f]{24}\n---\n\n/);
-    assert.equal(card.replace(/^lararium-id: .*\n/m, ''), '---\nname: prefers-short-replies\ndescription: One line about prefers-short-replies.\ntype: feedback\n---\n\nThe fact for prefers-short-replies.\n\n**Why:** a reason.\n\n**How to apply:** a rule.\n');
+    assert.match(card, /^---\nname: prefers-short-replies\ndescription: One line about prefers-short-replies\.\ntype: feedback\nlararium-id: [0-9a-f]{24}\norigin: agent\n---\n\n/);
+    assert.equal(card.replace(/^(?:lararium-id|origin): .*\n/gm, ''), '---\nname: prefers-short-replies\ndescription: One line about prefers-short-replies.\ntype: feedback\n---\n\nThe fact for prefers-short-replies.\n\n**Why:** a reason.\n\n**How to apply:** a rule.\n');
 
     const index = fs.readFileSync(path.join(s.memory, 'MEMORY.md'), 'utf8');
     const entries = index.split('\n').filter(l => /^- \S+\.md - /.test(l) && !l.startsWith('- card-name.md'));
@@ -77,7 +77,7 @@ test('a multi-line description is folded to one line so the frontmatter and inde
     const store = createStore({ root: s.memory });
     await store.remember(fact('folded', { description: 'first line\nsecond: line\n---\nthird' }));
     // Folded to one line; the ": " makes it unsafe as a plain YAML scalar, so it is double-quoted.
-    assert.match(fs.readFileSync(path.join(s.memory, 'folded.md'), 'utf8'), /^---\nname: folded\ndescription: "first line second: line --- third"\ntype: feedback\nlararium-id: [0-9a-f]{24}\n---\n/);
+    assert.match(fs.readFileSync(path.join(s.memory, 'folded.md'), 'utf8'), /^---\nname: folded\ndescription: "first line second: line --- third"\ntype: feedback\nlararium-id: [0-9a-f]{24}\norigin: agent\n---\n/);
     assert.equal(store.list().find(c => c.name === 'folded').description, 'first line second: line --- third');
     assert.equal(s.validate().status, 0);
   } finally { s.done(); }
@@ -158,7 +158,7 @@ test('descriptions that are awkward as plain YAML are saved so a real YAML parse
     ];
     for (const [i, description] of descriptions.entries()) {
       const name = `yaml-case-${i}`;
-      await store.remember({ name, description, type: 'reference', body: 'Body.' });
+      await store.remember({ relation: 'new', name, description, type: 'reference', body: 'Body.' });
       const text = fs.readFileSync(path.join(s.memory, `${name}.md`), 'utf8');
       const parsed = spawnSync('python3', ['-I', '-c', [
         'import sys, json, yaml',
@@ -206,7 +206,7 @@ const [root, prefix, count] = [process.argv[2], process.argv[3], Number(process.
 (async () => {
   const store = createStore({ root });
   for (let i = 0; i < count; i += 1) {
-    await store.remember({ name: prefix + '-' + i, description: 'One line.', type: 'user', body: 'A fact.' });
+    await store.remember({ relation: 'new', name: prefix + '-' + i, description: 'One line.', type: 'user', body: 'A fact.' });
   }
 })().catch(e => { console.error(e.stack); process.exit(1); });
 `;

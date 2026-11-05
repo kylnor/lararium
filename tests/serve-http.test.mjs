@@ -65,7 +65,7 @@ test('no token and a wrong token are 401, on every method, and say where to sign
   assert.equal((await fetch(`${base}/mcp?token=${tokens.writeToken}`, { method: 'POST' })).status, 401, 'a token in the query string is not accepted');
 });
 
-test('the read token lists three tools and cannot call remember; the write token gets four and can', async () => {
+test('the read token lists three tools and cannot call remember; the write token gets five and can', async () => {
   const read = await connect(tokens.readToken);
   assert.deepEqual((await read.listTools()).tools.map(t => t.name).sort(), ['list', 'read', 'search']);
   const refused = await rpc({ authorization: `Bearer ${tokens.readToken}` }, callTool('remember', { name: 'sneaky', description: 'd', type: 'user', body: 'x' }));
@@ -76,7 +76,7 @@ test('the read token lists three tools and cannot call remember; the write token
   await read.close();
 
   const write = await connect(tokens.writeToken);
-  assert.deepEqual((await write.listTools()).tools.map(t => t.name).sort(), ['list', 'read', 'remember', 'search']);
+  assert.deepEqual((await write.listTools()).tools.map(t => t.name).sort(), ['list', 'read', 'remember', 'resolve', 'search']);
   await write.close();
 });
 
@@ -193,7 +193,7 @@ test('OAuth: the write token yields a write-capable access token', async () => {
   const code = new URL(ok.headers.get('location')).searchParams.get('code');
   const grant = await (await exchange({ grant_type: 'authorization_code', code, redirect_uri: CALLBACK, client_id: clientId, code_verifier: verifier })).json();
   const client = await connect(grant.access_token);
-  assert.equal((await client.listTools()).tools.length, 4);
+  assert.equal((await client.listTools()).tools.length, 5);
   await client.close();
 });
 

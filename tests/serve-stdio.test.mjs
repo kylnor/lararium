@@ -39,7 +39,7 @@ test('stdio: a fact written to the files is found, a fact saved over stdio lands
   try {
     fs.writeFileSync(path.join(f.memory, 'launch-codename.md'), '---\nname: launch-codename\ndescription: The launch codename is bluefin.\ntype: project\n---\n\nbluefin, decided 2026-10-01.\n');
     const client = await open(f.memory);
-    assert.deepEqual((await client.listTools()).tools.map(t => t.name).sort(), ['list', 'read', 'remember', 'search']);
+    assert.deepEqual((await client.listTools()).tools.map(t => t.name).sort(), ['list', 'read', 'remember', 'resolve', 'search']);
     assert.match((await client.callTool({ name: 'search', arguments: { query: 'what do you remember about bluefin' } })).content[0].text, /launch-codename/);
     const saved = await client.callTool({ name: 'remember', arguments: { name: 'owner-prefers-tea', description: 'The owner prefers tea.', type: 'user', body: 'Tea, not coffee.' } });
     assert.notEqual(saved.isError, true, saved.content[0].text);

@@ -12,7 +12,7 @@ const USAGE = `lararium serve: your memory folder as an MCP server
 Options
   --memory <dir>        the memory folder (default: ./memory, or $LARARIUM_MEMORY)
   --stdio               speak MCP over stdin/stdout; no network, no tokens
-  --read-only           with --stdio: do not offer the remember tool
+  --read-only           with --stdio: do not offer write tools or record reads
   --port <n>            HTTP port (default 8787)
   --host <addr>         HTTP bind address (default 127.0.0.1; leave it unless you know why)
   --public-url <https>  the HTTPS address a tunnel gives you, for the cloud apps (optional last step)
@@ -69,7 +69,7 @@ async function main(argv, env = process.env) {
 
   const { createStore } = require('./lib/store');
   const memory = path.resolve(opts.memory || env.LARARIUM_MEMORY || 'memory');
-  const store = createStore({ root: memory });
+  const store = createStore({ root: memory, readOnly: Boolean(opts['read-only']), log });
   const version = packageVersion();
 
   let semantic = null;
