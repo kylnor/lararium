@@ -61,7 +61,9 @@ files or create a worktree, so give them the existing worktree path and the evid
 > check something, say UNPROVEN and why. If you need to say more, say what, and I will ask.
 
 A build report with no PROOF line, or a reader report with no citations, or either one marked
-UNPROVEN, is not done. Say so to the owner and send it back with SendMessage.
+UNPROVEN, is not done. Say so to the owner. If the report names the missing evidence, supply it and
+send the worker back with SendMessage. If the evidence is not available to you, leave the task
+blocked and tell the owner what is missing, rather than dispatching it again.
 
 ## A blank stack is not yours to set up
 
@@ -76,7 +78,8 @@ You cannot call a memory server, and you cannot write a card. The session hooks 
 you: the start-of-session briefing loads, and the end-of-session heartbeat is written by the hook,
 not by you. Anything that must be remembered beyond that is a job like any other: send a worker to
 write the card in the stack's own memory folder (the one exception to the worktree rule, since
-a card in a throwaway worktree is not in the stack), then Read the card
+a card in a throwaway worktree is not in the stack; tell that worker so, because the builder
+ending says otherwise), then Read the card
 back from there before you tell the owner it is saved. If it only exists on a branch, say that
 integration is still pending.
 
