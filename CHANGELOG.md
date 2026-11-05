@@ -15,6 +15,27 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 
 ---
 
+## v3.1.1 (2026-11-05): additive-doc
+
+Memory that can disagree. A new card can explicitly supersede an older claim or contest it, and
+both states stay visible in the files. Without a relation, near matches are returned for the caller
+to judge before anything is written. No model judges the claim inside the server.
+
+**`npx lararium serve`** (npm package `0.3.1`). `remember` gains relations, caller-declared origin,
+evidence, idempotent refs and pins. Agent and third-party proposals against user-origin cards wait
+in `_held/` without changing the user's card. The new write-tier `resolve` tool records the owner's
+choice and reason. Superseded cards leave the index for `DEMOTED.md`; contested cards keep their
+pointers. Frontmatter edits preserve body bytes and renew existing journal provenance. Search and
+list surface states, pins remain above new index lines, and `stale_days` offers read-driven review
+without automatic eviction. Reads record timestamps in a sidecar, never in a card; read-tier callers
+write nothing.
+
+**To adopt:** update the server package and copy the card-state documentation from
+`memory/README.md` and `npx/README.md`. Existing v3.1 cards with no status remain active, with no
+migration. The files stay canonical, with no database and no new dependency.
+
+---
+
 ## v3.1 (2026-10-28): additive-doc
 
 Memory for the apps that cannot read your folder. v3.0 pointed every coding CLI at the same files;
