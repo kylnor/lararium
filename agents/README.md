@@ -4,7 +4,7 @@ Start with one assistant in one loop. Add a subagent only when it earns its plac
 
 > **Canonical definitions live with your assistant's config** (one file per agent: system prompt,
 > tools). This README is the *relationship* layer: when to dispatch, the validated loops, and the
-> dispatch doctrine. The three definitions in `defs/` are the work; this points at them.
+> dispatch doctrine. The four definitions in `defs/` are the work; this points at them.
 
 ## The default: inline, with skills
 
@@ -28,7 +28,9 @@ Four cases, and only these:
 4. **Separate permissions.** A reviewer or verifier should not be able to write. Its tool list is
    Read, Grep and Glob on purpose. Bash is left out because a shell can write, and a prose rule
    against writing is not enforcement. Running tests is the builder's job; the reviewer asks for
-   the output.
+   the output. The lead is the same idea turned the other way: a dispatcher with no shell and no
+   edit tools cannot get stuck inside a build. A missing tool is a rule; a sentence in a prompt
+   is a suggestion.
 
 Review is case 4 because it must not write. Running it on a *different* model or CLI than the
 builder is a bonus, not a separate reason: a second model does not share the first one's blind
@@ -38,12 +40,24 @@ Do not copy the org chart. One agent per team, per role title, or per problem ty
 organisational choice, not an architecture. If you cannot say which of the four cases an agent
 serves, it should be a skill.
 
-## The three defaults
+## The step up: the lead
+
+When the owner runs more than one piece of work at once, offer the lead. It answers first, sends
+every job to a background worker, and stays answerable while the workers work. Every job becomes
+a subagent, so it uses more tokens than working inline and only pays off with concurrent work.
+
+Claude Code only: copy `defs/lead.md` into `.claude/agents/` in the stack folder, or into
+`~/.claude/agents/` for every project, then run `claude --agent lead` from the stack. Run the
+install interview in a normal `claude` session first. The lead has no file tools to write the
+owner's setup. It sends reads to `researcher` and reviews to `reviewer`, so install those beside it.
+
+## The four definitions
 
 Plain definitions, no backstory, in `defs/`:
 
 | agent | use it for | tools |
 |---|---|---|
+| `lead` | the optional step up for concurrent work: dispatch every job and stay answerable | Agent, SendMessage, ListAgents, TaskStop, Read, Glob, Grep; no shell, edit or MCP tools |
 | `reviewer` | adversarial review of a finished branch, ending in a `VERDICT` line | Read, Grep, Glob only; the builder supplies test output |
 | `researcher` | read-heavy questions that return a compact answer with `file:line` or URL evidence | no edit tools; Bash and web for reading, trusted by instruction and not permission-enforced |
 | `verifier` | re-proving a non-code deliverable against ground truth before it is trusted | Read, Grep, Glob only; the caller supplies command output |
@@ -77,8 +91,9 @@ Themed rosters (a full cast with voices and opinions) are an opt-in example, not
 
 ## To make it yours
 1. Copy the files you want from `defs/` into your assistant's agent config (in Claude Code:
-   `~/.claude/agents/`, one file per agent). Start with the three; add a fourth only when a skill
-   cannot do the job and you can name the case above it serves.
+   `.claude/agents/` in the stack folder, or `~/.claude/agents/` for every project, one file per
+   agent). Start with one assistant in one loop; add a definition only when you can name the case
+   above it serves. The lead is the optional step up for concurrent work.
 2. Want a themed team anyway? One complete roster is available as an opt-in example
    (`npx lararium my-stack --with-examples` puts it in `agents/examples/`, or browse it upstream).
    Its `RETHEME.md` is an interview that rebuilds it in a theme of your own. It is flavor: nothing

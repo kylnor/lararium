@@ -53,10 +53,10 @@ test('a default scaffold carries no contributor file, no themed roster and no bl
     assert.equal(fs.existsSync(path.join(target, gone)), false, `${gone} must not be scaffolded`);
   }
   assert.ok(CONTRIBUTOR_ONLY.includes('AGENTS.md') && CONTRIBUTOR_ONLY.includes('SCRUB.md'));
-  for (const kept of ['INSTALL.md', 'README.md', 'LICENSE', 'STACK_VERSION', 'agents/defs/reviewer.md', 'agents/defs/researcher.md', 'agents/defs/verifier.md', 'hooks/memory-pointers.mjs', 'memory/pointer-block.md', 'starter']) {
+  for (const kept of ['INSTALL.md', 'README.md', 'LICENSE', 'STACK_VERSION', 'agents/defs/lead.md', 'agents/defs/reviewer.md', 'agents/defs/researcher.md', 'agents/defs/verifier.md', 'hooks/memory-pointers.mjs', 'memory/pointer-block.md', 'starter']) {
     assert.ok(fs.existsSync(path.join(target, kept)), `${kept} must be scaffolded`);
   }
-  assert.deepEqual(fs.readdirSync(path.join(target, 'agents/defs')).sort(), ['researcher.md', 'reviewer.md', 'verifier.md']);
+  assert.deepEqual(fs.readdirSync(path.join(target, 'agents/defs')).sort(), ['lead.md', 'researcher.md', 'reviewer.md', 'verifier.md']);
   // dropped before the first commit, so none of it sits in the stack's history either
   const tracked = execFileSync('git', ['ls-files'], { cwd: target, encoding: 'utf8' }).split('\n');
   assert.ok(tracked.includes('INSTALL.md'), 'the scaffolder made its initial commit');

@@ -168,10 +168,17 @@ The goal is a `soul/core.md` that sounds like a specific someone.
    references infrastructure they skipped should have that step cut, not left to error.
 
 ## Phase 4: The agents (optional: leverage on top of a working system)
-Start with these three, and only if the user wants subagents at all. The default is one assistant in
-one loop: it sees each skill's short description first and loads the full skill only when needed
+Start with one assistant in one loop. Offer these only if the user wants subagents at all. The
+default sees each skill's short description first and loads the full skill only when needed
 (progressive disclosure), so a procedure belongs in a skill, not in another agent.
-1. Offer the three plain defs in `agents/defs/`: `reviewer.md` (adversarial review, read-only),
+1. Offer `agents/defs/lead.md` first, recommended when the owner runs more than one piece of work
+   at once: a dispatcher that sends every job to a background worker and stays answerable.
+   Every job becomes a subagent, so it costs more tokens than working inline. Claude Code only: copy it into
+   `.claude/agents/` in the stack folder so `claude --agent lead` run from the stack finds it, or
+   into `~/.claude/agents/` for every project. Run the install interview in a normal `claude`
+   session first, not in the lead, which has no write tools. The lead sends reads to `researcher`
+   and reviews to `reviewer`, so install those beside it.
+   Then offer the rest of the plain defs in `agents/defs/` (all three if the lead was declined): `reviewer.md` (adversarial review, read-only),
    `researcher.md` (read-heavy questions, compact answers) and `verifier.md` (re-proves a
    deliverable against ground truth, read-only). Copy the ones they want into their assistant's agent
    config. The reviewer works best on a different model or CLI than the builder.

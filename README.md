@@ -74,8 +74,8 @@ agents that build), with `workspaces/` for projects that have earned their own f
    in `clocktower/connector-doctrine.md`. Coordination is a separate surface: `clocktower/queue-doctrine.md`
    runs multi-agent work natively on the tasks table you already have. Ships with
    an empty database and no credentials.
-4. **`agents/`**: the dispatch doctrine and three plain defaults (a reviewer, a researcher, a
-   verifier). Start with one assistant in one loop and put procedures in skills; add a subagent
+4. **`agents/`**: the dispatch doctrine and four plain defs (an optional lead, a reviewer, a researcher,
+   a verifier). Start with one assistant in one loop and put procedures in skills; add a subagent
    only when it earns its place. A full themed roster is an opt-in example that is not in a default stack:
    make the stack with `npx lararium my-stack --with-examples`, or browse it upstream. It comes
    with an interview for rebuilding it in a theme of your own.
@@ -192,7 +192,7 @@ last: leverage on top of a system that already works.
 5. Wire  hooks/                   # the loops: briefing, heartbeat, rails
 6. Adopt skills/                  # the session-lifecycle slash commands
 7. Stand up clocktower/           # optional: the index, when you need it
-8. Adopt agents/                  # optional: three plain defs + when a subagent earns its place
+8. Adopt agents/                  # optional: four plain defs + when a subagent earns its place
 ```
 
 Already running an earlier version? Open your stack beside this template and say *"run the upgrade
