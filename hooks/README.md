@@ -130,6 +130,8 @@ heredocs. It reads multiple heredocs in order and honors `<<-` tab stripping. Bo
 two exceptions: an unquoted delimiter permits executable `$()` and backtick substitutions, and a
 heredoc or here-string attached directly to a shell is checked as shell commands, even when quoted.
 A body attached to `cat` and piped into a shell stays run-time data.
+Inside `${ }`, arithmetic and subscripted assignment words, a quoted substitution is treated as code
+even where Bash would leave it as text.
 
 For each command, matching retains its written form and also normalizes the command word: quotes
 and backslashes are removed, paths become basenames, and wrappers with their options are peeled.
@@ -153,7 +155,9 @@ the hook from settings. With no deny patterns, or unreadable settings, the hook 
 This guard runs before Bash. It cannot resolve variables or computed command words such as `$CMD`
 or `$(echo rm)`, aliases or functions defined elsewhere (function bodies written in the command are
 checked), script contents, interpreter payloads such as `python3 -c`
-and `node -e`, data piped into a shell at run time, or binaries that have been renamed or copied.
+and `node -e`, strings a builtin evaluates again at run time, such as the arguments of `let`,
+`declare`, `unset`, `read`, `trap` and `alias`, data piped into a shell at run time, or binaries that
+have been renamed or copied.
 These are limits of static inspection, so the hook does not replace a sandbox.
 
 To upgrade an existing install, copy `hooks/reference/bash-deny-guard.py` over the installed copy.

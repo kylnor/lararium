@@ -142,6 +142,7 @@ def command_matches_pattern(cmd, patterns):
 
 MAX_DEPTH = 8
 ASSIGNMENT = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*\+?=')
+SUBSCRIPT = re.compile(r'[A-Za-z_][A-Za-z0-9_]*\[')
 NUMBER = re.compile(r'^[0-9]+(?:\.[0-9]+)?[smhd]?$')
 SHELLS = {'sh', 'bash', 'zsh', 'dash', 'ksh'}
 PREFIXES = {'!', 'then', 'do', 'else', 'elif', 'if', 'while', 'until', 'coproc'}
@@ -174,7 +175,7 @@ class Scanner:
         # Bash arithmetic owns its parentheses; shift operators are not redirects.
         self.data_unit('$((', ')', depth)
 
-    def data_unit(self, marker, close, depth):
+    def data_unit(self, marker, close, depth, scan_quoted=False):
         # Expansions, arithmetic commands and array words own their matching close.
         # Their operators are data; word() still discovers executable substitutions.
         self.i += len(marker)
@@ -191,7 +192,8 @@ class Scanner:
                 self.i += 1
             else:
                 begin = self.i
-                self.word(depth, stop=close, unit_open=opening)
+                self.word(depth, stop=close, unit_open=opening,
+                          scan_quoted=scan_quoted or marker != '(', array_item=marker == '(')
                 if self.i == begin:
                     self.i += 1
         if level:
@@ -208,20 +210,28 @@ class Scanner:
         if not self.code('`' if marker == '`' else ')', depth + 1):
             raise ParseProblem('unterminated {} substitution'.format(marker))
 
-    def word(self, depth, delimiter=False, stop=None, unit_open=None):
+    def word(self, depth, delimiter=False, stop=None, unit_open=None,
+             scan_quoted=False, array_item=False, regex=False, pattern=False):
         start = self.i
         value = []
         quoted = False
         quote = None
         ansi_ended = False
         s = self.text
+        scan_quoted = not delimiter and (scan_quoted or (
+            array_item and s.startswith('[', start)) or bool(
+            SUBSCRIPT.match(s, start)))
+        quote_start = None
+        pattern_level = 0
         while self.i < len(s):
             ch = s[self.i]
             if quote is None and ch == stop:
                 break
-            # Single quotes preserve everything; ANSI quotes additionally decode escapes.
+            # Keep quote boundaries, but inspect their raw contents in expansion data.
             if quote in ("'", 'ansi'):
                 if ch == "'":
+                    if scan_quoted:
+                        self.expansions(s[quote_start:self.i], depth)
                     quote = None
                     self.i += 1
                 elif ch == '\\' and quote == 'ansi':
@@ -276,6 +286,7 @@ class Scanner:
                 quote = 'ansi' if ch == '$' else "'"
                 ansi_ended = False
                 self.i += 2 if ch == '$' else 1
+                quote_start = self.i
                 continue
             if not delimiter:
                 begin = self.i
@@ -290,10 +301,23 @@ class Scanner:
                 elif ch == '`':
                     self.substitution('`', depth)
                 elif quote is None and ch == '(' and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*\+?=', s[start:self.i]):
-                    self.data_unit('(', ')', depth)
+                    self.data_unit('(', ')', depth, scan_quoted=scan_quoted)
                 if self.i != begin:
                     value.append(s[begin:self.i])
                     continue
+            # Regex groups and extended patterns keep shell metacharacters in one word.
+            if quote is None and (regex or pattern):
+                if ch == '(' and (regex or pattern_level or (
+                        self.i > start and s[self.i - 1] in '?*+@!')):
+                    pattern_level += 1
+                elif ch == ')' and pattern_level:
+                    pattern_level -= 1
+                elif not pattern_level and not (regex and ch == '|'):
+                    if ch in ' \t\n;&|()<>':
+                        break
+                value.append(ch)
+                self.i += 1
+                continue
             if quote is None and ch == unit_open:
                 break
             if quote is None and (ch in ' \t\n;&|()<>' or ch == '`'):
@@ -303,6 +327,8 @@ class Scanner:
         if quote:
             kind = {"'": 'single quote', '"': 'double quote', 'ansi': "ANSI-C quote ($'...)"}[quote]
             raise ParseProblem('unterminated ' + kind)
+        if pattern_level:
+            raise ParseProblem('unterminated {} group'.format('regex' if regex else 'pattern'))
         return Word(s[start:self.i], ''.join(value), quoted)
 
     def bodies(self, pending, depth):
@@ -337,6 +363,8 @@ class Scanner:
                 scanner.arithmetic(depth)
             elif body.startswith('${', scanner.i):
                 scanner.data_unit('${', '}', depth)
+            elif body.startswith('$[', scanner.i):
+                scanner.data_unit('$[', ']', depth)
             elif body.startswith('$(', scanner.i):
                 scanner.substitution('$(', depth)
             elif ch == '`':
@@ -349,7 +377,11 @@ class Scanner:
         # Conditional operators and pattern groups are data, substitutions are code.
         self.i += 2
         s = self.text
+        state = 'term'
         while self.i < len(s):
+            if s[self.i] in ' \t\n' or s.startswith('\\\n', self.i):
+                self.i += 2 if s.startswith('\\\n', self.i) else 1
+                continue
             # word() consumes embedded hashes; only a boundary hash reaches here.
             if s[self.i] == '#':
                 pos = s.find('\n', self.i)
@@ -359,10 +391,30 @@ class Scanner:
                     self.i + 2 == len(s) or s[self.i + 2] in ' \t\n;&|()<>'):
                 self.i += 2
                 return
+            if state != 'regex' and s[self.i:self.i + 2] in ('&&', '||'):
+                state = 'term'
+                self.i += 2
+                continue
+            if state == 'term' and s[self.i] == '(':
+                self.i += 1
+                continue
+            if s[self.i] == ')':
+                state = 'end'
+                self.i += 1
+                continue
             begin = self.i
-            self.word(depth)
+            word = self.word(depth, regex=state == 'regex', pattern=state == 'right')
             if self.i == begin:
                 self.i += 1
+            if state == 'term':
+                if not word.quoted and word.value == '!':
+                    continue
+                unary = not word.quoted and re.fullmatch(r'-[abcdefghkLnoprstuvwxGNORSz]', word.value)
+                state = 'unary' if unary else 'operator'
+            elif state == 'operator':
+                state = 'regex' if not word.quoted and word.value == '=~' else 'right'
+            else:
+                state = 'end'
         raise ParseProblem('unterminated conditional ([[)')
 
     def code(self, end=None, depth=None):
