@@ -145,7 +145,8 @@ reason explaining how to remove the hook from settings. With no deny patterns, o
 settings, the hook stays silent.
 
 This guard runs before Bash. It cannot resolve variables or computed command words such as `$CMD`
-or `$(echo rm)`, aliases and functions, script contents, interpreter payloads such as `python3 -c`
+or `$(echo rm)`, aliases or functions defined elsewhere (function bodies written in the command are
+checked), script contents, interpreter payloads such as `python3 -c`
 and `node -e`, data piped into a shell at run time, or binaries that have been renamed or copied.
 These are limits of static inspection, so the hook does not replace a sandbox.
 

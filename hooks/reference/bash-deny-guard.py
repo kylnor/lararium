@@ -165,29 +165,16 @@ class Scanner:
         self.segments = []
         self.incomplete = False
 
-    def arithmetic(self):
+    def arithmetic(self, depth):
         # Bash arithmetic owns its parentheses; shift operators are not redirects.
-        self.i += 3
-        level = 2
-        while self.i < len(self.text) and level:
-            ch = self.text[self.i]
-            if ch == '\\':
-                self.i += 2
-                continue
-            if ch == '(':
-                level += 1
-            elif ch == ')':
-                level -= 1
-            self.i += 1
-        if level:
-            self.incomplete = True
+        self.data_unit('$((', ')', depth)
 
     def data_unit(self, marker, close, depth):
         # Expansions, arithmetic commands and array words own their matching close.
         # Their operators are data; word() still discovers executable substitutions.
         self.i += len(marker)
         opening = marker[-1]
-        level = 2 if marker == '((' else 1
+        level = 2 if marker in ('((', '$((') else 1
         while self.i < len(self.text) and level:
             ch = self.text[self.i]
             if ch == close:
@@ -216,6 +203,7 @@ class Scanner:
         value = []
         quoted = False
         quote = None
+        ansi_ended = False
         s = self.text
         while self.i < len(s):
             ch = s[self.i]
@@ -234,29 +222,34 @@ class Scanner:
                                   'f': '\f', 'n': '\n', 'r': '\r', 't': '\t', 'v': '\v',
                                   '\\': '\\', "'": "'", '"': '"', '?': '?'}
                         if esc[0] in '01234567':
-                            decoded = chr(int(esc, 8))
+                            decoded = chr(int(esc, 8) % 256)
                         elif esc[0] in 'xuU' and len(esc) > 1:
                             decoded = chr(int(esc[1:], 16))
                         elif esc[0] == 'c' and len(esc) == 2:
                             decoded = chr(ord(esc[1].upper()) % 32)
                         else:
                             decoded = simple.get(esc, '\\' + esc)
-                        value.append(decoded)
+                        if decoded == '\0':
+                            ansi_ended = True
+                        if not ansi_ended:
+                            value.append(decoded)
                         self.i += len(m.group(0))
                     else:
-                        value.append(ch)
+                        if not ansi_ended:
+                            value.append(ch)
                         self.i += 1
                 else:
-                    value.append(ch)
+                    if quote != 'ansi' or not ansi_ended:
+                        value.append(ch)
                     self.i += 1
                 continue
             # Backslash-newline vanishes; double quotes only escape $, `, ", and backslash.
             if ch == '\\' and self.i + 1 < len(s):
                 nxt = s[self.i + 1]
-                quoted = True
                 if nxt == '\n':
                     self.i += 2
                 elif quote != '"' or nxt in '$`"\\':
+                    quoted = True
                     value.append(nxt)
                     self.i += 2
                 else:
@@ -271,12 +264,13 @@ class Scanner:
             if quote is None and (ch == "'" or s.startswith("$'", self.i)):
                 quoted = True
                 quote = 'ansi' if ch == '$' else "'"
+                ansi_ended = False
                 self.i += 2 if ch == '$' else 1
                 continue
             if not delimiter:
                 begin = self.i
                 if s.startswith('$((', self.i):
-                    self.arithmetic()
+                    self.arithmetic(depth)
                 elif s.startswith('${', self.i):
                     self.data_unit('${', '}', depth)
                 elif s.startswith('$[', self.i):
@@ -292,7 +286,7 @@ class Scanner:
                     continue
             if quote is None and ch == unit_open:
                 break
-            if quote is None and (ch.isspace() or ch in ';&|()<>' or ch == '`'):
+            if quote is None and (ch in ' \t\n;&|()<>' or ch == '`'):
                 break
             value.append(ch)
             self.i += 1
@@ -327,7 +321,7 @@ class Scanner:
             if ch == '\\' and scanner.i + 1 < len(body) and body[scanner.i + 1] in '\\$`\n':
                 scanner.i += 2
             elif body.startswith('$((', scanner.i):
-                scanner.arithmetic()
+                scanner.arithmetic(depth)
             elif body.startswith('$(', scanner.i):
                 scanner.substitution('$(', depth)
             elif ch == '`':
@@ -337,6 +331,21 @@ class Scanner:
         self.segments.extend(scanner.segments)
         self.incomplete = self.incomplete or scanner.incomplete
 
+    def conditional(self, depth):
+        # Conditional operators and pattern groups are data, substitutions are code.
+        self.i += 2
+        s = self.text
+        while self.i < len(s):
+            if s.startswith(']]', self.i) and (
+                    self.i + 2 == len(s) or s[self.i + 2] in ' \t\n;&|()<>'):
+                self.i += 2
+                return
+            begin = self.i
+            self.word(depth)
+            if self.i == begin:
+                self.i += 1
+        self.incomplete = True
+
     def code(self, end=None, depth=None):
         depth = self.depth if depth is None else depth
         s = self.text
@@ -345,7 +354,7 @@ class Scanner:
         cases = []
 
         def flush():
-            if raw or words:
+            if (raw or words) and not (cases and cases[-1][0] != 'body'):
                 self.segments.append((words[:], ' '.join(raw), docs[:], depth))
             words.clear()
             raw.clear()
@@ -355,11 +364,14 @@ class Scanner:
             ch = s[self.i]
             # An unquoted backtick or closing substitution parenthesis returns to its word.
             if end and ch == end and not groups and not (
-                    end == ')' and cases and cases[-1] == 'pattern'):
+                    end == ')' and cases and cases[-1][0] == 'pattern'):
                 flush()
                 self.i += 1
                 return
-            if ch in ' \t\r':
+            if s.startswith('\\\n', self.i):
+                self.i += 2
+                continue
+            if ch in ' \t':
                 self.i += 1
                 continue
             # Comments start only at a word boundary; their quotes cannot alter scanner state.
@@ -368,12 +380,22 @@ class Scanner:
                 self.i = len(s) if pos < 0 else pos
                 continue
             # Case patterns are headers up to ')'; alternatives are not pipelines.
-            if cases and cases[-1] == 'pattern' and ch in '()|':
+            if cases and cases[-1][0] == 'pattern' and ch in '()|':
                 if ch == ')':
-                    cases[-1] = 'body'
+                    cases[-1][0] = 'body'
                     words.clear()
                     raw.clear()
                 self.i += 1
+                continue
+            if s.startswith('[[', self.i) and (
+                    self.i + 2 == len(s) or s[self.i + 2] in ' \t\n') and (
+                    not cases or cases[-1][0] == 'body') and all(
+                    not w.quoted and w.value in PREFIXES for w in words):
+                begin = self.i
+                self.conditional(depth)
+                text = s[begin:self.i]
+                words.append(Word(text, '[['))
+                raw.append(text)
                 continue
             if s.startswith('((', self.i):
                 begin = self.i
@@ -392,7 +414,7 @@ class Scanner:
                 self.i += 1
                 if ch != '\n' and self.i < len(s) and s[self.i] in '|&;' and ch in '|&;':
                     if ch == ';' and cases and s[self.i] in ';&':
-                        cases[-1] = 'pattern'
+                        cases[-1] = ['pattern', True]
                     self.i += 1
                     if ch == ';' and self.i < len(s) and s[self.i] == '&':
                         self.i += 1
@@ -401,7 +423,7 @@ class Scanner:
                     pending.clear()
                 continue
             if ch in '{}' and (
-                    self.i + 1 == len(s) or s[self.i + 1].isspace() or s[self.i + 1] in ';)'):
+                    self.i + 1 == len(s) or s[self.i + 1] in ' \t\n;)'):
                 header = words[:]
                 while header and not header[0].quoted and header[0].value in PREFIXES:
                     header = header[1:]
@@ -421,8 +443,13 @@ class Scanner:
                 op = m.group(1)
                 raw.append(m.group(0))
                 self.i += len(m.group(0))
-                while self.i < len(s) and s[self.i] in ' \t':
-                    self.i += 1
+                while self.i < len(s):
+                    if s[self.i] in ' \t':
+                        self.i += 1
+                    elif s.startswith('\\\n', self.i):
+                        self.i += 2
+                    else:
+                        break
                 # A comment cannot supply a redirection operand or a heredoc delimiter.
                 if self.i < len(s) and s[self.i] == '#':
                     continue
@@ -437,13 +464,37 @@ class Scanner:
                 continue
             word = self.word(depth, stop=end)
             if self.i == len(s) or word.raw:
-                if not word.quoted:
-                    if word.value == 'case' and all(w.value in PREFIXES and not w.quoted for w in words):
-                        cases.append('header')
-                    elif word.value == 'in' and cases and cases[-1] == 'header' and len(words) >= 2:
-                        cases[-1] = 'pattern'
+                phase = cases[-1][0] if cases else None
+                command_position = all(w.value in PREFIXES and not w.quoted for w in words)
+                if phase == 'subject':
+                    cases[-1][0] = 'in'
+                elif phase == 'in':
+                    if not word.quoted and word.value == 'in':
+                        cases[-1][0] = 'pattern'
+                        words.clear()
+                        raw.clear()
+                        continue
+                elif not word.quoted:
+                    if word.value == 'case' and command_position and phase != 'pattern':
+                        cases.append(['subject', False])
                     elif word.value == 'esac' and cases:
-                        cases.pop()
+                        # In a body only a command-position esac closes the case.
+                        # The first pattern may itself be spelled esac, even unquoted.
+                        pattern_close = False
+                        if phase == 'pattern' and command_position:
+                            look = self.i
+                            while look < len(s):
+                                if s[look] in ' \t\n':
+                                    look += 1
+                                elif s.startswith('\\\n', look):
+                                    look += 2
+                                else:
+                                    break
+                            following = s[look:look + 1]
+                            pattern_close = (following not in (')', '|') or (
+                                end == ')' and cases[-1][1] and following == ')'))
+                        if (phase == 'body' and command_position) or pattern_close:
+                            cases.pop()
                 raw.append(word.raw)
                 words.append(word)
             else:
@@ -546,10 +597,10 @@ def command_starts(words, payload):
 def decompose_command(command, depth=0, recover=True):
     scanner = Scanner(command, depth)
     scanner.code()
-    result = [re.sub(r'\s+', ' ', command).strip()]
+    result = [re.sub(r'[ \t\n]+', ' ', command).strip(' \t\n')]
 
     def payload(text, nested_depth, prefix=''):
-        result.append(re.sub(r'\s+', ' ', text).strip())
+        result.append(re.sub(r'[ \t\n]+', ' ', text).strip(' \t\n'))
         result.extend(decompose_command(prefix + text, nested_depth, recover))
 
     def analyze(words, raw, docs, level):
@@ -560,7 +611,7 @@ def decompose_command(command, depth=0, recover=True):
             words = words[1:]
         if not words or (not words[0].quoted and words[0].value in HEADERS):
             return
-        result.append(raw.strip())
+        result.append(raw.strip(' \t\n'))
         for i in command_starts(words, lambda text, prefix='': payload(text, level + 1, prefix)):
             word = words[i]
             base = os.path.basename(word.value)
@@ -570,18 +621,24 @@ def decompose_command(command, depth=0, recover=True):
             # Shell -c consumes one command string; eval joins all its arguments as code.
             if base in SHELLS:
                 k = 0
+                command_string = False
                 while k < len(args):
                     arg = args[k]
-                    if arg.value == '--' or not arg.value.startswith('-'):
+                    if arg.value == '--':
+                        k += 1
                         break
-                    if arg.value in ('-o', '-O', '--rcfile', '--init-file'):
+                    if arg.value in ('-', '+') or not arg.value.startswith(('-', '+')):
+                        break
+                    if arg.value in ('-o', '-O', '+o', '+O', '--rcfile', '--init-file'):
                         k += 2
                         continue
                     if not arg.value.startswith('--') and 'c' in arg.value[1:]:
-                        if k + 1 < len(args):
-                            payload(args[k + 1].value, level + 1)
-                        break
-                    k += 1
+                        command_string = arg.value.startswith('-')
+                    # A grouped -o/-O also consumes the following option value.
+                    k += 2 if not arg.value.startswith('--') and any(
+                        c in arg.value[1:] for c in 'oO') else 1
+                if command_string and k < len(args):
+                    payload(args[k].value, level + 1)
                 for doc in docs:
                     payload(doc['body'], level + 1)
             elif base == 'eval':
@@ -604,7 +661,7 @@ def decompose_command(command, depth=0, recover=True):
         analyze(words, raw, docs, level)
     # Unterminated syntax adds one full analysis of each physical line, never recursive retries.
     if scanner.incomplete and recover:
-        for line in command.splitlines():
+        for line in command.split('\n'):
             result.extend(decompose_command(line, depth, recover=False))
     return [cmd for cmd in result if cmd]
 
@@ -623,9 +680,9 @@ def decide(command, settings):
         return None, None
     try:
         patterns = parse_bash_patterns(denies)
-        if not patterns or not command or not command.strip():
+        if not patterns or not command or not command.strip(' \t\n'):
             return None, None
-        flat = re.sub(r'\s+', ' ', command).strip()
+        flat = re.sub(r'[ \t\n]+', ' ', command).strip(' \t\n')
         if command_matches_pattern(flat, patterns):
             return 'deny', 'Command matches deny pattern'
         for cmd in decompose_command(command):

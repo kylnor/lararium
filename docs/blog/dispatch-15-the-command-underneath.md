@@ -30,8 +30,9 @@ Unknown programs do not acquire a new approval tier. A broken guard does acquire
 failure: with deny patterns configured, an internal error returns a deny and instructions for
 unwiring the hook. Silence would make the owner's rule disappear.
 
-There are limits. Variables, aliases, function bodies, scripts and interpreter code need run-time
-knowledge this hook does not have. Data piped into a shell can become code after the hook has
+There are limits. Variables, aliases or functions defined elsewhere, scripts and interpreter code
+need run-time knowledge this hook does not have; function bodies written in the command are checked.
+Data piped into a shell can become code after the hook has
 finished. A copied binary can have another name. The README names these gaps explicitly.
 
 The bypasses affect every version through v3.2. To adopt the fix, copy
