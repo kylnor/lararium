@@ -2,14 +2,17 @@
 // contributor-only, see CONTRIBUTOR_ONLY in npx/index.js).
 //
 // Two kinds of leak, scanned separately:
-//   names:   the owner's cast, mythology, family and infrastructure. Allowed only where a place is
-//            named in NAME_ALLOWED_PREFIXES / NAME_ALLOWED_FILES, and only in the repo tree, never
-//            in a scaffolded stack.
+//   names:   plain names are allowed only where a place is named in NAME_ALLOWED_PREFIXES /
+//            NAME_ALLOWED_FILES, and only in the repo tree, never in a scaffolded stack.
+//            Sealed names are allowed nowhere, including those places.
 //   private: absolute home paths, credentials, hosts, addresses. Allowed NOWHERE by place. A fictional
 //            example earns an exemption for its exact matched string, never for a whole file.
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { createInterface } from 'node:readline';
+import { pathToFileURL } from 'node:url';
 
 // Words are matched as letter runs: not preceded or followed by a letter, so `oracle_assistant`,
 // `oracle-bot` and `Oracle9` match while `urbane` and `Robinson` do not. camelCase is split first,
@@ -20,10 +23,30 @@ export const NAMES = [
   'joker', 'bane', 'catwoman', 'harvey', 'lucius', 'barbara', 'damian', 'wayne', 'huginn', 'muninn',
   'mimir', 'scarecrow', 'gardener', 'julia', 'red[-_ ]?hood', 'red[-_ ]?robin', 'two[-_ ]?face',
   'ras[-_ ]?al[-_ ]?ghul',
-  // the owner's other crew, family and infrastructure
-  'rowan', 'nova', 'kyle', 'kylnor', 'northup', 'riley', 'brittany', 'vordr', 'yggdrasil', 'brokkr',
-  'belfry', 'skirnir', 'elorati', 'sotheby',
+  // the owner's three names already published by the license and repo slug
+  'kyle', 'kylnor', 'northup',
 ];
+
+export const NAME_SALT = 'lararium-scrub-v1';
+export const hashName = word => createHash('sha256').update(`${NAME_SALT}:${word.toLowerCase()}`).digest('hex');
+
+// Two crew names, two family first names, an employer word, a company word, five host and
+// infrastructure names, and one canary. Sorted digests disclose no grouping or original order.
+export const SEALED_NAMES = new Set([
+  '09f94b007384087ec7e193e9e39ff780b85c9ec1cb4db965ba3ffc9cefff61dc',
+  '0e2c5aa6dcca65183444debb2ad29d12817c3473a7a38ef206b603b03f9e638f',
+  '37751416fb9021b72e9d81dd121de62daf0dc9c2bebd5bb5f3634234d039eaa1',
+  '51190c1f7ede0dd01d75b906d35ef47a2acf03a67f59111d71fb04de9f807746',
+  '7c7247a42f6404a0c973343b216e94e0952149b839ed57da1a81b2e96c3879c0',
+  '7db35e77808372c0ebe9e81a8f583c3fbe67315e1c0f1b9a44516c4014475f4e',
+  '9d2dc50b15405d0686eb46012d63b921be5bcf7c329c8e4094fb0ded0a2a1a94',
+  'c4610b7e4009cb7c8da0866bac79cc745b128072384a16d3cf034cda4fbe2480',
+  'd23ec9caa34298337c5c509f95778b2ee42d5bf7941af8180a14126fd7f09098',
+  'd5ce50950a25a089fc2c032edc91fdcdb27b1839b66b78a865a445a020a7f8a1',
+  'e34f79e8c7b017dc30333837ab47849179ef96a74080f86ed4fb03dd8a30cfbf',
+  'fc28f9dc8330c09de02e7ece1e9fe6b423b8b2dabe5961a85298312a2ba4b625',
+]);
+
 // Roster file names that are ordinary English words, so they are not banned as names. Adding a
 // roster member that is in neither list fails the roster-coverage test on purpose.
 export const GENERIC = ['mirror', 'signal', 'spoiler'];
@@ -60,32 +83,60 @@ function withoutExemptions(file, text) {
   return body;
 }
 
-// Markdown emphasis and code markers can split a name (`Ky**le`, `Or\`ac\`le`), so every line is
+// Markdown emphasis and code markers can split a name (`Bat**man`, `Or\`ac\`le`), so every line is
 // scanned twice: as written, and with * _ and backtick removed. A name the first view already found
 // is counted once; the second view adds only what the first could not see.
 const MARKERS = /[*_`]/g;
 const namesIn = text => [...splitCamel(withoutSlug(text)).matchAll(NAME_RE)].map(m => m[0]);
-function namesOf(line) {
-  const pool = namesIn(line);
+const digestCache = new Map();
+function sealedIn(text) {
+  const found = [];
+  for (const [run] of splitCamel(withoutSlug(text)).matchAll(/[A-Za-z]+/g)) {
+    const word = run.toLowerCase();
+    if (!digestCache.has(word)) digestCache.set(word, hashName(word));
+    const digest = digestCache.get(word);
+    if (SEALED_NAMES.has(digest)) found.push(digest);
+  }
+  return found;
+}
+
+function matchesOf(line, matchesIn) {
+  const pool = matchesIn(line);
   const left = pool.map(w => w.toLowerCase());
-  for (const m of namesIn(line.replace(MARKERS, ''))) {
+  for (const m of matchesIn(line.replace(MARKERS, ''))) {
     const at = left.indexOf(m.toLowerCase());
     if (at >= 0) left.splice(at, 1);
     else pool.push(m);
   }
   return pool;
 }
+const namesOf = line => matchesOf(line, namesIn);
+const sealedOf = line => matchesOf(line, sealedIn);
+const sealedLabel = digest => `sealed name (sha256 ${digest.slice(0, 12)}...)`;
+
+export function sealedHits(file, text) {
+  const found = [];
+  text.split('\n').forEach((line, i) => {
+    for (const digest of sealedOf(line)) found.push(`${file}:${i + 1}: ${sealedLabel(digest)}`);
+  });
+  return found;
+}
+
+export function sealedHitsInPath(file) {
+  return sealedOf(file).map(digest => `${file}: ${sealedLabel(digest)} in the path`);
+}
 
 export function nameHits(file, text) {
   const found = [];
   withoutExemptions(file, text).split('\n').forEach((line, i) => {
     for (const m of namesOf(line)) found.push(`${file}:${i + 1}: name "${m}"  ${line.trim().slice(0, 100)}`);
+    for (const digest of sealedOf(line)) found.push(`${file}:${i + 1}: ${sealedLabel(digest)}`);
   });
   return found;
 }
 
 export function nameHitsInPath(file) {
-  return namesOf(file).map(m => `${file}: name "${m}" in the path`);
+  return [...namesOf(file).map(m => `${file}: name "${m}" in the path`), ...sealedHitsInPath(file)];
 }
 
 const PRIVATE = [
@@ -142,15 +193,21 @@ export function readText(root, file) {
   return text.includes('\0') ? null : text;
 }
 
-// Scan a file list for names and private data. `namesAllowedHere(file)` says where names are
-// tolerated (the repo tree only); private data is checked in every file regardless.
+// Scan a file list for names and private data. `namesAllowedHere(file)` says where plain names
+// are tolerated (the repo tree only); sealed names and private data are checked everywhere.
 export function scan(root, files, namesAllowedHere = () => false) {
   const found = [];
   for (const file of files) {
     const text = readText(root, file);
     if (text === null) continue;
     if (!namesAllowedHere(file)) found.push(...nameHitsInPath(file), ...nameHits(file, text));
+    else found.push(...sealedHitsInPath(file), ...sealedHits(file, text));
     found.push(...privateHits(file, text));
   }
   return found;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href && process.argv[2] === '--hash') {
+  const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+  for await (const word of lines) console.log(hashName(word));
 }
