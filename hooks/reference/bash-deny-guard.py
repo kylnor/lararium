@@ -139,10 +139,10 @@ def command_matches_pattern(cmd, patterns):
 
 
 MAX_DEPTH = 8
-ASSIGNMENT = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*=')
+ASSIGNMENT = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*\+?=')
 NUMBER = re.compile(r'^[0-9]+(?:\.[0-9]+)?[smhd]?$')
 SHELLS = {'sh', 'bash', 'zsh', 'dash', 'ksh'}
-PREFIXES = {'!', 'then', 'do', 'else', 'elif', 'if', 'while', 'until'}
+PREFIXES = {'!', 'then', 'do', 'else', 'elif', 'if', 'while', 'until', 'coproc'}
 HEADERS = {'for', 'case', 'select', 'done', 'fi', 'esac', 'in'}
 
 
@@ -182,6 +182,28 @@ class Scanner:
         if level:
             self.incomplete = True
 
+    def data_unit(self, marker, close, depth):
+        # Expansions, arithmetic commands and array words own their matching close.
+        # Their operators are data; word() still discovers executable substitutions.
+        self.i += len(marker)
+        opening = marker[-1]
+        level = 2 if marker == '((' else 1
+        while self.i < len(self.text) and level:
+            ch = self.text[self.i]
+            if ch == close:
+                level -= 1
+                self.i += 1
+            elif ch == opening:
+                level += 1
+                self.i += 1
+            else:
+                begin = self.i
+                self.word(depth, stop=close, unit_open=opening)
+                if self.i == begin:
+                    self.i += 1
+        if level:
+            self.incomplete = True
+
     def substitution(self, marker, depth):
         # Substitutions re-enter code even inside double quotes, at a bounded depth.
         if depth >= MAX_DEPTH:
@@ -189,7 +211,7 @@ class Scanner:
         self.i += len(marker)
         self.code('`' if marker == '`' else ')', depth + 1)
 
-    def word(self, depth, delimiter=False, stop=None):
+    def word(self, depth, delimiter=False, stop=None, unit_open=None):
         start = self.i
         value = []
         quoted = False
@@ -255,13 +277,21 @@ class Scanner:
                 begin = self.i
                 if s.startswith('$((', self.i):
                     self.arithmetic()
+                elif s.startswith('${', self.i):
+                    self.data_unit('${', '}', depth)
+                elif s.startswith('$[', self.i):
+                    self.data_unit('$[', ']', depth)
                 elif s.startswith('$(', self.i) or (quote is None and s[self.i:self.i + 2] in ('<(', '>(')):
                     self.substitution(s[self.i:self.i + 2], depth)
                 elif ch == '`':
                     self.substitution('`', depth)
+                elif quote is None and ch == '(' and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*\+?=', s[start:self.i]):
+                    self.data_unit('(', ')', depth)
                 if self.i != begin:
                     value.append(s[begin:self.i])
                     continue
+            if quote is None and ch == unit_open:
+                break
             if quote is None and (ch.isspace() or ch in ';&|()<>' or ch == '`'):
                 break
             value.append(ch)
@@ -345,6 +375,13 @@ class Scanner:
                     raw.clear()
                 self.i += 1
                 continue
+            if s.startswith('((', self.i):
+                begin = self.i
+                self.data_unit('((', ')', depth)
+                text = s[begin:self.i]
+                words.append(Word(text, text))
+                raw.append(text)
+                continue
             # Control operators separate commands; grouping exposes commands on either side.
             if ch in ';|&\n()' and s[self.i:self.i + 2] not in ('&>',):
                 if ch == '(':
@@ -363,11 +400,21 @@ class Scanner:
                     self.bodies(pending, depth)
                     pending.clear()
                 continue
-            if ch in '{}' and all(w.value in PREFIXES and not w.quoted for w in words) and (
+            if ch in '{}' and (
                     self.i + 1 == len(s) or s[self.i + 1].isspace() or s[self.i + 1] in ';)'):
-                flush()
-                self.i += 1
-                continue
+                header = words[:]
+                while header and not header[0].quoted and header[0].value in PREFIXES:
+                    header = header[1:]
+                named_group = (ch == '{' and not any(w.quoted for w in header) and (
+                    (len(header) == 2 and header[0].value == 'function') or
+                    (len(header) == 1 and any(w.value == 'coproc' and not w.quoted for w in words))))
+                if not header or named_group:
+                    if named_group:
+                        words.clear()
+                        raw.clear()
+                    flush()
+                    self.i += 1
+                    continue
             # Redirection operands are data; process substitutions remain executable words.
             m = re.match(r'(?:[0-9]+)?(<<<|<<-|<<|&>>|&>|>>|<>|>&|<&|>\||>|<)', s[self.i:self.i + 32])
             if m and not (s[self.i:self.i + 2] in ('<(', '>(')):
