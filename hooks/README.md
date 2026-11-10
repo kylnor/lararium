@@ -130,8 +130,9 @@ heredocs. It reads multiple heredocs in order and honors `<<-` tab stripping. Bo
 two exceptions: an unquoted delimiter permits executable `$()` and backtick substitutions, and a
 heredoc or here-string attached directly to a shell is checked as shell commands, even when quoted.
 A body attached to `cat` and piped into a shell stays run-time data.
-Inside `${ }`, arithmetic and subscripted assignment words, a quoted substitution is treated as code
-even where Bash would leave it as text.
+Inside `${ }`, arithmetic, and any word that begins with a name and a subscript such as
+`arr['...']`, a quoted substitution is treated as code even where Bash would leave it as
+text, because Bash evaluates such subscripts in assignments and in several builtins.
 
 For each command, matching retains its written form and also normalizes the command word: quotes
 and backslashes are removed, paths become basenames, and wrappers with their options are peeled.

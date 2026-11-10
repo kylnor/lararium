@@ -23,7 +23,7 @@ and shell command strings no longer hide a matching deny. It remains deny-only, 
 settings or dependencies. A guard error with configured deny patterns now fails closed.
 With deny patterns configured, a command with unterminated syntax, a never-closed heredoc, a NUL
 byte or a carriage return is now denied with a reason naming what could not be parsed.
-Conditional regex groups preserve word boundaries; quoted substitutions in parameters, arithmetic and subscripted assignment words are checked as code.
+Conditional regex groups preserve word boundaries; quoted substitutions in parameters, arithmetic and subscripted words are checked as code.
 
 In every version up to v3.2, `grep "a<<b" notes.txt` followed by a denied command,
 `python3 -c "print(1 << 2)"` followed by a denied command, and `/bin/rm -rf /important` were not

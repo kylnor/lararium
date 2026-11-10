@@ -499,6 +499,56 @@ for (const [name, command, expected, reason] of [
   if (reason) assert.match(result.reason, reason);
 });
 
+for (const [name, command, expected] of [
+  ['subscripted assignment scans quoted substitution', `arr['$(${D})']=1`, 'deny'],
+  ['subscripted append assignment scans quoted substitution', `arr['$(${D})']+=1`, 'deny'],
+  ['array initializer entry scans quoted subscript substitution', `arr=(['$(${D})']=1)`, 'deny'],
+  ['ordinary subscript argument scans unquoted substitution', `ls arr[$(${D})]`, 'deny'],
+]) test(`round 6: ${name}`, async () => {
+  assert.equal((await run(command)).decision, expected);
+});
+
+for (const [name, command, expected] of [
+  ['time preserves assignment position', `time a['$(${D})']=1`, 'deny'],
+  ['portable time preserves assignment position', `time -p a['$(${D})']=1`, 'deny'],
+  ['negation before time preserves assignment position', `! time a['$(${D})']=1`, 'deny'],
+  ['negation after time preserves assignment position', `time ! a['$(${D})']=1`, 'deny'],
+  ['time preserves consecutive assignments', `time x=1 a['$(${D})']=1`, 'deny'],
+  ['declare scans assignment subscript', `declare a['$(${D})']=1`, 'deny'],
+  ['typeset scans assignment subscript', `typeset a['$(${D})']=1`, 'deny'],
+  ['local conservatively scans assignment subscript', `local a['$(${D})']=1`, 'deny'],
+  ['readonly conservatively scans assignment subscript', `readonly a['$(${D})']=1`, 'deny'],
+  ['export conservatively scans assignment subscript', `export a['$(${D})']=1`, 'deny'],
+  ['bare assignment scans subscript', `a['$(${D})']=1`, 'deny'],
+  ['bare append assignment scans subscript', `a['$(${D})']+=1`, 'deny'],
+  ['leading assignment preserves assignment position', `x=1 a['$(${D})']=1`, 'deny'],
+  ['negation preserves assignment position', `! a['$(${D})']=1`, 'deny'],
+  ['redirection preserves assignment position', `>/dev/null a['$(${D})']=1`, 'deny'],
+  ['if condition preserves assignment position', `if a['$(${D})']=1; then :; fi`, 'deny'],
+  ['conjunction preserves assignment position', `true && a['$(${D})']=1`, 'deny'],
+  ['coproc preserves assignment position', `coproc a['$(${D})']=1`, 'deny'],
+  ['newline after time preserves assignment position', `time\na['$(${D})']=1`, 'deny'],
+  ['portable time and negation preserve assignment position', `time -p ! a['$(${D})']=1`, 'deny'],
+  ['quoted declaration command is normalized', `"declare" a['$(${D})']=1`, 'deny'],
+  ['declaration command basename is normalized', `/bin/typeset a['$(${D})']=1`, 'deny'],
+  ['declaration options preserve assignment position', `declare -a a['$(${D})']=1`, 'deny'],
+  ['declaration later arguments preserve assignment position', `declare x a['$(${D})']=1`, 'deny'],
+  ['declaration consecutive assignments scan every subscript', `declare a[0]=1 b['$(${D})']=1`, 'deny'],
+  ['leading assignment before declaration scans subscript', `x=1 declare a['$(${D})']=1`, 'deny'],
+  ['timed declaration scans subscript', `time -p declare a['$(${D})']=1`, 'deny'],
+  ['timed conditional scans subscript assignment in body', `time [[ x == x ]] && a['$(${D})']=1`, 'deny'],
+  ['timed group scans subscript assignment in body', `time -p { a['$(${D})']=1; }`, 'deny'],
+  ['time with option terminator scans subscript', `time -- a['$(${D})']=1`, 'deny'],
+  ['command wrapper before declaration scans subscript', `command declare a['$(${D})']=1`, 'deny'],
+  ['builtin wrapper before declaration scans subscript', `builtin declare a['$(${D})']=1`, 'deny'],
+  ['let scans subscript', `let a['$(${D})']=1`, 'deny'],
+  ['read scans subscript', `read a['$(${D})'] </dev/null`, 'deny'],
+  ['test variable lookup scans subscript', `test -v a['$(${D})']`, 'deny'],
+  ['printf variable destination scans subscript', `printf -v a['$(${D})'] x`, 'deny'],
+]) test(`round 7: ${name}`, async () => {
+  assert.equal((await run(command)).decision, expected);
+});
+
 const parseDenials = [
   ['unbalanced double quote', 'echo "unbalanced', /quote/i],
   ['heredoc never closes before denied text', `cat <<EOF\n${D}`, /heredoc.*EOF/i],
