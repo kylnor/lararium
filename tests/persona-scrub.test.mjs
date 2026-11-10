@@ -29,9 +29,9 @@ test('no plain names outside allowed places; no sealed names or private data any
 test('the scan reads every tracked file and says how many were binary', () => {
   const files = trackedFiles(root);
   const binary = files.filter(f => readText(root, f) === null);
-  console.log(`# scanned ${files.length - binary.length} text files, skipped ${binary.length} binary: ${binary.join(', ') || 'none'}`);
+  console.log(`# scanned ${files.length - binary.length} text files, skipped ${binary.length} binary`);
   assert.ok(files.length > 50, 'expected a real tree');
-  assert.ok(binary.length <= 5, `unexpectedly many binary files skipped:\n${binary.join('\n')}`);
+  assert.ok(binary.length <= 5, `unexpectedly many binary files skipped: ${binary.length} (paths withheld, a path can carry a sealed name)`);
 });
 
 test('every member of the example roster is a banned name, or listed as an ordinary word', () => {
