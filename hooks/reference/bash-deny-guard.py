@@ -178,7 +178,8 @@ class Scanner:
         # Expansions, arithmetic commands and array words own their matching close.
         # Their operators are data; word() still discovers executable substitutions.
         self.i += len(marker)
-        opening = marker[-1]
+        # Bare braces are parameter data; word() recurses into actual expansions.
+        opening = None if marker == '${' else marker[-1]
         level = 2 if marker in ('((', '$((') else 1
         while self.i < len(self.text) and level:
             ch = self.text[self.i]
@@ -334,6 +335,8 @@ class Scanner:
                 scanner.i += 2
             elif body.startswith('$((', scanner.i):
                 scanner.arithmetic(depth)
+            elif body.startswith('${', scanner.i):
+                scanner.data_unit('${', '}', depth)
             elif body.startswith('$(', scanner.i):
                 scanner.substitution('$(', depth)
             elif ch == '`':
@@ -347,6 +350,11 @@ class Scanner:
         self.i += 2
         s = self.text
         while self.i < len(s):
+            # word() consumes embedded hashes; only a boundary hash reaches here.
+            if s[self.i] == '#':
+                pos = s.find('\n', self.i)
+                self.i = len(s) if pos < 0 else pos
+                continue
             if s.startswith(']]', self.i) and (
                     self.i + 2 == len(s) or s[self.i + 2] in ' \t\n;&|()<>'):
                 self.i += 2

@@ -296,6 +296,29 @@ for (const [name, command, expected, reason] of [
   if (reason) assert.match(result.reason, reason);
 });
 
+for (const [name, command, expected, reason] of [
+  ['probe 4 row 1: conditional comment quotes cannot hide following command', `[[ -n x # '\n]]; ${D}\n# '\necho ]]`, 'deny'],
+  ['probe 4 row 2: apostrophe in conditional comment is data', "[[ -n x # don't delete\n]] && echo ok", undefined],
+  ['probe 4 row 3: conditional comment ends at newline before logical operator', '[[ -n x # plain comment\n&& -n y ]] && echo ok', undefined],
+  ['probe 4 row 4: conditional comment leaves following command checked', `[[ -n x # c\n]] && ${D}`, 'deny'],
+  ['probe 4 row 5: hash inside conditional word is literal', '[[ $x == a#b ]] && echo ok', undefined],
+  ['probe 4 row 6: literal opening brace in parameter prefix pattern is data', 'echo "${value#*{}"', undefined],
+  ['probe 4 row 7: escaped closing brace in parameter suffix pattern is data', 'echo ${value%\\}*}', undefined],
+  ['probe 4 row 8: literal opening brace in parameter replacement pattern is data', 'echo "${value//{/[}"', undefined],
+  ['probe 4 row 9: literal parameter brace leaves following command checked', 'echo "${value#*{}"; ' + D, 'deny'],
+  ['probe 4 row 10: parameter default substitution is checked', 'echo ${x:-$(' + D + ')}', 'deny'],
+  ['probe 4 row 11: nested parameter defaults close independently', 'echo "${x:-${y:-z}}"', undefined],
+  ['probe 4 row 12: open parameter expansion in unquoted heredoc is denied', 'cat <<EOF\n${x:-oops\nEOF', 'deny', /parameter expansion/i],
+  ['probe 4 row 13: quoted heredoc leaves open parameter text literal', "cat <<'EOF'\n${x:-oops\nEOF", undefined],
+  ['probe 4 row 14: heredoc expands closed parameters and preserves escaped opener', 'cat <<EOF\n${x:-fine} and $y and \\${literal\nEOF', undefined],
+  ['probe 4 row 15: heredoc parameter default substitution is checked', 'cat <<EOF\n${x:-$(' + D + ')}\nEOF', 'deny'],
+  ['probe 4 row 16: lone dollar and brace in heredoc are literal', 'cat <<EOF\nprice is $5 {not an expansion\nEOF', undefined],
+]) test(`round 4: ${name}`, async () => {
+  const result = await run(command);
+  assert.equal(result.decision, expected);
+  if (reason) assert.match(result.reason, reason);
+});
+
 const parseDenials = [
   ['unbalanced double quote', 'echo "unbalanced', /quote/i],
   ['heredoc never closes before denied text', `cat <<EOF\n${D}`, /heredoc.*EOF/i],
