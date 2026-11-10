@@ -44,7 +44,8 @@ you publish or hand it over. The cheapest leak to catch is the one you grep for.
 `tests/persona-scan.mjs` has two name lists. Plain names are allowed only in named places in the
 repo tree. Sealed names are allowed nowhere, including tests, the blog, the roster and changelog.
 The sealed list holds salted SHA-256 digests so the public file does not spell out what it
-protects. A sealed hit prints a digest prefix, not the word or the line it appeared on.
+protects. A sealed hit prints a digest prefix and withholds the word, its line, any path segment
+containing it and any text in other reports on that line that would reveal it.
 
 To seal a word, run `node tests/persona-scan.mjs --hash` and supply words on stdin, one per line.
 The command prints one digest per line. Add each digest to `SEALED_NAMES`, keeping the list sorted.

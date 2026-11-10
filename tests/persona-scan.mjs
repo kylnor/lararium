@@ -79,7 +79,10 @@ export const NAME_ALLOWED_FILES = new Set(['CHANGELOG.md']);
 const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 function withoutExemptions(file, text) {
   let body = text;
-  for (const s of EXACT_STRIPS[file] || []) body = body.replace(new RegExp(`(?<![A-Za-z0-9_])${escapeRe(s)}(?![A-Za-z0-9_])`, 'g'), ' ');
+  for (const s of EXACT_STRIPS[file] || []) {
+    body = body.replace(new RegExp(`(?<![A-Za-z0-9_])${escapeRe(s)}(?![A-Za-z0-9_])`, 'g'),
+      match => match.replace(/[^\n]+/g, ' '));
+  }
   return body;
 }
 
@@ -113,30 +116,42 @@ function matchesOf(line, matchesIn) {
 const namesOf = line => matchesOf(line, namesIn);
 const sealedOf = line => matchesOf(line, sealedIn);
 const sealedLabel = digest => `sealed name (sha256 ${digest.slice(0, 12)}...)`;
+const displayPath = file => file.split('/').map(segment => sealedOf(segment).length ? '[sealed]' : segment).join('/');
+const withheld = '(withheld: this line carries a sealed name)';
 
 export function sealedHits(file, text) {
   const found = [];
+  const display = displayPath(file);
   text.split('\n').forEach((line, i) => {
-    for (const digest of sealedOf(line)) found.push(`${file}:${i + 1}: ${sealedLabel(digest)}`);
+    for (const digest of sealedOf(line)) found.push(`${display}:${i + 1}: ${sealedLabel(digest)}`);
   });
   return found;
 }
 
 export function sealedHitsInPath(file) {
-  return sealedOf(file).map(digest => `${file}: ${sealedLabel(digest)} in the path`);
+  const display = displayPath(file);
+  return sealedOf(file).map(digest => `${display}: ${sealedLabel(digest)} in the path`);
 }
 
 export function nameHits(file, text) {
   const found = [];
-  withoutExemptions(file, text).split('\n').forEach((line, i) => {
-    for (const m of namesOf(line)) found.push(`${file}:${i + 1}: name "${m}"  ${line.trim().slice(0, 100)}`);
-    for (const digest of sealedOf(line)) found.push(`${file}:${i + 1}: ${sealedLabel(digest)}`);
+  const display = displayPath(file);
+  const plainLines = withoutExemptions(file, text).split('\n');
+  text.split('\n').forEach((original, i) => {
+    const sealed = sealedOf(original);
+    const line = plainLines[i];
+    for (const m of namesOf(line)) {
+      found.push(sealed.length ? `${display}:${i + 1}: name ${withheld}`
+        : `${display}:${i + 1}: name "${m}"  ${line.trim().slice(0, 100)}`);
+    }
+    for (const digest of sealed) found.push(`${display}:${i + 1}: ${sealedLabel(digest)}`);
   });
   return found;
 }
 
 export function nameHitsInPath(file) {
-  return [...namesOf(file).map(m => `${file}: name "${m}" in the path`), ...sealedHitsInPath(file)];
+  const display = displayPath(file);
+  return [...namesOf(file).map(m => `${display}: name "${m}" in the path`), ...sealedHitsInPath(file)];
 }
 
 const PRIVATE = [
@@ -156,12 +171,15 @@ const PLACEHOLDER_EMAIL = /@(?:example\.(?:com|org|net)|users\.noreply\.github\.
 
 export function privateHits(file, text) {
   const found = [];
+  const display = displayPath(file);
   text.split('\n').forEach((line, i) => {
     const clean = line;
+    const hasSealed = sealedOf(line).length > 0;
     for (const [kind, re] of PRIVATE) {
       for (const m of clean.matchAll(re)) {
         if (PRIVATE_PLACEHOLDERS.has(m[0]) || (kind === 'email' && PLACEHOLDER_EMAIL.test(m[0]))) continue;
-        found.push(`${file}:${i + 1}: ${kind} "${m[0]}"  ${line.trim().slice(0, 100)}`);
+        found.push(hasSealed ? `${display}:${i + 1}: ${kind} ${withheld}`
+          : `${display}:${i + 1}: ${kind} "${m[0]}"  ${line.trim().slice(0, 100)}`);
       }
     }
   });
@@ -198,10 +216,12 @@ export function readText(root, file) {
 export function scan(root, files, namesAllowedHere = () => false) {
   const found = [];
   for (const file of files) {
+    const allowed = namesAllowedHere(file);
+    found.push(...(allowed ? sealedHitsInPath(file) : nameHitsInPath(file)));
     const text = readText(root, file);
     if (text === null) continue;
-    if (!namesAllowedHere(file)) found.push(...nameHitsInPath(file), ...nameHits(file, text));
-    else found.push(...sealedHitsInPath(file), ...sealedHits(file, text));
+    if (!allowed) found.push(...nameHits(file, text));
+    else found.push(...sealedHits(file, text));
     found.push(...privateHits(file, text));
   }
   return found;

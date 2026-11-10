@@ -81,6 +81,15 @@ const fake = {
   pat: () => 'gh' + 'p_' + 'a'.repeat(30),
   finePat: () => 'github' + '_pat_' + 'A1b2'.repeat(10),
 };
+const canaryPrefix = createHash('sha256').update(`lararium-scrub-v1:${fake.canary().toLowerCase()}`).digest('hex').slice(0, 12);
+
+function assertNoDisclosure(hits, variants = [fake.canary()]) {
+  for (const hit of hits) {
+    for (const variant of [fake.canary(), ...variants]) {
+      assert.ok(!hit.toLowerCase().includes(variant.toLowerCase()), 'sealed text must not appear in any report');
+    }
+  }
+}
 
 test('private data is flagged in every place, fictional examples included', () => {
   assert.ok(privateHits('agents/examples/x.md', `config at ${fake.home()}`).length >= 1);
@@ -120,7 +129,7 @@ test('sealed names match identifiers and marker splits, but not longer letter ru
 test('sealed text reports only its location and digest prefix', () => {
   const word = fake.canary();
   const text = `ordinary text\nprefix ${word} context after`;
-  const expected = [`docs/x.md:2: sealed name (sha256 ${hashName(word).slice(0, 12)}...)`];
+  const expected = [`docs/x.md:2: sealed name (sha256 ${canaryPrefix}...)`];
   const hits = nameHits('docs/x.md', text);
   assert.deepEqual(hits, expected);
   assert.deepEqual(sealedHits('docs/x.md', text), expected);
@@ -136,7 +145,7 @@ test('sealed text reports only its location and digest prefix', () => {
 test('sealed paths use the same matching and digest report', () => {
   const word = fake.canary();
   for (const file of [`docs/${word}.md`, `docs/${word}Helper.md`, `docs/${word}_helper.md`]) {
-    const expected = [`${file}: sealed name (sha256 ${hashName(word).slice(0, 12)}...) in the path`];
+    const expected = [`docs/[sealed]: sealed name (sha256 ${canaryPrefix}...) in the path`];
     assert.deepEqual(nameHitsInPath(file), expected);
     assert.deepEqual(sealedHitsInPath(file), expected);
   }
@@ -151,12 +160,14 @@ test('allowed places still scan sealed text and paths while tolerating plain nam
       fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
       fs.writeFileSync(path.join(dir, file), `Batman\n${fake.canary()}\n`);
       const hits = scan(dir, [file], () => true);
-      assert.deepEqual(hits, sealedHits(file, fs.readFileSync(path.join(dir, file), 'utf8')));
+      assert.deepEqual(hits, [`${file}:2: sealed name (sha256 ${canaryPrefix}...)`]);
       assert.equal(hits.length, 1, 'only the sealed name is flagged in an allowed file');
     }
     const file = `tests/${fake.canary()}.md`;
     fs.writeFileSync(path.join(dir, file), 'Batman');
-    assert.deepEqual(scan(dir, [file], () => true), sealedHitsInPath(file));
+    assert.deepEqual(scan(dir, [file], () => true), [
+      `tests/[sealed]: sealed name (sha256 ${canaryPrefix}...) in the path`,
+    ]);
     assert.equal(scan(dir, [file], () => true).length, 1, 'an allowed path still gets checked');
     const outside = 'other.md';
     fs.writeFileSync(path.join(dir, outside), `Batman\n${fake.canary()}\n`);
@@ -166,7 +177,7 @@ test('allowed places still scan sealed text and paths while tolerating plain nam
   }
 });
 
-test('exact strips apply to nameHits but cannot hide sealed names in allowed places', () => {
+test('exact strips cannot hide sealed names in combined or allowed scans', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scrub-'));
   const file = 'tests/exemption.md';
   const text = fake.canary();
@@ -174,12 +185,156 @@ test('exact strips apply to nameHits but cannot hide sealed names in allowed pla
   try {
     fs.mkdirSync(path.join(dir, 'tests'));
     fs.writeFileSync(path.join(dir, file), text);
-    assert.equal(nameHits(file, text).length, 0, 'combined scan keeps exact strips');
+    assert.equal(nameHits(file, text).length, 1, 'combined scan checks the original text for sealed names');
     assert.equal(sealedHits(file, text).length, 1, 'sealed-only scan ignores exact strips');
     assert.equal(scan(dir, [file], () => true).length, 1, 'allowed places never apply exact strips');
   } finally {
     delete EXACT_STRIPS[file];
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('every reporter withholds sealed path segments for folder, filename and identifier forms', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scrub-'));
+  const word = fake.canary();
+  const markerSplit = [word.slice(0, 4), word.slice(4)].join('_');
+  const camel = `${word}Helper`;
+  const cases = [
+    [`docs/${word}/note.md`, 'docs/[sealed]/note.md', false],
+    [`docs/${word}.md`, 'docs/[sealed]', false],
+    [`docs/${camel}.md`, 'docs/[sealed]', false],
+    [`docs/${markerSplit}.md`, 'docs/[sealed]', false],
+    [`docs/${word}/Batman.md`, 'docs/[sealed]/Batman.md', true],
+    [`docs/${word}_Batman.md`, 'docs/[sealed]', true],
+  ];
+  try {
+    const text = `Batman\n${word}\n${fake.email()}`;
+    for (const [file, display, plainPath] of cases) {
+      fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+      fs.writeFileSync(path.join(dir, file), text);
+      const sealedPath = [`${display}: sealed name (sha256 ${canaryPrefix}...) in the path`];
+      const namesPath = plainPath ? [`${display}: name "Batman" in the path`, ...sealedPath] : sealedPath;
+      const sealedText = [`${display}:2: sealed name (sha256 ${canaryPrefix}...)`];
+      const namesText = [`${display}:1: name "Batman"  Batman`, ...sealedText];
+      const privateText = [`${display}:3: email "${fake.email()}"  ${fake.email()}`];
+      const results = [
+        [nameHitsInPath(file), namesPath],
+        [sealedHitsInPath(file), sealedPath],
+        [nameHits(file, text), namesText],
+        [sealedHits(file, text), sealedText],
+        [privateHits(file, text), privateText],
+        [scan(dir, [file]), [...namesPath, ...namesText, ...privateText]],
+        [scan(dir, [file], () => true), [...sealedPath, ...sealedText, ...privateText]],
+      ];
+      for (const [actual, expected] of results) {
+        assertNoDisclosure(actual, [markerSplit, camel]);
+        assert.deepEqual(actual, expected);
+      }
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a plain name on a sealed line retains its count but withholds its value and excerpt', () => {
+  const word = fake.canary();
+  const variants = [word, word.toUpperCase(), `${word}Helper`, [word.slice(0, 4), word.slice(4)].join('_')];
+  for (const variant of variants) {
+    const hits = nameHits('docs/x.md', `before ${variant} Batman context after`);
+    assertNoDisclosure(hits, variants);
+    assert.equal(hits.length, 2);
+    for (const hit of hits) {
+      assert.ok(!hit.includes('Batman') && !hit.includes('before') && !hit.includes('context after'), 'no co-hit value or excerpt');
+    }
+    assert.deepEqual(hits, [
+      'docs/x.md:1: name (withheld: this line carries a sealed name)',
+      `docs/x.md:1: sealed name (sha256 ${canaryPrefix}...)`,
+    ]);
+  }
+});
+
+test('private matches containing sealed text remain reported with their values and excerpts withheld', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scrub-'));
+  const word = fake.canary();
+  const variants = [word, word.toUpperCase(), `${word}Helper`, [word.slice(0, 4), word.slice(4)].join('_')];
+  try {
+    const file = 'note.md';
+    for (const variant of variants) {
+      const cases = [
+        ['email', `${variant}@corp` + '.io'],
+        ['home path', `${'/ho' + 'me/'}${variant}/notes`],
+      ];
+      for (const [kind, value] of cases) {
+        const text = `before ${value} context after`;
+        fs.writeFileSync(path.join(dir, file), text);
+        const expectedPrivate = [`note.md:1: ${kind} (withheld: this line carries a sealed name)`];
+        const direct = privateHits(file, text);
+        assertNoDisclosure(direct, variants);
+        assert.deepEqual(direct, expectedPrivate);
+        for (const allowed of [false, true]) {
+          const hits = scan(dir, [file], () => allowed);
+          assertNoDisclosure(hits, variants);
+          assert.equal(hits.length, 2, 'both sealed and private matches still count');
+          assert.deepEqual(hits, [
+            `note.md:1: sealed name (sha256 ${canaryPrefix}...)`,
+            `note.md:1: ${kind} (withheld: this line carries a sealed name)`,
+          ]);
+        }
+      }
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('binary files still report sealed paths everywhere and plain paths outside allowed places', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scrub-'));
+  const word = fake.canary();
+  const markerSplit = [word.slice(0, 4), word.slice(4)].join('_');
+  const camel = `${word}Helper`;
+  try {
+    for (const file of [`${word}/note.bin`, `${word}.bin`, `${camel}.bin`, `${markerSplit}.bin`, 'Batman.bin']) {
+      fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+      fs.writeFileSync(path.join(dir, file), `\0Batman ${word} ${fake.email()}`);
+      assert.equal(readText(dir, file), null);
+      for (const allowed of [false, true]) {
+        const hits = scan(dir, [file], () => allowed);
+        assertNoDisclosure(hits, [markerSplit, camel]);
+        if (file === 'Batman.bin') {
+          assert.deepEqual(hits, allowed ? [] : ['Batman.bin: name "Batman" in the path']);
+        } else {
+          const display = file.includes('/') ? '[sealed]/note.bin' : '[sealed]';
+          assert.deepEqual(hits, [`${display}: sealed name (sha256 ${canaryPrefix}...) in the path`]);
+        }
+      }
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('unsealed lines retain the exact plain-name and private-data report formats', () => {
+  assert.deepEqual(nameHits('docs/x.md', '  Batman asked for help  '), [
+    'docs/x.md:1: name "Batman"  Batman asked for help',
+  ]);
+  assert.deepEqual(privateHits('docs/x.md', `  write to ${fake.email()} now  `), [
+    `docs/x.md:1: email "${fake.email()}"  write to ${fake.email()} now`,
+  ]);
+});
+
+test('multiline exact strips preserve original sealed lines and plain-hit line numbers', () => {
+  const file = 'tests/multiline-exemption.md';
+  const word = fake.canary();
+  EXACT_STRIPS[file] = [`Batman\n${word}`];
+  try {
+    const hits = nameHits(file, `Batman\n${word}\nAlfred`);
+    assertNoDisclosure(hits);
+    assert.deepEqual(hits, [
+      `tests/multiline-exemption.md:2: sealed name (sha256 ${canaryPrefix}...)`,
+      'tests/multiline-exemption.md:3: name "Alfred"  Alfred',
+    ]);
+  } finally {
+    delete EXACT_STRIPS[file];
   }
 });
 
