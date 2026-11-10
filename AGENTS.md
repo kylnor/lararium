@@ -21,6 +21,8 @@ file are here for one of two jobs, and they need opposite instincts:
 - **Nothing personal ever enters this repo.** No real names, hostnames, absolute home paths,
   credentials, or the original owner's data. Before any commit that adds content, run the
   three-pass scrub in `SCRUB.md` (secrets, data, identity) and grep your additions for them.
+  A word the scan must catch but that must not be readable goes in the sealed list as a digest,
+  see `SCRUB.md`.
 - **The template stays empty.** Example content goes in doctrine files as fenced illustrations,
   never as pre-populated brain/soul/sphere files.
 - **Docs are the product.** This repo is mostly markdown; treat doc edits with code-review care.

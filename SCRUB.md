@@ -39,6 +39,23 @@ run the same three. A miss here leaks your real life.
 Do a final full-text sweep for the owner's name, the assistant's name, and any client names before
 you publish or hand it over. The cheapest leak to catch is the one you grep for.
 
+## The automated scan
+
+`tests/persona-scan.mjs` has two name lists. Plain names are allowed only in named places in the
+repo tree. Sealed names are allowed nowhere, including tests, the blog, the roster and changelog.
+The sealed list holds salted SHA-256 digests so the public file does not spell out what it
+protects. A sealed hit prints a digest prefix and withholds the word, its line, any path segment
+containing it and any text in other reports on that line that would reveal it.
+
+To seal a word, run `node tests/persona-scan.mjs --hash` and supply words on stdin, one per line.
+The command prints one digest per line. Add each digest to `SEALED_NAMES`, keeping the list sorted.
+The formula is SHA-256 of `NAME_SALT + ':' + word.toLowerCase()`, with the public salt
+`lararium-scrub-v1`. A re-deriver replaces the list with their own words' digests.
+
+The salt is public. Anyone can hash a list of common first names and test it in seconds. These
+digests only stop plaintext grep, search engines, existing hash-table lookups and casual reading.
+They do not provide secrecy against guessing. A word already committed stays in git history.
+
 ## Going public (a higher bar than gifting)
 
 Handing a scrubbed repo to a trusted peer tolerates seams; publishing does not. Before flipping a

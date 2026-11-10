@@ -1,7 +1,8 @@
 # The blog source
 
-Canonical markdown for the Lararium blog. The site (`elorati-landing/lararium/blog/build.mjs`)
-reads these files and renders styled HTML; this repo is the source of truth, the site only renders.
+Canonical markdown for the Lararium blog. The site, in its own private repo
+(`lararium/blog/build.mjs` there), reads these files and renders styled HTML; this repo is the
+source of truth, the site only renders.
 
 ## Two lanes
 
