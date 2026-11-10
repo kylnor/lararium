@@ -119,14 +119,38 @@ settings block, or the `STACK_UPDATE_CHECK=off` env var. Privacy: an enabled che
 to GitHub per day, exposing your IP the same way visiting the repo would; turn it off if that matters.
 
 ### i. Deny-list depth (`bash-deny-guard.py`, PreToolUse on Bash)
-The settings `deny` list matches command strings whole, so `git status && rm -rf ~/.ssh` sails past
-a `rm -rf ~/.ssh` deny because the string starts with `git`. This hook decomposes compound commands
-(`&&`, `||`, `;`, pipes, `$()` subshells, backticks, env-var prefixes; heredoc bodies correctly
-treated as data) and checks every sub-command against your merged deny patterns, plus the raw
-string for pipe-shaped patterns like `curl * | sh`. Deny-only by design: it never auto-approves,
-so it can only make the system stricter. Because hook denies fire even in bypass-permissions
-sessions, this is what makes your deny list hold for autonomous agents. Derived from
-liberzon/claude-hooks smart-approve.py (MIT) with the allow path removed.
+The settings `deny` list can miss a denied command inside a compound command. This hook checks
+both the full command string and each executable sub-command against the merged deny patterns.
+It emits `deny` or nothing, never `allow` or `ask`. Hook denies also apply in bypass-permissions
+sessions. Derived from liberzon/claude-hooks smart-approve.py (MIT), with the allow path removed.
+
+The scanner follows Bash quoting, escapes, word-boundary comments, command separators, groups,
+conditionals and substitutions. Quoted shift text, arithmetic shifts and here-strings cannot open
+heredocs. It reads multiple heredocs in order and honors `<<-` tab stripping. Bodies are data with
+two exceptions: an unquoted delimiter permits executable `$()` and backtick substitutions, and a
+heredoc or here-string attached directly to a shell is checked as shell commands, even when quoted.
+A body attached to `cat` and piped into a shell stays run-time data.
+
+For each command, matching retains its written form and also normalizes the command word: quotes
+and backslashes are removed, paths become basenames, and wrappers with their options are peeled.
+The wrappers are `command`, `builtin`, `exec`, `env`, `sudo`, `doas`, `nohup`, `time`, `timeout`,
+`nice`, `ionice`, `stdbuf`, `setsid`, `busybox` and `xargs`. Known value options consume their value;
+unknown options check both readings. `command -v` and `command -V` are lookups. Ordinary command
+arguments are never treated as fresh command starts. Shell `-c` strings, `eval`, `env -S` and
+`find` execution clauses are checked recursively, up to eight levels.
+
+Unterminated quoting or substitution adds one full analysis of each physical line, still matching
+only the owner's deny patterns. A guard error with configured deny patterns fails closed with a
+reason explaining how to remove the hook from settings. With no deny patterns, or unreadable
+settings, the hook stays silent.
+
+This guard runs before Bash. It cannot resolve variables or computed command words such as `$CMD`
+or `$(echo rm)`, aliases and functions, script contents, interpreter payloads such as `python3 -c`
+and `node -e`, data piped into a shell at run time, or binaries that have been renamed or copied.
+These are limits of static inspection, so the hook does not replace a sandbox.
+
+To upgrade an existing install, copy `hooks/reference/bash-deny-guard.py` over the installed copy.
+Updating this template alone does not update a copied hook.
 
 ### j. Secret-write guard (`secret-write-guard.js`, PreToolUse on Write|Edit)
 Scans the content about to be written (not the file on disk) for credential patterns: cloud keys,
@@ -143,7 +167,8 @@ into every turn.
 - **Fail soft, always.** A hook that throws must exit 0 and inject nothing. Never block a session on
   infrastructure failure. Every reference hook wraps its body in try/catch and swallows the error. A
   briefing is a nice-to-have; a working session is not negotiable. The correct failure mode is
-  "silently do nothing," never "crash the turn."
+  "silently do nothing," never "crash the turn." The one exception is `bash-deny-guard.py`: after
+  deny patterns load, a guard error emits a deny so a broken guard cannot silently bypass them.
 - **Be fast.** Hooks run synchronously, in the critical path of the thing that triggered them. A slow
   hook is felt as a slow assistant. Keep the hook itself to file reads and quick string work; push any
   heavy work (an LLM call, a network round-trip) to a background worker the hook spawns and does not

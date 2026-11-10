@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bash deny guard — DENY-ONLY variant of smart-approve for Claude Code.
+"""Bash deny guard, DENY-ONLY variant of smart-approve for Claude Code.
 
 Decomposes compound bash commands (&&, ||, ;, |, $(), backticks, heredocs)
 into individual sub-commands and checks each against the DENY patterns in
@@ -38,7 +38,7 @@ def load_settings(path=None):
     try:
         with open(path) as f:
             return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError):
         return {}
 
 
@@ -110,7 +110,7 @@ def parse_bash_patterns(patterns):
         # Split on first ':'
         colon_idx = inner.find(':')
         if colon_idx == -1:
-            # Pattern like "Bash(something)" with no colon — treat as exact prefix
+            # Pattern like "Bash(something)" with no colon: treat as exact prefix
             result.append((inner, inner))
         else:
             prefix = inner[:colon_idx]
@@ -138,415 +138,455 @@ def command_matches_pattern(cmd, patterns):
     return False
 
 
-def extract_subshells(command):
-    """Extract contents of executable substitutions, recursively.
-
-    Returns a list of substitution content strings.
-    """
-    subshells = []
-
-    i = 0
-    while i < len(command):
-        if command[i] == '$' and i + 1 < len(command) and command[i + 1] == '(' \
-                and not (i + 2 < len(command) and command[i + 2] == '('):
-            depth = 0
-            start = i + 2
-            j = i + 1
-            while j < len(command):
-                if command[j] == '(':
-                    depth += 1
-                elif command[j] == ')':
-                    depth -= 1
-                    if depth == 0:
-                        content = command[start:j]
-                        subshells.append(content)
-                        subshells.extend(extract_subshells(content))
-                        break
-                j += 1
-            i = j + 1
-            continue
-
-        if command[i] in ('<', '>') and i + 1 < len(command) and command[i + 1] == '(':
-            depth = 0
-            start = i + 2
-            j = i + 1
-            while j < len(command):
-                if command[j] == '(':
-                    depth += 1
-                elif command[j] == ')':
-                    depth -= 1
-                    if depth == 0:
-                        content = command[start:j]
-                        subshells.append(content)
-                        subshells.extend(extract_subshells(content))
-                        break
-                j += 1
-            i = j + 1
-            continue
-
-        i += 1
-
-    parts = command.split('`')
-    for idx in range(1, len(parts), 2):
-        content = parts[idx]
-        if content.strip():
-            subshells.append(content)
-            subshells.extend(extract_subshells(content))
-
-    return subshells
+MAX_DEPTH = 8
+ASSIGNMENT = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*=')
+NUMBER = re.compile(r'^[0-9]+(?:\.[0-9]+)?[smhd]?$')
+SHELLS = {'sh', 'bash', 'zsh', 'dash', 'ksh'}
+PREFIXES = {'!', 'then', 'do', 'else', 'elif', 'if', 'while', 'until'}
+HEADERS = {'for', 'case', 'select', 'done', 'fi', 'esac', 'in'}
 
 
-def strip_heredocs(command):
-    """Strip heredoc bodies from a command, leaving just the <<DELIM marker.
-
-    Heredocs like <<'EOF'\\n...\\nEOF are replaced with the marker only
-    (body removed).  This prevents heredoc content lines from being treated
-    as sub-commands when we split on newlines.
-    """
-    lines = command.split('\n')
-    result = []
-    heredoc_delim = None
-    i = 0
-
-    while i < len(lines):
-        if heredoc_delim is not None:
-            # Inside heredoc body — look for the terminator line
-            if lines[i].strip() == heredoc_delim:
-                heredoc_delim = None
-            i += 1
-            continue
-
-        # Check for heredoc marker: <<[-]?['"]?WORD['"]?
-        m = re.search(r'<<-?\s*[\'"]?(\w+)[\'"]?', lines[i])
-        if m:
-            heredoc_delim = m.group(1)
-
-        result.append(lines[i])
-        i += 1
-
-    return '\n'.join(result)
+class Word:
+    def __init__(self, raw, value, quoted=False):
+        self.raw = raw
+        self.value = value
+        self.quoted = quoted
 
 
-def split_on_operators(command):
-    """Split a command string on &&, ||, ;, |, and newlines.
+class Scanner:
+    """One forward cursor; heredoc queues belong to their code context."""
 
-    Respects quoted strings and $() subshells (doesn't split inside them).
-    Returns the top-level command segments.
-    """
-    # Strip heredoc bodies so their lines aren't treated as commands
-    command = strip_heredocs(command)
-    # Collapse backslash-newline continuations before parsing
-    command = command.replace('\\\n', ' ')
+    def __init__(self, text, depth=0):
+        if depth > MAX_DEPTH:
+            raise ValueError('command nesting exceeds 8 levels')
+        self.text = text
+        self.i = 0
+        self.depth = depth
+        self.segments = []
+        self.incomplete = False
 
-    segments = []
-    current = []
-    i = 0
-    in_single_quote = False
-    in_double_quote = False
-    paren_depth = 0
+    def arithmetic(self):
+        # Bash arithmetic owns its parentheses; shift operators are not redirects.
+        self.i += 3
+        level = 2
+        while self.i < len(self.text) and level:
+            ch = self.text[self.i]
+            if ch == '\\':
+                self.i += 2
+                continue
+            if ch == '(':
+                level += 1
+            elif ch == ')':
+                level -= 1
+            self.i += 1
+        if level:
+            self.incomplete = True
 
-    while i < len(command):
-        ch = command[i]
+    def substitution(self, marker, depth):
+        # Substitutions re-enter code even inside double quotes, at a bounded depth.
+        if depth >= MAX_DEPTH:
+            raise ValueError('command nesting exceeds 8 levels')
+        self.i += len(marker)
+        self.code('`' if marker == '`' else ')', depth + 1)
 
-        # Handle backslash escaping (not inside single quotes, where \ is literal)
-        if ch == '\\' and not in_single_quote and i + 1 < len(command):
-            current.append(ch)
-            current.append(command[i + 1])
-            i += 2
-            continue
+    def word(self, depth, delimiter=False, stop=None):
+        start = self.i
+        value = []
+        quoted = False
+        quote = None
+        s = self.text
+        while self.i < len(s):
+            ch = s[self.i]
+            if quote is None and ch == stop:
+                break
+            # Single quotes preserve everything; ANSI quotes additionally decode escapes.
+            if quote in ("'", 'ansi'):
+                if ch == "'":
+                    quote = None
+                    self.i += 1
+                elif ch == '\\' and quote == 'ansi':
+                    m = re.match(r'\\([0-7]{1,3}|x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{1,4}|U[0-9a-fA-F]{1,8}|c.|.)', s[self.i:self.i + 10], re.S)
+                    if m:
+                        esc = m.group(1)
+                        simple = {'a': '\a', 'b': '\b', 'e': '\x1b', 'E': '\x1b',
+                                  'f': '\f', 'n': '\n', 'r': '\r', 't': '\t', 'v': '\v',
+                                  '\\': '\\', "'": "'", '"': '"', '?': '?'}
+                        if esc[0] in '01234567':
+                            decoded = chr(int(esc, 8))
+                        elif esc[0] in 'xuU' and len(esc) > 1:
+                            decoded = chr(int(esc[1:], 16))
+                        elif esc[0] == 'c' and len(esc) == 2:
+                            decoded = chr(ord(esc[1].upper()) % 32)
+                        else:
+                            decoded = simple.get(esc, '\\' + esc)
+                        value.append(decoded)
+                        self.i += len(m.group(0))
+                    else:
+                        value.append(ch)
+                        self.i += 1
+                else:
+                    value.append(ch)
+                    self.i += 1
+                continue
+            # Backslash-newline vanishes; double quotes only escape $, `, ", and backslash.
+            if ch == '\\' and self.i + 1 < len(s):
+                nxt = s[self.i + 1]
+                quoted = True
+                if nxt == '\n':
+                    self.i += 2
+                elif quote != '"' or nxt in '$`"\\':
+                    value.append(nxt)
+                    self.i += 2
+                else:
+                    value.append(ch)
+                    self.i += 1
+                continue
+            if ch == '"':
+                quoted = True
+                quote = None if quote == '"' else '"'
+                self.i += 1
+                continue
+            if quote is None and (ch == "'" or s.startswith("$'", self.i)):
+                quoted = True
+                quote = 'ansi' if ch == '$' else "'"
+                self.i += 2 if ch == '$' else 1
+                continue
+            if not delimiter:
+                begin = self.i
+                if s.startswith('$((', self.i):
+                    self.arithmetic()
+                elif s.startswith('$(', self.i) or (quote is None and s[self.i:self.i + 2] in ('<(', '>(')):
+                    self.substitution(s[self.i:self.i + 2], depth)
+                elif ch == '`':
+                    self.substitution('`', depth)
+                if self.i != begin:
+                    value.append(s[begin:self.i])
+                    continue
+            if quote is None and (ch.isspace() or ch in ';&|()<>' or ch == '`'):
+                break
+            value.append(ch)
+            self.i += 1
+        if quote:
+            self.incomplete = True
+        return Word(s[start:self.i], ''.join(value), quoted)
 
-        # Track quoting
-        if ch == "'" and not in_double_quote and paren_depth == 0:
-            in_single_quote = not in_single_quote
-            current.append(ch)
-            i += 1
-            continue
-        if ch == '"' and not in_single_quote and paren_depth == 0:
-            in_double_quote = not in_double_quote
-            current.append(ch)
-            i += 1
-            continue
+    def bodies(self, pending, depth):
+        # Bash reads queued heredocs after newline, in order, with exact delimiter lines.
+        s = self.text
+        for doc in pending:
+            chunks = []
+            while self.i < len(s):
+                end = s.find('\n', self.i)
+                if end < 0:
+                    end = len(s)
+                line = s[self.i:end]
+                self.i = min(end + 1, len(s))
+                tested = line.lstrip('\t') if doc['tabs'] else line
+                if tested == doc['delimiter']:
+                    break
+                chunks.append(tested + ('\n' if end < len(s) else ''))
+            doc['body'] = ''.join(chunks)
+            # Unquoted heredocs expand substitutions; ordinary quotes there are just data.
+            if not doc['quoted']:
+                self.expansions(doc['body'], depth)
 
-        if in_single_quote or in_double_quote:
-            current.append(ch)
-            i += 1
-            continue
-
-        # Track $() subshell depth — consume $( as a single token
-        if ch == '$' and i + 1 < len(command) and command[i + 1] == '(':
-            paren_depth += 1
-            current.append('$')
-            current.append('(')
-            i += 2
-            continue
-        if ch == '(' and paren_depth > 0:
-            paren_depth += 1
-            current.append(ch)
-            i += 1
-            continue
-        if ch == ')' and paren_depth > 0:
-            paren_depth -= 1
-            current.append(ch)
-            i += 1
-            continue
-
-        if paren_depth > 0:
-            current.append(ch)
-            i += 1
-            continue
-
-        # Split on operators at top level
-        if ch == '&' and i + 1 < len(command) and command[i + 1] == '&':
-            segments.append(''.join(current))
-            current = []
-            i += 2
-            continue
-        if ch == '|' and i + 1 < len(command) and command[i + 1] == '|':
-            segments.append(''.join(current))
-            current = []
-            i += 2
-            continue
-        if ch == ';':
-            segments.append(''.join(current))
-            current = []
-            i += 1
-            continue
-        if ch == '|':
-            segments.append(''.join(current))
-            current = []
-            i += 1
-            continue
-        if ch == '\n':
-            segments.append(''.join(current))
-            current = []
-            i += 1
-            continue
-
-        current.append(ch)
-        i += 1
-
-    segments.append(''.join(current))
-    return [s.strip() for s in segments if s.strip()]
-
-
-def _skip_shell_value(cmd, i):
-    """Skip past one shell 'word' value starting at position i.
-
-    Handles quoted strings, $() subshells (tracking paren depth), and
-    bare non-whitespace runs.  Returns the index just past the value.
-    """
-    if i >= len(cmd):
-        return i
-
-    # Quoted value
-    if cmd[i] == '"':
-        i += 1
-        while i < len(cmd) and cmd[i] != '"':
-            if cmd[i] == '\\' and i + 1 < len(cmd):
-                i += 2
+    def expansions(self, body, depth):
+        scanner = Scanner(body, depth)
+        while scanner.i < len(body):
+            ch = body[scanner.i]
+            if ch == '\\' and scanner.i + 1 < len(body) and body[scanner.i + 1] in '\\$`\n':
+                scanner.i += 2
+            elif body.startswith('$((', scanner.i):
+                scanner.arithmetic()
+            elif body.startswith('$(', scanner.i):
+                scanner.substitution('$(', depth)
+            elif ch == '`':
+                scanner.substitution('`', depth)
             else:
-                i += 1
-        if i < len(cmd):
-            i += 1  # skip closing quote
-        return i
-    if cmd[i] == "'":
-        i += 1
-        while i < len(cmd) and cmd[i] != "'":
+                scanner.i += 1
+        self.segments.extend(scanner.segments)
+        self.incomplete = self.incomplete or scanner.incomplete
+
+    def code(self, end=None, depth=None):
+        depth = self.depth if depth is None else depth
+        s = self.text
+        words, raw, docs, pending = [], [], [], []
+        groups = 0
+        cases = []
+
+        def flush():
+            if raw or words:
+                self.segments.append((words[:], ' '.join(raw), docs[:], depth))
+            words.clear()
+            raw.clear()
+            docs.clear()
+
+        while self.i < len(s):
+            ch = s[self.i]
+            # An unquoted backtick or closing substitution parenthesis returns to its word.
+            if end and ch == end and not groups and not (
+                    end == ')' and cases and cases[-1] == 'pattern'):
+                flush()
+                self.i += 1
+                return
+            if ch in ' \t\r':
+                self.i += 1
+                continue
+            # Comments start only at a word boundary; their quotes cannot alter scanner state.
+            if ch == '#':
+                pos = s.find('\n', self.i)
+                self.i = len(s) if pos < 0 else pos
+                continue
+            # Case patterns are headers up to ')'; alternatives are not pipelines.
+            if cases and cases[-1] == 'pattern' and ch in '()|':
+                if ch == ')':
+                    cases[-1] = 'body'
+                    words.clear()
+                    raw.clear()
+                self.i += 1
+                continue
+            # Control operators separate commands; grouping exposes commands on either side.
+            if ch in ';|&\n()' and s[self.i:self.i + 2] not in ('&>',):
+                if ch == '(':
+                    groups += 1
+                elif ch == ')' and groups:
+                    groups -= 1
+                flush()
+                self.i += 1
+                if ch != '\n' and self.i < len(s) and s[self.i] in '|&;' and ch in '|&;':
+                    if ch == ';' and cases and s[self.i] in ';&':
+                        cases[-1] = 'pattern'
+                    self.i += 1
+                    if ch == ';' and self.i < len(s) and s[self.i] == '&':
+                        self.i += 1
+                if ch == '\n':
+                    self.bodies(pending, depth)
+                    pending.clear()
+                continue
+            if ch in '{}' and all(w.value in PREFIXES and not w.quoted for w in words) and (
+                    self.i + 1 == len(s) or s[self.i + 1].isspace() or s[self.i + 1] in ';)'):
+                flush()
+                self.i += 1
+                continue
+            # Redirection operands are data; process substitutions remain executable words.
+            m = re.match(r'(?:[0-9]+)?(<<<|<<-|<<|&>>|&>|>>|<>|>&|<&|>\||>|<)', s[self.i:self.i + 32])
+            if m and not (s[self.i:self.i + 2] in ('<(', '>(')):
+                op = m.group(1)
+                raw.append(m.group(0))
+                self.i += len(m.group(0))
+                while self.i < len(s) and s[self.i] in ' \t':
+                    self.i += 1
+                # A comment cannot supply a redirection operand or a heredoc delimiter.
+                if self.i < len(s) and s[self.i] == '#':
+                    continue
+                operand = self.word(depth, delimiter=op in ('<<', '<<-'), stop=end)
+                raw.append(operand.raw)
+                if operand.raw and op in ('<<', '<<-', '<<<'):
+                    doc = {'delimiter': operand.value, 'quoted': operand.quoted,
+                           'tabs': op == '<<-', 'body': operand.value if op == '<<<' else ''}
+                    docs.append(doc)
+                    if op != '<<<':
+                        pending.append(doc)
+                continue
+            word = self.word(depth, stop=end)
+            if self.i == len(s) or word.raw:
+                if not word.quoted:
+                    if word.value == 'case' and all(w.value in PREFIXES and not w.quoted for w in words):
+                        cases.append('header')
+                    elif word.value == 'in' and cases and cases[-1] == 'header' and len(words) >= 2:
+                        cases[-1] = 'pattern'
+                    elif word.value == 'esac' and cases:
+                        cases.pop()
+                raw.append(word.raw)
+                words.append(word)
+            else:
+                # A stray unmatched closer is syntax, never a reason to stop scanning.
+                self.i += 1
+        flush()
+        if end:
+            self.incomplete = True
+
+
+# Each wrapper lists value options and flags; unknown options branch into both readings.
+WRAPPERS = {
+    'command': (set(), {'-p'}),
+    'builtin': (set(), set()),
+    'exec': ({'-a'}, {'-c', '-l'}),
+    'env': ({'-u', '--unset', '-C', '--chdir', '-S', '--split-string'},
+            {'-i', '--ignore-environment', '-', '-0', '--null', '-v', '--debug'}),
+    'sudo': ({'-u', '--user', '-g', '--group', '-h', '--host', '-p', '--prompt',
+              '-C', '--close-from', '-T', '--command-timeout', '-r', '--role',
+              '-t', '--type', '-D', '--chdir', '-R', '--chroot'},
+             {'-E', '--preserve-env', '-H', '-n', '-S', '-b', '-k', '-K', '-v'}),
+    'doas': ({'-u', '-C'}, {'-n', '-s', '-L'}),
+    'nohup': (set(), set()),
+    'time': ({'-f', '--format', '-o', '--output'}, {'-p', '-a', '--append', '-v'}),
+    'timeout': ({'-s', '--signal', '-k', '--kill-after'},
+                {'--foreground', '--preserve-status', '-v', '--verbose'}),
+    'nice': ({'-n', '--adjustment'}, set()),
+    'ionice': ({'-c', '--class', '-n', '--classdata', '-p', '-P', '-u'}, {'-t', '--ignore'}),
+    'stdbuf': ({'-i', '--input', '-o', '--output', '-e', '--error'}, set()),
+    'setsid': (set(), {'-c', '--ctty', '-f', '--fork', '-w', '--wait'}),
+    'busybox': (set(), set()),
+    'xargs': ({'-a', '--arg-file', '-E', '-I', '--replace', '-L', '--max-lines',
+               '-n', '--max-args', '-P', '--max-procs', '-s', '--max-chars', '-d', '--delimiter'},
+              {'-0', '--null', '-r', '--no-run-if-empty', '-t', '--verbose', '-p', '--interactive', '-x', '--exit'}),
+}
+
+
+def command_starts(words, payload):
+    """Yield real command positions without walking their ordinary arguments."""
+    todo = [0]
+    visited = set()
+    while todo:
+        i = todo.pop()
+        while i < len(words) and ASSIGNMENT.match(words[i].value):
             i += 1
-        if i < len(cmd):
-            i += 1  # skip closing quote
-        return i
-
-    # Unquoted value — consume non-whitespace, tracking $() depth
-    paren_depth = 0
-    while i < len(cmd):
-        ch = cmd[i]
-        if ch == '$' and i + 1 < len(cmd) and cmd[i + 1] == '(':
-            paren_depth += 1
-            i += 2
+        if i >= len(words) or i in visited:
             continue
-        if ch == '(' and paren_depth > 0:
-            paren_depth += 1
-            i += 1
+        visited.add(i)
+        yield i
+        base = os.path.basename(words[i].value)
+        if base not in WRAPPERS:
             continue
-        if ch == ')' and paren_depth > 0:
-            paren_depth -= 1
-            i += 1
-            continue
-        if paren_depth > 0:
-            i += 1
-            continue
-        if ch in (' ', '\t'):
-            break
-        i += 1
-    return i
+        takes, flags = WRAPPERS[base]
+        options = [i + 1]
+        seen = set()
+        while options:
+            j = options.pop()
+            while j < len(words):
+                if j in seen:
+                    break
+                seen.add(j)
+                arg = words[j].value
+                if base == 'command' and arg.startswith('-') and not arg.startswith('--') and any(c in arg[1:] for c in 'vV'):
+                    break
+                if base == 'env' and (arg in ('-S', '--split-string') or arg.startswith('--split-string=') or arg.startswith('-S')):
+                    if arg in ('-S', '--split-string'):
+                        j += 1
+                        text = words[j].value if j < len(words) else ''
+                    else:
+                        text = arg.split('=', 1)[1] if '=' in arg else arg[2:]
+                    payload(text + ' ' + ' '.join(w.raw for w in words[j + 1:]), 'env ')
+                    break
+                if arg == '--':
+                    todo.append(j + 1)
+                    break
+                if ASSIGNMENT.match(arg) or NUMBER.fullmatch(arg):
+                    j += 1
+                    continue
+                if not arg.startswith('-') or arg == '-':
+                    if arg in flags:
+                        j += 1
+                        continue
+                    todo.append(j)
+                    break
+                opt = arg.split('=', 1)[0]
+                if opt in takes:
+                    j += 1 if '=' in arg else 2
+                elif opt in flags:
+                    j += 1
+                elif not arg.startswith('--') and any(arg.startswith(o) and len(arg) > len(o) for o in takes if o.startswith('-') and not o.startswith('--')):
+                    j += 1
+                elif not arg.startswith('--') and all('-' + c in flags for c in arg[1:]):
+                    j += 1
+                else:
+                    # Unknown option: the next word may be its value or its command.
+                    options.append(j + 2)
+                    j += 1
 
 
-def strip_env_vars(cmd):
-    """Strip leading environment variable assignments (FOO=bar cmd ...).
+def decompose_command(command, depth=0, recover=True):
+    scanner = Scanner(command, depth)
+    scanner.code()
+    result = [re.sub(r'\s+', ' ', command).strip()]
 
-    Returns the command with env var prefixes removed.
-    Correctly handles values containing $() subshells.
-    """
-    while True:
-        m = re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', cmd)
-        if not m:
-            break
-        # Find end of value (respecting quotes and $() depth)
-        i = _skip_shell_value(cmd, m.end())
-        # If nothing follows the assignment, this IS the command — keep it
-        rest = cmd[i:].lstrip()
-        if not rest:
-            break
-        cmd = rest
-    return cmd
+    def payload(text, nested_depth, prefix=''):
+        result.append(re.sub(r'\s+', ' ', text).strip())
+        result.extend(decompose_command(prefix + text, nested_depth, recover))
 
+    def analyze(words, raw, docs, level):
+        if level > MAX_DEPTH:
+            raise ValueError('command nesting exceeds 8 levels')
+        # Reserved prefixes expose the following command; loop and case headers do not run it.
+        while words and not words[0].quoted and words[0].value in PREFIXES:
+            words = words[1:]
+        if not words or (not words[0].quoted and words[0].value in HEADERS):
+            return
+        result.append(raw.strip())
+        for i in command_starts(words, lambda text, prefix='': payload(text, level + 1, prefix)):
+            word = words[i]
+            base = os.path.basename(word.value)
+            args = words[i + 1:]
+            result.append(' '.join([word.raw] + [w.raw for w in args]))
+            result.append(' '.join([base] + [w.raw for w in args]))
+            # Shell -c consumes one command string; eval joins all its arguments as code.
+            if base in SHELLS:
+                k = 0
+                while k < len(args):
+                    arg = args[k]
+                    if arg.value == '--' or not arg.value.startswith('-'):
+                        break
+                    if arg.value in ('-o', '-O', '--rcfile', '--init-file'):
+                        k += 2
+                        continue
+                    if not arg.value.startswith('--') and 'c' in arg.value[1:]:
+                        if k + 1 < len(args):
+                            payload(args[k + 1].value, level + 1)
+                        break
+                    k += 1
+                for doc in docs:
+                    payload(doc['body'], level + 1)
+            elif base == 'eval':
+                if args and args[0].value == '--':
+                    args = args[1:]
+                payload(' '.join(w.value for w in args), level + 1)
+            elif base == 'find':
+                k = 0
+                while k < len(args):
+                    if args[k].value in ('-exec', '-execdir', '-ok', '-okdir'):
+                        start = k + 1
+                        k = start
+                        while k < len(args) and args[k].value not in (';', '+'):
+                            k += 1
+                        sub = args[start:k]
+                        analyze(sub, ' '.join(w.raw for w in sub), [], level + 1)
+                    k += 1
 
-def strip_redirections(cmd):
-    """Strip output/input redirections from a command.
-
-    Removes patterns like >file, >>file, 2>&1, <file, etc.
-    """
-    # Remove redirections: N>file, N>>file, N>&N, <file, <<word, <<<word
-    cmd = re.sub(r'\d*>>?\s*&?\d*\S*', '', cmd)
-    cmd = re.sub(r'<<<?\s*\S+', '', cmd)
-    # Simple input redirection: < file
-    cmd = re.sub(r'<\s*\S+', '', cmd)
-    return cmd.strip()
-
-
-# Shell keywords that are structural, not commands to approve/deny.
-# These appear as segments after splitting on ;/newlines in for/while/if blocks.
-SHELL_KEYWORDS = frozenset({
-    'do', 'done', 'then', 'else', 'elif', 'fi', 'esac', '{', '}',
-    'break', 'continue',
-})
-
-# Keywords that can prefix a command when joined by ; (e.g. "do echo hello").
-# These should be stripped to expose the real command underneath.
-_KEYWORD_PREFIX_RE = re.compile(
-    r'^(do|then|else|elif)\s+'
-)
-
-# Patterns for shell compound statement headers (for, while, until, if, case).
-# These introduce control flow but aren't executable commands themselves.
-_COMPOUND_HEADER_RE = re.compile(
-    r'^(for|while|until|if|case|select)\b'
-)
-
-
-def strip_keyword_prefix(cmd):
-    """Strip leading shell keyword prefix from a command.
-
-    "do echo hello" -> "echo hello"
-    "then git status" -> "git status"
-    """
-    m = _KEYWORD_PREFIX_RE.match(cmd)
-    if m:
-        return cmd[m.end():]
-    return cmd
-
-
-def is_shell_structural(cmd):
-    """Return True if cmd is a shell keyword or compound-statement header."""
-    if cmd in SHELL_KEYWORDS:
-        return True
-    if _COMPOUND_HEADER_RE.match(cmd):
-        return True
-    return False
+    for words, raw, docs, level in scanner.segments:
+        analyze(words, raw, docs, level)
+    # Unterminated syntax adds one full analysis of each physical line, never recursive retries.
+    if scanner.incomplete and recover:
+        for line in command.splitlines():
+            result.extend(decompose_command(line, depth, recover=False))
+    return [cmd for cmd in result if cmd]
 
 
-def is_standalone_assignment(cmd):
-    """Return True if cmd is purely a variable assignment (no following command).
-
-    e.g. "result=$(curl ...)" or "FOO=bar" — these are not commands to check.
-    The subshell contents, if any, are extracted and checked separately.
-    """
-    m = re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', cmd)
-    if not m:
-        return False
-    # Check if the entire string is consumed by the assignment value
-    end = _skip_shell_value(cmd, m.end())
-    rest = cmd[end:].strip()
-    return rest == ''
-
-
-def normalize_command(cmd):
-    """Normalize a command by stripping env vars, redirections, and whitespace."""
-    cmd = cmd.strip()
-    if not cmd:
-        return cmd
-    cmd = strip_keyword_prefix(cmd)
-    cmd = strip_env_vars(cmd)
-    cmd = strip_redirections(cmd)
-    # Collapse multiple spaces
-    cmd = re.sub(r'\s+', ' ', cmd)
-    return cmd.strip()
-
-
-def decompose_command(command):
-    """Decompose a compound command into all individual sub-commands.
-
-    Splits on operators, extracts subshell contents, normalizes each.
-    Filters out shell structural keywords (for/do/done/etc.) and
-    standalone variable assignments (whose subshell contents are checked
-    separately).
-    Returns a list of normalized command strings.
-    """
-    all_commands = []
-
-    # Get top-level segments
-    segments = split_on_operators(command)
-
-    for seg in segments:
-        # Also decompose any subshells found in this segment
-        subshells = extract_subshells(seg)
-        for sub in subshells:
-            sub_segments = split_on_operators(sub)
-            for ss in sub_segments:
-                normalized = normalize_command(ss)
-                if normalized:
-                    all_commands.append(normalized)
-
-        # Normalize the top-level segment itself
-        normalized = normalize_command(seg)
-        if normalized:
-            all_commands.append(normalized)
-
-    # Filter out shell structural keywords and standalone assignments
-    return [
-        cmd for cmd in all_commands
-        if not is_shell_structural(cmd) and not is_standalone_assignment(cmd)
-    ]
+def guard_error(exc):
+    return 'deny', (
+        'Bash deny guard error ({}: {}). Remove the bash-deny-guard.py '
+        'PreToolUse hook from your settings to unwire it.'.format(type(exc).__name__, exc)
+    )
 
 
 def decide(command, settings):
-    """Make a permission decision for a compound command. DENY-ONLY.
-
-    Returns:
-        ("deny", reason) if any sub-command OR the full command matches
-                         a deny pattern
-        (None, None) otherwise — fall through to normal permission flow
-    """
-    if not command or not command.strip():
+    """Return a deny-list match or silence; errors with configured denies fail closed."""
+    denies = settings.get('permissions', {}).get('deny', [])
+    if not denies:
         return None, None
-
-    permissions = settings.get("permissions", {})
-    deny_patterns = parse_bash_patterns(permissions.get("deny", []))
-    if not deny_patterns:
+    try:
+        patterns = parse_bash_patterns(denies)
+        if not patterns or not command or not command.strip():
+            return None, None
+        flat = re.sub(r'\s+', ' ', command).strip()
+        if command_matches_pattern(flat, patterns):
+            return 'deny', 'Command matches deny pattern'
+        for cmd in decompose_command(command):
+            if command_matches_pattern(cmd, patterns):
+                return 'deny', "Sub-command '{}' matches deny pattern".format(cmd)
         return None, None
-
-    # Full-command check: pipe-shaped deny patterns ("curl * | sh") only
-    # match the undecomposed string.
-    flat = re.sub(r'\s+', ' ', command).strip()
-    if command_matches_pattern(flat, deny_patterns):
-        return "deny", f"Command matches deny pattern"
-
-    for cmd in decompose_command(command):
-        if command_matches_pattern(cmd, deny_patterns):
-            return "deny", f"Sub-command '{cmd}' matches deny pattern"
-
-    return None, None
+    except Exception as exc:
+        return guard_error(exc)
 
 
 _log_lines = []
@@ -587,7 +627,7 @@ def main():
 
     tool_name = input_data.get("tool_name", "")
     if tool_name != "Bash":
-        log(f"tool={tool_name}, not Bash — skipping")
+        log(f"tool={tool_name}, not Bash, skipping")
         sys.exit(0)
 
     command = input_data.get("tool_input", {}).get("command", "")
@@ -595,30 +635,36 @@ def main():
         log("empty command, skipping")
         sys.exit(0)
 
-    cmd_preview = command[:80].replace('\n', '\\n')
-    log(f"checking: {cmd_preview}{'...' if len(command) > 80 else ''}")
-
     settings_path = os.environ.get("CLAUDE_SETTINGS_PATH")
     settings = load_merged_settings(settings_path)
+    configured = bool(settings.get("permissions", {}).get("deny", []))
 
-    sub_commands = decompose_command(command)
-    log(f"sub-commands: {sub_commands[:5]}{'...' if len(sub_commands) > 5 else ''}")
-
-    decision, reason = decide(command, settings)
-
-    log(f"decision={decision or 'passthrough'} reason={reason or 'no pattern matched'}")
+    try:
+        cmd_preview = command[:80].replace('\n', '\\n')
+        log(f"checking: {cmd_preview}{'...' if len(command) > 80 else ''}")
+        if _verbose_enabled() and configured:
+            sub_commands = decompose_command(command)
+            log(f"sub-commands: {sub_commands[:5]}{'...' if len(sub_commands) > 5 else ''}")
+        decision, reason = decide(command, settings)
+        log(f"decision={decision or 'passthrough'} reason={reason or 'no pattern matched'}")
+        reason = _build_reason(reason) if decision == "deny" else reason
+    except Exception as exc:
+        if configured:
+            decision, reason = guard_error(exc)
+        else:
+            decision, reason = None, None
 
     if decision == "deny":
         output = {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": decision,
-                "permissionDecisionReason": _build_reason(reason),
+                "permissionDecisionReason": reason,
             }
         }
         json.dump(output, sys.stdout)
         sys.stdout.write("\n")
-    # else: silent exit — fall through to normal prompting
+    # Otherwise fall through silently to normal prompting.
 
 
 if __name__ == "__main__":

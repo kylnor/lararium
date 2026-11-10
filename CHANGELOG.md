@@ -15,6 +15,24 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 
 ---
 
+## v3.2.1 (2026-11-10): additive-doc
+
+The deny guard now reads Bash quoting, comments, heredocs and command boundaries together, then
+checks both the written command and its normalized command word. Paths, wrappers, conditionals
+and shell command strings no longer hide a matching deny. It remains deny-only, with no new
+settings or dependencies. A guard error with configured deny patterns now fails closed.
+
+In every version up to v3.2, `grep "a<<b" notes.txt` followed by a denied command,
+`python3 -c "print(1 << 2)"` followed by a denied command, and `/bin/rm -rf /important` were not
+denied by `Bash(rm:*)`. Quoted text could falsely open a heredoc, hiding later commands, and paths
+were not normalized. Existing installs remain affected until their installed hook is replaced.
+
+**To adopt:** copy `hooks/reference/bash-deny-guard.py` over the installed copy and read section i
+of `hooks/README.md` for the remaining static-inspection limits. Updating the template alone does
+not update your installed copy. No interview or npm update is needed.
+
+---
+
 ## v3.2 (2026-11-05): additive-doc
 
 The lead with no hands. `agents/defs/lead.md` is an optional Claude Code dispatcher for running
