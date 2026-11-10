@@ -139,10 +139,16 @@ unknown options check both readings. `command -v` and `command -V` are lookups. 
 arguments are never treated as fresh command starts. Shell `-c` strings, `eval`, `env -S` and
 `find` execution clauses are checked recursively, up to eight levels.
 
-Unterminated quoting or substitution adds one full analysis of each physical line, still matching
-only the owner's deny patterns. A guard error with configured deny patterns fails closed with a
-reason explaining how to remove the hook from settings. With no deny patterns, or unreadable
-settings, the hook stays silent.
+While deny patterns are configured, the guard denies what it cannot parse: a NUL byte, a carriage
+return, unterminated syntax in any scanner, or a heredoc whose exact terminator never appears.
+Unterminated syntax includes quotes, substitutions, parameter and arithmetic expansions, arithmetic
+commands, array initializers and `[[` conditionals, including in nested shell strings and expansions.
+A heredoc also fails if input ends or an enclosing substitution closes before the body newline.
+Here-strings have no terminator and are unaffected by the heredoc rule.
+The reason names the byte, syntax kind or heredoc delimiter in this form:
+`Command not analyzed: <what>. This guard denies what it cannot parse while deny patterns are configured.`
+A guard error with configured deny patterns fails closed with a reason explaining how to remove
+the hook from settings. With no deny patterns, or unreadable settings, the hook stays silent.
 
 This guard runs before Bash. It cannot resolve variables or computed command words such as `$CMD`
 or `$(echo rm)`, aliases or functions defined elsewhere (function bodies written in the command are

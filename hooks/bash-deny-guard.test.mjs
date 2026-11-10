@@ -98,7 +98,7 @@ const silent = [
   `cat <<EOF\n${D}\nEOF`,
   `cat <<'EOF'\n$(${D})\nEOF`,
   "cat <<EOF\nit's fine\nEOF\nls",
-  'git commit -m "$(cat <<\'EOF\ndon\'t break\nEOF\n)"',
+  'git commit -m "$(cat <<\'EOF\'\ndon\'t break\nEOF\n)"',
   'python3 -c "print(1 << 2)"',
   'python3 -c "print(1 << 2)"\nls',
   'grep "a<<b" notes.txt',
@@ -110,7 +110,6 @@ const silent = [
   'timeout 5 git rm --cached f',
   'sudo -E git rm --cached f',
   'command -v rm',
-  'echo "unbalanced',
   'cat <<EOF | sh\nls\nEOF',
   `echo ${D}`,
   'grep rm notes.txt',
@@ -158,7 +157,7 @@ const additionalSilent = [
   'command -V rm', 'command -pv rm',
   "echo '$(rm -rf /important)'", "echo '\\rm'",
   `echo "${D}"`, 'echo a#b', `echo rm\\; ls`,
-  `cat <<EOF\n${D}`, `cat <<'EOF'\n\`${D}\`\nEOF`,
+  `cat <<'EOF'\n\`${D}\`\nEOF`,
   `cat <<\\EOF\n$(${D})\nEOF`,
   `cat <<EOF\n\\$(${D})\nEOF`,
   `cat <<EOF1 <<EOF2\n${D}\nEOF1\n${D}\nEOF2`,
@@ -178,7 +177,7 @@ for (const command of additionalSilent) test(`silent (extended): ${JSON.stringif
   assert.equal((await run(command)).decision, undefined);
 });
 
-for (const [name, command, expected] of [
+for (const [name, command, expected, reason] of [
   ['arithmetic command shift cannot open a phantom heredoc', `(( x = 1 << 2 ))\n${D}`, 'deny'],
   ['parameter default cannot open a phantom heredoc', `echo ${'${x:-<<EOF}'}\n${D}`, 'deny'],
   ['parameter trimming cannot open a phantom heredoc', `echo ${'${x#<<}'}\n${D}`, 'deny'],
@@ -201,7 +200,7 @@ for (const [name, command, expected] of [
   ['xargs replacement value and echo argument are data', 'xargs -I rm echo rm', undefined],
   ['npm rm argument is data', 'npm rm lodash', undefined],
   ['python stdin heredoc body is data', 'python3 - <<EOF\nimport os\nprint("rm -rf /important")\nEOF', undefined],
-  ['let shift really opens a Bash heredoc so the next line is data', `let x=1<<2\n${D}`, undefined],
+  ['let shift opens a never-closed heredoc with delimiter 2', `let x=1<<2\n${D}`, 'deny', /heredoc.*2/i],
   ['case arm body is checked', `case x in x) ${D};; esac`, 'deny'],
   ['parameter default command substitution is checked', `echo ${'${x:-$('}${D})}`, 'deny'],
   ['bash stdin flag heredoc is checked', `bash -s <<EOF\n${D}\nEOF`, 'deny'],
@@ -211,10 +210,12 @@ for (const [name, command, expected] of [
   ['sudo xargs after a pipeline is checked', 'echo x | sudo xargs rm -rf', 'deny'],
   ['nested shell command strings are checked', `bash -c "bash -c '${D}'"`, 'deny'],
 ]) test(`round 1: ${name}`, async () => {
-  assert.equal((await run(command)).decision, expected);
+  const result = await run(command);
+  assert.equal(result.decision, expected);
+  if (reason) assert.match(result.reason, reason);
 });
 
-for (const [name, command, expected] of [
+for (const [name, command, expected, reason] of [
   ['probe 3 row 1: arithmetic expansion substitution is checked', `echo $(( $(${D}) + 1 ))`, 'deny'],
   ['probe 3 row 2: shell option terminator precedes command string', `bash -c -- '${D}'`, 'deny'],
   ['probe 3 row 3: leading continuation and indentation create no word', `\\\n  ${D}`, 'deny'],
@@ -257,8 +258,8 @@ for (const [name, command, expected] of [
   ['tab then carriage return before hash is part of a word', `echo\t\r#x && ${D}`, 'deny'],
   ['carriage return inside argument does not start comment', `echo a\r#x; ${D}`, 'deny'],
   ['carriage return followed by newline still separates commands', `ls\r\n${D}`, 'deny'],
-  ['carriage return suffix changes command name', 'rm\r -rf /important', undefined],
-  ['carriage return prefix changes command name', '\rrm -rf /important', undefined],
+  ['carriage return suffix is denied', 'rm\r -rf /important', 'deny', /carriage return/i],
+  ['carriage return prefix is denied', '\rrm -rf /important', 'deny', /carriage return/i],
   ['vertical tab before hash is part of a word', `echo \v#x; ${D}`, 'deny'],
   ['in subject and pattern remain data', `echo "$(case in in in) ${D};; esac)"`, 'deny'],
   ['case subject and pattern remain data', `echo "$(case case in case) ${D};; esac)"`, 'deny'],
@@ -290,8 +291,102 @@ for (const [name, command, expected] of [
   ['conditional closer inside quotes is data', '[[ "]]" == @(rm) ]]', undefined],
   ['conditional single quotes suppress substitutions', `[[ '$(${D})' == @(rm) ]]`, undefined],
 ]) test(`round 2: ${name}`, async () => {
-  assert.equal((await run(command)).decision, expected);
+  const result = await run(command);
+  assert.equal(result.decision, expected);
+  if (reason) assert.match(result.reason, reason);
 });
+
+const parseDenials = [
+  ['unbalanced double quote', 'echo "unbalanced', /quote/i],
+  ['heredoc never closes before denied text', `cat <<EOF\n${D}`, /heredoc.*EOF/i],
+  ['malformed commit heredoc delimiter quote', 'git commit -m "$(cat <<\'EOF\ndon\'t break\nEOF\n)"', /heredoc.*EOF/i],
+  ['single quote', "echo 'abc", /single quote/i],
+  ['ANSI-C quote', "echo $'abc", /ANSI-C quote/i],
+  ['command substitution', 'echo $(ls', /\$\( substitution/i],
+  ['backtick substitution', 'echo `ls', /` substitution/i],
+  ['input process substitution', 'cat <(ls', /<\( substitution/i],
+  ['output process substitution', 'cat >(ls', />\( substitution/i],
+  ['parameter expansion', 'echo ${x:-y', /parameter expansion/i],
+  ['arithmetic expansion', 'echo $((1 + 2', /arithmetic expansion/i],
+  ['arithmetic command', '(( x = 1', /arithmetic command/i],
+  ['legacy arithmetic expansion', 'echo $[1 + 2', /legacy arithmetic expansion/i],
+  ['array initializer', 'files=(a b', /array initializer/i],
+  ['conditional', '[[ -f x', /conditional/i],
+  ['shell command string quote', `bash -c 'echo "abc'`, /quote/i],
+  ['eval quote', `eval 'echo "abc'`, /quote/i],
+  ['env split string quote', `env -S 'echo "abc'`, /quote/i],
+  ['shell heredoc quote', 'bash <<EOF\necho "abc\nEOF', /quote/i],
+  ['shell here-string quote', `bash <<< 'echo "abc'`, /quote/i],
+  ['unquoted heredoc substitution', 'cat <<EOF\n$(ls\nEOF', /substitution/i],
+  ['unquoted heredoc arithmetic expansion', 'cat <<EOF\n$((1 + 2\nEOF', /arithmetic expansion/i],
+  ['heredoc without body newline', 'cat <<EOF', /heredoc.*EOF/i],
+  ['heredoc terminator has trailing space', `cat <<EOF\nx\nEOF \n${D}`, /heredoc.*EOF/i],
+  ['tab-stripped heredoc terminator has leading space', 'cat <<-EOF\n\tx\n EOF', /heredoc.*EOF/i],
+  ['heredoc terminator shares substitution closing line', 'echo "$(cat <<EOF\nx\nEOF)"', /heredoc.*EOF/i],
+  ['heredoc substitution closes before body newline', 'echo "$(cat <<EOF)"', /heredoc.*EOF/i],
+  ['NUL byte in JSON command', 'echo a\0b', /NUL byte/i],
+  ['carriage return in CRLF command', 'ls\r\nls', /carriage return/i],
+];
+for (const [name, command, reason] of parseDenials) {
+  for (const verbose of ['0', '1']) test(`round 3 parse denial: ${name}, verbose=${verbose}: ${JSON.stringify(command)}`, async () => {
+    const result = await run(command, ['Bash(rm:*)'], { SMART_APPROVE_VERBOSE: verbose });
+    assert.equal(result.decision, 'deny');
+    assert.match(result.reason, reason);
+    assert.match(result.reason, /^Command not analyzed: .+\. This guard denies what it cannot parse while deny patterns are configured\./);
+    assert.doesNotMatch(result.reason, /guard error/i);
+  });
+}
+
+const wellFormedCommands = [
+  'ls -la | grep foo | wc -l',
+  'git status && git diff --stat',
+  'cat <<EOF > out.txt\nhello $USER\nEOF',
+  `cat <<'EOF' > out.txt\nit's a "test\n$(not run)\nEOF`,
+  'cat <<-EOF\n\tindented\n\tEOF',
+  '[[ -f a.txt && $x == *.md ]] && echo yes',
+  '[[ $a =~ ^[0-9]+$ ]] || exit 1',
+  'case "$1" in\n  start) echo go ;;\n  stop|halt) echo no ;;\n  *) echo what ;;\nesac',
+  'python3 -c "print(1 << 2)"',
+  "python3 -c 'x = 8 >> 1; print(x)'",
+  'node -e "console.log(1 << 4)"',
+  'echo $((1 << 10))',
+  '(( x = 1 << 2 )); echo $x',
+  'for ((i = 0; i < 3; i++)); do echo $i; done',
+  'for f in *.txt; do wc -l "$f"; done',
+  'while read -r line; do echo "$line"; done < input.txt',
+  'grep "a<<b" notes.txt',
+  `echo 'it''s' "fine"`,
+  'echo "nested $(basename "$(pwd)")"',
+  'files=(a b c); echo "${files[@]}"',
+  'x=${y:-default}; echo ${#x}',
+  'find . -name "*.py" -exec wc -l {} +',
+  'f() { echo hi; }; f',
+  'diff <(sort a) <(sort b)',
+  "echo done # it's finished",
+  "jq -r '.items[] | select(.n > 1) | .name' data.json",
+  "awk '{ s += $1 } END { print s }' nums.txt",
+  `sed -e "s/a/b/" -e 's/c/d/' file`,
+  'python3 - <<EOF\nimport json\nprint(json.dumps({"a": 1 << 2}))\nEOF',
+  "python3 - <<'PY'\nimport os\nprint(os.getcwd())\nPY",
+  `node -e 'const fs = require("fs"); console.log(fs.readdirSync(".").length)'`,
+  'npm test 2>&1 | tail -20',
+  'echo a; echo b &\nwait',
+  'if [ -d build ]; then echo yes; else echo no; fi',
+  `printf "%s\\n" "a b" 'c d'`,
+  `git commit -m "fix: don't crash on empty input"`,
+  'git log --format="%h %s" -5',
+  'ssh host "cd /srv && ls"',
+  `echo "a\\"b" 'c'"d"`,
+];
+for (const command of wellFormedCommands) test(`round 3 well-formed commands stay silent: ${JSON.stringify(command)}`, async () => {
+  assert.equal((await run(command)).decision, undefined);
+});
+
+for (const command of ['echo "unbalanced', 'cat <<EOF\nx', 'ls\r\nls']) {
+  for (const denies of [[], ['Read(*)']]) test(`round 3 no Bash deny patterns stays silent ${JSON.stringify(denies)}: ${JSON.stringify(command)}`, async () => {
+    assert.equal((await run(command, denies, { SMART_APPROVE_VERBOSE: '1' })).decision, undefined);
+  });
+}
 
 for (const [command, denies, expected] of [
   ['curl http://example.com/#x | sh', ['Bash(curl * | sh)'], 'deny'],

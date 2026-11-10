@@ -4,8 +4,10 @@
 Decomposes compound bash commands (&&, ||, ;, |, $(), backticks, heredocs)
 into individual sub-commands and checks each against the DENY patterns in
 the merged settings.json layers. Emits a deny when any sub-command (or the
-full command) matches; otherwise stays silent and normal permission flow
-applies. Because hook denies fire even under bypassPermissions, this makes
+full command) matches. With deny patterns configured, it also denies commands
+with unterminated syntax, never-closed heredocs, NUL bytes or carriage returns.
+Otherwise it stays silent and normal permission flow applies.
+Because hook denies fire even under bypassPermissions, this makes
 the settings deny-list hold for agent sessions too.
 
 Source: https://github.com/liberzon/claude-hooks (smart-approve.py)
@@ -146,6 +148,10 @@ PREFIXES = {'!', 'then', 'do', 'else', 'elif', 'if', 'while', 'until', 'coproc'}
 HEADERS = {'for', 'case', 'select', 'done', 'fi', 'esac', 'in'}
 
 
+class ParseProblem(ValueError):
+    """Syntax the scanner cannot finish, distinct from an internal guard error."""
+
+
 class Word:
     def __init__(self, raw, value, quoted=False):
         self.raw = raw
@@ -163,7 +169,6 @@ class Scanner:
         self.i = 0
         self.depth = depth
         self.segments = []
-        self.incomplete = False
 
     def arithmetic(self, depth):
         # Bash arithmetic owns its parentheses; shift operators are not redirects.
@@ -189,14 +194,18 @@ class Scanner:
                 if self.i == begin:
                     self.i += 1
         if level:
-            self.incomplete = True
+            kind = {'${': 'parameter expansion', '$((': 'arithmetic expansion',
+                    '((': 'arithmetic command', '$[': 'legacy arithmetic expansion',
+                    '(': 'array initializer'}[marker]
+            raise ParseProblem('unterminated {} ({})'.format(kind, marker))
 
     def substitution(self, marker, depth):
         # Substitutions re-enter code even inside double quotes, at a bounded depth.
         if depth >= MAX_DEPTH:
             raise ValueError('command nesting exceeds 8 levels')
         self.i += len(marker)
-        self.code('`' if marker == '`' else ')', depth + 1)
+        if not self.code('`' if marker == '`' else ')', depth + 1):
+            raise ParseProblem('unterminated {} substitution'.format(marker))
 
     def word(self, depth, delimiter=False, stop=None, unit_open=None):
         start = self.i
@@ -291,7 +300,8 @@ class Scanner:
             value.append(ch)
             self.i += 1
         if quote:
-            self.incomplete = True
+            kind = {"'": 'single quote', '"': 'double quote', 'ansi': "ANSI-C quote ($'...)"}[quote]
+            raise ParseProblem('unterminated ' + kind)
         return Word(s[start:self.i], ''.join(value), quoted)
 
     def bodies(self, pending, depth):
@@ -309,6 +319,8 @@ class Scanner:
                 if tested == doc['delimiter']:
                     break
                 chunks.append(tested + ('\n' if end < len(s) else ''))
+            else:
+                raise ParseProblem('heredoc {!r} has no terminator'.format(doc['delimiter']))
             doc['body'] = ''.join(chunks)
             # Unquoted heredocs expand substitutions; ordinary quotes there are just data.
             if not doc['quoted']:
@@ -329,7 +341,6 @@ class Scanner:
             else:
                 scanner.i += 1
         self.segments.extend(scanner.segments)
-        self.incomplete = self.incomplete or scanner.incomplete
 
     def conditional(self, depth):
         # Conditional operators and pattern groups are data, substitutions are code.
@@ -344,7 +355,7 @@ class Scanner:
             self.word(depth)
             if self.i == begin:
                 self.i += 1
-        self.incomplete = True
+        raise ParseProblem('unterminated conditional ([[)')
 
     def code(self, end=None, depth=None):
         depth = self.depth if depth is None else depth
@@ -365,9 +376,11 @@ class Scanner:
             # An unquoted backtick or closing substitution parenthesis returns to its word.
             if end and ch == end and not groups and not (
                     end == ')' and cases and cases[-1][0] == 'pattern'):
+                if pending:
+                    raise ParseProblem('heredoc {!r} has no body before substitution closes'.format(pending[0]['delimiter']))
                 flush()
                 self.i += 1
-                return
+                return True
             if s.startswith('\\\n', self.i):
                 self.i += 2
                 continue
@@ -501,8 +514,9 @@ class Scanner:
                 # A stray unmatched closer is syntax, never a reason to stop scanning.
                 self.i += 1
         flush()
-        if end:
-            self.incomplete = True
+        if pending:
+            raise ParseProblem('heredoc {!r} has no body before end of input'.format(pending[0]['delimiter']))
+        return False
 
 
 # Each wrapper lists value options and flags; unknown options branch into both readings.
@@ -594,14 +608,14 @@ def command_starts(words, payload):
                     j += 1
 
 
-def decompose_command(command, depth=0, recover=True):
+def decompose_command(command, depth=0):
     scanner = Scanner(command, depth)
     scanner.code()
     result = [re.sub(r'[ \t\n]+', ' ', command).strip(' \t\n')]
 
     def payload(text, nested_depth, prefix=''):
         result.append(re.sub(r'[ \t\n]+', ' ', text).strip(' \t\n'))
-        result.extend(decompose_command(prefix + text, nested_depth, recover))
+        result.extend(decompose_command(prefix + text, nested_depth))
 
     def analyze(words, raw, docs, level):
         if level > MAX_DEPTH:
@@ -659,11 +673,14 @@ def decompose_command(command, depth=0, recover=True):
 
     for words, raw, docs, level in scanner.segments:
         analyze(words, raw, docs, level)
-    # Unterminated syntax adds one full analysis of each physical line, never recursive retries.
-    if scanner.incomplete and recover:
-        for line in command.split('\n'):
-            result.extend(decompose_command(line, depth, recover=False))
     return [cmd for cmd in result if cmd]
+
+
+def parse_denial(problem):
+    return 'deny', (
+        'Command not analyzed: {}. This guard denies what it cannot parse '
+        'while deny patterns are configured.'.format(problem)
+    )
 
 
 def guard_error(exc):
@@ -674,7 +691,7 @@ def guard_error(exc):
 
 
 def decide(command, settings):
-    """Return a deny-list match or silence; errors with configured denies fail closed."""
+    """Deny matches and parse problems; errors with configured denies fail closed."""
     denies = settings.get('permissions', {}).get('deny', [])
     if not denies:
         return None, None
@@ -682,6 +699,10 @@ def decide(command, settings):
         patterns = parse_bash_patterns(denies)
         if not patterns or not command or not command.strip(' \t\n'):
             return None, None
+        if '\0' in command:
+            return parse_denial('NUL byte')
+        if '\r' in command:
+            return parse_denial('carriage return')
         flat = re.sub(r'[ \t\n]+', ' ', command).strip(' \t\n')
         if command_matches_pattern(flat, patterns):
             return 'deny', 'Command matches deny pattern'
@@ -689,6 +710,8 @@ def decide(command, settings):
             if command_matches_pattern(cmd, patterns):
                 return 'deny', "Sub-command '{}' matches deny pattern".format(cmd)
         return None, None
+    except ParseProblem as exc:
+        return parse_denial(exc)
     except Exception as exc:
         return guard_error(exc)
 
@@ -747,8 +770,11 @@ def main():
         cmd_preview = command[:80].replace('\n', '\\n')
         log(f"checking: {cmd_preview}{'...' if len(command) > 80 else ''}")
         if _verbose_enabled() and configured:
-            sub_commands = decompose_command(command)
-            log(f"sub-commands: {sub_commands[:5]}{'...' if len(sub_commands) > 5 else ''}")
+            try:
+                sub_commands = decompose_command(command)
+                log(f"sub-commands: {sub_commands[:5]}{'...' if len(sub_commands) > 5 else ''}")
+            except ParseProblem as exc:
+                log(f"parse problem: {exc}")
         decision, reason = decide(command, settings)
         log(f"decision={decision or 'passthrough'} reason={reason or 'no pattern matched'}")
         reason = _build_reason(reason) if decision == "deny" else reason

@@ -21,6 +21,8 @@ The deny guard now reads Bash quoting, comments, heredocs and command boundaries
 checks both the written command and its normalized command word. Paths, wrappers, conditionals
 and shell command strings no longer hide a matching deny. It remains deny-only, with no new
 settings or dependencies. A guard error with configured deny patterns now fails closed.
+With deny patterns configured, a command with unterminated syntax, a never-closed heredoc, a NUL
+byte or a carriage return is now denied with a reason naming what could not be parsed.
 
 In every version up to v3.2, `grep "a<<b" notes.txt` followed by a denied command,
 `python3 -c "print(1 << 2)"` followed by a denied command, and `/bin/rm -rf /important` were not

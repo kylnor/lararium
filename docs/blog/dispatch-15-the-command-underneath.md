@@ -25,7 +25,8 @@ checks shell strings as commands. It removes spelling differences from the comma
 looks through wrappers such as `sudo`, `env` and `timeout`. It also keeps the written form, so
 an existing rule that names a path still works.
 
-It still answers only the question the owner asked: does this command match a deny pattern?
+With deny patterns configured, it also denies a command with unterminated syntax, a never-closed
+heredoc, a NUL byte or a carriage return, naming what it could not parse.
 Unknown programs do not acquire a new approval tier. A broken guard does acquire a visible
 failure: with deny patterns configured, an internal error returns a deny and instructions for
 unwiring the hook. Silence would make the owner's rule disappear.
