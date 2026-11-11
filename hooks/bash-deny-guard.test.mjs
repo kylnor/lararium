@@ -102,9 +102,9 @@ const mainControlRows = [
   `echo $(${D})`, `FOO=1 ${D}`, `if true; then ${D}; fi`,
 ].map(command => ({ command, deny: ['Bash(rm:*)'] }));
 const propertyRows = [...regressionRows, ...mainDocRows, ...mainControlRows];
-// Two slow, eleven recursion-window, three settings and five timing rows.
-const generatedPropertyRowCount = 2 + 11 + 3 + 5;
-test(`round 14 denial union property: ${propertyRows.length + generatedPropertyRowCount} rows`, async () => {
+// Two slow, eleven recursion-window, three settings, eleven timing and one silent heredoc row.
+const generatedPropertyRowCount = 2 + 11 + 3 + 11 + 1;
+test(`round 14 denial union and silent analysis property: ${propertyRows.length + generatedPropertyRowCount} rows`, async () => {
   const timings = await pythonCheck([
     'legacy_denials = 0',
     'for row in rows:',
@@ -140,15 +140,26 @@ test(`round 14 denial union property: ${propertyRows.length + generatedPropertyR
     'assert original_permissions["deny"] is original_denies',
     'generated_rows += 1',
     'import time',
-    'assert guard.PARSER_MAX_COMMAND_LENGTH == 20000',
-    'length_reason = "Command not analyzed: longer than 20,000 characters"',
+    'assert guard.PARSER_MAX_COMMAND_LENGTH == 300000',
+    'length_reason = "Command not analyzed: longer than 300,000 characters"',
+    'assert guard.PARSER_DEADLINE_SECONDS == 3.0',
+    'deadline_reason = "Command not analyzed: parser exceeded 3 seconds"',
+    'A = "sudo" + " -Z bash" * 100 + " <<EOF\\n" + "! " * 2000 + "x\\nEOF"',
     // Separators make D a command instead of an argument to echo.
     'timed_commands = [',
     '    ("echo ok; " + "rm" + " -rf x; " + "echo a " * 45714, 5, "legacy"),',
-    '    ("! " * 10001, 5, "length"),',
+    '    ("! " * 150001, 5, "length"),',
     '    ("echo a; " * 3000 + D, 5, "legacy"),',
-    '    ("! " * 10000, 30, "parser"),',
+    '    ("! " * 150000, 6, "parser"),',
     '    ("echo a; " * 2000 + D, 30, "legacy"),',
+    '    (A, 6, "deadline"),',
+    '    ("sudo" + " -Z bash" * 200 + " <<EOF\\n" + "! " * 3000 + "x\\nEOF", 6, "deadline"),',
+    '    ("sh <<A\\nsh <<B\\nsh <<C\\n$( " + "! " * 9900 + ")\\nC\\nB\\nA\\n", 6, "deadline"),',
+    '    ("command " + D + "\\n" + A, 6, "either"),',
+    // G: ambiguous wrapper options repeatedly copy and join argument suffixes.
+    '    ("sudo" + " -Z command" * 1700, 6, "deadline"),',
+    // H: timing and negation prefixes repeatedly walk the growing word list.
+    '    ("time " + "! " * 9990, 6, "deadline"),',
     ']',
     'parser_calls = []',
     'original_parser = guard.parser_decide',
@@ -162,20 +173,33 @@ test(`round 14 denial union property: ${propertyRows.length + generatedPropertyR
     '    verdict = guard.decide(command, settings)',
     '    elapsed = time.monotonic() - started',
     '    assert elapsed < bound, (len(command), elapsed, bound)',
-    '    if check != "parser":',
+    '    if check in ("legacy", "length"):',
     '        assert verdict[0] == "deny", (len(command), verdict)',
     '        assert parser_calls == [], len(command)',
     '    if check == "legacy":',
     '        assert verdict[1].startswith("Legacy check: "), verdict',
     '    elif check == "length":',
     '        assert verdict[1] == length_reason, verdict',
+    '    elif check == "deadline":',
+    '        assert len(command) <= guard.PARSER_MAX_COMMAND_LENGTH',
+    '        assert verdict == ("deny", deadline_reason), verdict',
+    '    elif check == "either":',
+    '        assert verdict[0] == "deny", verdict',
     '    else:',
     '        assert len(command) == guard.PARSER_MAX_COMMAND_LENGTH',
     '        assert parser_calls == [command]',
-    '        assert verdict == original_parser(command, settings), verdict',
+    '        assert verdict in ((None, None), ("deny", deadline_reason)), verdict',
     '    print("timing:", len(command), "characters,", round(elapsed, 3), "seconds")',
     '    generated_rows += 1',
     'guard.parser_decide = original_parser',
+    'command = "cat > notes.txt <<\'EOF\'\\n" + "line of ordinary text 12345\\n" * 1100 + "EOF\\n"',
+    'started = time.monotonic()',
+    'verdict = guard.decide(command, settings)',
+    'elapsed = time.monotonic() - started',
+    'assert verdict == (None, None), verdict',
+    'assert elapsed < 2, elapsed',
+    'print("silent heredoc:", len(command), "characters,", round(elapsed, 3), "seconds")',
+    'generated_rows += 1',
     'for command in slow_commands:',
     '    assert guard.decide(command, settings)[0] == "deny", command',
     '    generated_rows += 1',
@@ -198,6 +222,65 @@ test(`round 14 denial union property: ${propertyRows.length + generatedPropertyR
     `assert generated_rows == ${generatedPropertyRowCount}, generated_rows`,
   ].join('\n'), propertyRows, 120000);
   console.log(timings.trim());
+});
+
+test('round 14 parser deadline denies, clears state and leaves ordinary analysis intact', async () => {
+  await pythonCheck([
+    'guard.PARSER_DEADLINE_SECONDS = 0.05',
+    'assert not issubclass(guard.ParserDeadline, guard.ParseProblem)',
+    'settings = {"permissions": {"deny": ["Bash(rm:*)"]}}',
+    'slow = "sudo" + " -Z bash" * 100 + " <<EOF\\n" + "! " * 2000 + "x\\nEOF"',
+    'assert guard.decide(slow, settings) == ("deny", "Command not analyzed: parser exceeded 0.05 seconds")',
+    'assert guard._parser_deadline is None',
+    'assert guard.decide("command rm file", settings)[0] == "deny"',
+    'assert guard.decide("ls", settings) == (None, None)',
+    'assert guard.decompose_command("echo ok") == ["echo ok"] * 4',
+    'def fail(*args): raise AssertionError("scanner must not run")',
+    'guard.parser_decide = fail',
+    'verdict = guard.decide("rm file", settings)',
+    'assert verdict[0] == "deny" and verdict[1].startswith("Legacy check: "), verdict',
+    'for denies in ([], ["Read(*)"]):',
+    '    assert guard.decide(slow, {"permissions": {"deny": denies}}) == (None, None)',
+  ].join('\n'));
+});
+
+test('round 14 elapsed final parsing step cannot silently pass', async () => {
+  await pythonCheck([
+    'guard.PARSER_DEADLINE_SECONDS = 0.05',
+    'now = [0.0]',
+    'guard.time.monotonic = lambda: now[0]',
+    'def finish_late(*args):',
+    '    now[0] = 1.0',
+    '    return []',
+    'guard.decompose_command = finish_late',
+    'settings = {"permissions": {"deny": ["Bash(rm:*)"]}}',
+    'assert guard.parser_decide("ls", settings) == ("deny", "Command not analyzed: parser exceeded 0.05 seconds")',
+    'assert guard._parser_deadline is None',
+  ].join('\n'));
+});
+
+for (const fault of ['deadline', 'error']) test(`round 14 verbose decomposition ${fault} preserves a silent verdict`, async () => {
+  const harness = [
+    'import importlib.util, sys',
+    'spec = importlib.util.spec_from_file_location("guard", sys.argv[1])',
+    'guard = importlib.util.module_from_spec(spec)',
+    'spec.loader.exec_module(guard)',
+    'guard.PARSER_DEADLINE_SECONDS = 0.05',
+    ...(fault === 'error' ? [
+      'def fail(*args): raise RuntimeError("logging fixture")',
+      'guard.decompose_command = fail',
+    ] : []),
+    'guard.main()',
+    'assert guard._parser_deadline is None',
+    fault === 'deadline'
+      ? 'assert any("parser exceeded 0.05 seconds" in line for line in guard._log_lines), guard._log_lines'
+      : 'assert any("logging fixture" in line for line in guard._log_lines), guard._log_lines',
+  ].join('\n');
+  // Non-Bash denies leave decide silent but still exercise verbose decomposition.
+  const slow = 'sudo' + ' -Z bash'.repeat(100) + ' <<EOF\n' + '! '.repeat(2000) + 'x\nEOF';
+  const result = await run(slow, ['Read(*)'], { SMART_APPROVE_VERBOSE: '1' }, harness);
+  assert.equal(result.decision, undefined);
+  assert.ok(result.elapsed < 1000, result.elapsed);
 });
 
 test('round 14 docs and controls are denied by the frozen matcher', async () => {
@@ -245,7 +328,7 @@ test('round 14 legacy deny returns before the parser and absent Bash patterns sk
     'assert decision == "deny" and reason.startswith("Legacy check: "), (decision, reason)',
     'guard.legacy_decide = fail',
     'for denies in ([], ["Read(*)"]):',
-    '    for command in ("ls", "! " * 10001):',
+    '    for command in ("ls", "! " * 150001):',
     '        assert guard.decide(command, {"permissions": {"deny": denies}}) == (None, None)',
   ].join('\n'));
 });
@@ -283,22 +366,24 @@ test('round 14 echo repetitions without separators leave rm as an argument', asy
   await pythonCheck([
     'import time',
     'settings = {"permissions": {"deny": ["Bash(rm:*)"]}}',
-    'for count, bound in ((3000, 5), (2000, 30)):',
+    'for count, bound in ((45000, 5), (2000, 30)):',
     '    command = "echo a " * count + "rm -rf /important"',
     '    assert guard.legacy_decide(command, settings) == (None, None)',
     '    started = time.monotonic()',
     '    verdict = guard.decide(command, settings)',
     '    assert time.monotonic() - started < bound',
-    '    if count == 3000:',
-    '        assert verdict == ("deny", "Command not analyzed: longer than 20,000 characters")',
+    '    if count == 45000:',
+    '        assert len(command) > guard.PARSER_MAX_COMMAND_LENGTH',
+    '        assert verdict == ("deny", "Command not analyzed: longer than 300,000 characters")',
     '    else:',
+    '        assert len(command) < guard.PARSER_MAX_COMMAND_LENGTH',
     '        assert verdict == guard.parser_decide(command, settings) == (None, None)',
   ].join('\n'), [], 60000);
 });
 
 for (const [name, command, reason] of [
   ['legacy', 'echo ok; rm -rf x; ' + 'echo a '.repeat(45714), /^Legacy check: /],
-  ['length cap', '! '.repeat(10001), /^Command not analyzed: longer than 20,000 characters/],
+  ['length cap', '! '.repeat(150001), /^Command not analyzed: longer than 300,000 characters/],
 ]) test(`round 14 verbose main respects the ${name} verdict before scanner work`, async () => {
   const harness = [
     'import importlib.util, sys',
@@ -1420,12 +1505,12 @@ for (const [command, denies, expected] of [
 });
 
 for (const [name, command] of [
-  ['200,000 letter word', 'echo ' + 'a'.repeat(200000)],
-  ['20,000 quoted shift lines', 'echo "a<<b"\n'.repeat(20000)],
+  ['300,000 letter word', 'echo ' + 'a'.repeat(300000)],
+  ['30,000 quoted shift lines', 'echo "a<<b"\n'.repeat(30000)],
 ]) test(`performance: ${name} finishes under 2 seconds`, async () => {
   const result = await run(command);
   assert.equal(result.decision, 'deny');
-  assert.equal(result.reason, 'Command not analyzed: longer than 20,000 characters');
+  assert.equal(result.reason, 'Command not analyzed: longer than 300,000 characters');
   assert.ok(result.elapsed < 2000, `${result.elapsed.toFixed(1)} ms`);
   console.log(`# ${name}: ${result.elapsed.toFixed(1)} ms`);
 });

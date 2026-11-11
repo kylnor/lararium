@@ -30,9 +30,34 @@ import json
 import os
 import re
 import sys
+import time
 
 
-PARSER_MAX_COMMAND_LENGTH = 20000
+PARSER_MAX_COMMAND_LENGTH = 300000
+PARSER_DEADLINE_SECONDS = 3.0
+_parser_deadline = None
+
+
+class ParserDeadline(Exception):
+    """The scanner has exhausted its wall-clock budget."""
+
+
+def _check_parser_deadline():
+    if _parser_deadline is not None and time.monotonic() >= _parser_deadline:
+        raise ParserDeadline()
+
+
+def _parser_steps(items):
+    # Comprehensions and generator expressions need the same per-item checks.
+    for item in items:
+        _check_parser_deadline()
+        yield item
+
+
+def _parser_deadline_reason():
+    return 'Command not analyzed: parser exceeded {:g} seconds'.format(
+        PARSER_DEADLINE_SECONDS
+    )
 
 
 def load_settings(path=None):
@@ -105,8 +130,10 @@ def parse_bash_patterns(patterns):
     Returns a list of (prefix_string, glob_pattern) tuples.
     The glob_pattern is what fnmatch should match against.
     """
+    _check_parser_deadline()
     result = []
     for pat in patterns:
+        _check_parser_deadline()
         m = re.match(r'^Bash\((.+)\)$', pat)
         if not m:
             continue
@@ -135,7 +162,9 @@ def command_matches_pattern(cmd, patterns):
       - It equals the prefix exactly (bare command, no args), OR
       - fnmatch(cmd, glob_pattern) is True
     """
+    _check_parser_deadline()
     for prefix, glob_pat in patterns:
+        _check_parser_deadline()
         if cmd == prefix:
             return True
         if fnmatch.fnmatch(cmd, glob_pat):
@@ -155,13 +184,16 @@ REDIRECTION = re.compile(r'(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?(<<<|<<-|<<|&>>
 
 def after_prefixes(words):
     # Bash timing and control prefixes can precede each other and compound commands.
+    _check_parser_deadline()
     i = 0
     while i < len(words) and not words[i].quoted:
+        _check_parser_deadline()
         if words[i].value in PREFIXES:
             i += 1
         elif words[i].value == 'time':
             j = i + 1
             while j < len(words) and words[j].value in ('-p', '--'):
+                _check_parser_deadline()
                 j += 1
             if j < len(words) and words[j].value.startswith('-'):
                 break
@@ -186,6 +218,7 @@ class Scanner:
     """One forward cursor; heredoc queues belong to their code context."""
 
     def __init__(self, text, depth=0, boundary_only=False):
+        _check_parser_deadline()
         if depth > MAX_DEPTH:
             raise ValueError('command nesting exceeds 8 levels')
         self.text = text
@@ -197,6 +230,7 @@ class Scanner:
         self.boundary_only = boundary_only
 
     def substitution_end(self, opening, double_quoted=False):
+        _check_parser_deadline()
         if opening not in self.substitution_ends:
             scanner = Scanner(self.text, self.depth, boundary_only=True)
             scanner.i = opening
@@ -207,6 +241,7 @@ class Scanner:
         return self.substitution_ends[opening]
 
     def continuation(self, position, control=False):
+        _check_parser_deadline()
         s = self.text
         if not s.startswith('\\\n', position):
             return
@@ -221,12 +256,14 @@ class Scanner:
     def parenthesis_end(self, opening):
         # Locate the inner close without interpreting words as commands. Remember
         # nested closes so arithmetic expansions do not repeat this lookahead.
+        _check_parser_deadline()
         if opening in self.parenthesis_ends:
             return self.parenthesis_ends[opening]
         s = self.text
         stack = [[opening, ')', None]]
         i = opening + 1
         while i < len(s):
+            _check_parser_deadline()
             frame = stack[-1]
             quote = frame[2]
             ch = s[i]
@@ -272,11 +309,13 @@ class Scanner:
                     stack.append([i, ')' if ch == '(' else ']', None])
             i += 1
         for position, close, quote in stack:
+            _check_parser_deadline()
             if close == ')':
                 self.parenthesis_ends[position] = None
         return None
 
     def arithmetic(self, depth, marker='$(('):
+        _check_parser_deadline()
         start = self.i
         close = self.parenthesis_end(start + len(marker) - 1)
         if close is not None and not self.text.startswith(')', close + 1):
@@ -291,11 +330,13 @@ class Scanner:
     def data_unit(self, marker, close, depth, scan_quoted=False):
         # Expansions, arithmetic commands and array words own their matching close.
         # Their operators are data; word() still discovers executable substitutions.
+        _check_parser_deadline()
         self.i += len(marker)
         # Bare braces are parameter data; word() recurses into actual expansions.
         opening = None if marker == '${' else marker[-1]
         level = 2 if marker in ('((', '$((') else 1
         while self.i < len(self.text) and level:
+            _check_parser_deadline()
             ch = self.text[self.i]
             if ch == close:
                 level -= 1
@@ -319,6 +360,7 @@ class Scanner:
 
     def substitution(self, marker, depth, double_quoted=False):
         # Substitutions re-enter code even inside double quotes, at a bounded depth.
+        _check_parser_deadline()
         if depth >= MAX_DEPTH:
             raise ValueError('command nesting exceeds 8 levels')
         start = self.i
@@ -329,6 +371,7 @@ class Scanner:
         if marker == '`':
             body = []
             while self.i < len(self.text):
+                _check_parser_deadline()
                 ch = self.text[self.i]
                 self.i += 1
                 if ch == '`':
@@ -352,6 +395,7 @@ class Scanner:
 
     def word(self, depth, delimiter=False, stop=None, unit_open=None,
              scan_quoted=False, array_item=False, regex=False, pattern=False, arithmetic=False):
+        _check_parser_deadline()
         start = self.i
         value = []
         quoted = False
@@ -364,6 +408,7 @@ class Scanner:
         quote_start = None
         pattern_level = 0
         while self.i < len(s):
+            _check_parser_deadline()
             ch = s[self.i]
             if delimiter and s[self.i:self.i + 2] in ('?(', '*(', '+(', '@(', '!('):
                 raise ParseProblem('heredoc delimiter containing an extended glob operator')
@@ -499,10 +544,13 @@ class Scanner:
 
     def bodies(self, pending, depth, substitution=False):
         # Bash reads queued heredocs after newline, in order, with exact delimiter lines.
+        _check_parser_deadline()
         s = self.text
         for doc in pending:
+            _check_parser_deadline()
             chunks = []
             while self.i < len(s):
+                _check_parser_deadline()
                 end = s.find('\n', self.i)
                 if end < 0:
                     end = len(s)
@@ -510,6 +558,7 @@ class Scanner:
                 self.i = min(end + 1, len(s))
                 while (not doc['quoted'] and end < len(s) and
                        (len(line) - len(line.rstrip('\\'))) % 2):
+                    _check_parser_deadline()
                     next_end = s.find('\n', self.i)
                     if next_end < 0:
                         next_end = len(s)
@@ -530,8 +579,10 @@ class Scanner:
                 self.expansions(doc['body'], depth)
 
     def expansions(self, body, depth):
+        _check_parser_deadline()
         scanner = Scanner(body, depth, self.boundary_only)
         while scanner.i < len(body):
+            _check_parser_deadline()
             ch = body[scanner.i]
             if ch == '\\' and scanner.i + 1 < len(body) and body[scanner.i + 1] in '\\$`\n':
                 scanner.i += 2
@@ -551,10 +602,12 @@ class Scanner:
 
     def conditional(self, depth, pending):
         # Conditional operators and pattern groups are data, substitutions are code.
+        _check_parser_deadline()
         self.i += 2
         s = self.text
         state = 'term'
         while self.i < len(s):
+            _check_parser_deadline()
             if s[self.i] == '\n' and pending:
                 raise ParseProblem('heredoc body starts inside conditional ([[)')
             if s[self.i] in ' \t\n' or s.startswith('\\\n', self.i):
@@ -597,6 +650,7 @@ class Scanner:
         raise ParseProblem('unterminated conditional ([[)')
 
     def code(self, end=None, depth=None):
+        _check_parser_deadline()
         depth = self.depth if depth is None else depth
         s = self.text
         words, raw, docs, pending = [], [], [], []
@@ -604,6 +658,7 @@ class Scanner:
         cases = []
 
         def flush():
+            _check_parser_deadline()
             if not self.boundary_only and (raw or words) and not (cases and cases[-1][0] != 'body'):
                 self.segments.append((words[:], ' '.join(raw), docs[:], depth))
             words.clear()
@@ -611,6 +666,7 @@ class Scanner:
             docs.clear()
 
         while self.i < len(s):
+            _check_parser_deadline()
             ch = s[self.i]
             # An unquoted backtick or closing substitution parenthesis returns to its word.
             if end and ch == end and not groups and not (
@@ -685,9 +741,9 @@ class Scanner:
             if ch in '{}' and (
                     self.i + 1 == len(s) or s[self.i + 1] in ' \t\n;)'):
                 header = after_prefixes(words)
-                named_group = (ch == '{' and not any(w.quoted for w in header) and (
+                named_group = (ch == '{' and not any(w.quoted for w in _parser_steps(header)) and (
                     (len(header) == 2 and header[0].value == 'function') or
-                    (len(header) == 1 and any(w.value == 'coproc' and not w.quoted for w in words))))
+                    (len(header) == 1 and any(w.value == 'coproc' and not w.quoted for w in _parser_steps(words)))))
                 if not header or named_group:
                     if named_group:
                         words.clear()
@@ -702,6 +758,7 @@ class Scanner:
                 raw.append(m.group(0))
                 self.i += len(m.group(0))
                 while self.i < len(s):
+                    _check_parser_deadline()
                     if s[self.i] in ' \t':
                         self.i += 1
                     elif s.startswith('\\\n', self.i):
@@ -743,6 +800,7 @@ class Scanner:
                         if phase == 'pattern' and command_position:
                             look = self.i
                             while look < len(s):
+                                _check_parser_deadline()
                                 if s[look] in ' \t\n':
                                     look += 1
                                 elif s.startswith('\\\n', look):
@@ -795,10 +853,12 @@ WRAPPERS = {
 
 def extglob_option(value):
     # Computed option names cannot establish that extended globbing stays off.
+    _check_parser_deadline()
     return value == 'extglob' or any(c in value for c in '$`*?[{}')
 
 
 def check_bashopts(value):
+    _check_parser_deadline()
     assignment = re.match(r'^BASHOPTS\+?=(.*)$', value, re.S)
     if assignment and ('extglob' in assignment[1] or extglob_option(assignment[1])):
         raise ParseProblem('extglob turned on')
@@ -806,11 +866,14 @@ def check_bashopts(value):
 
 def command_starts(words, payload):
     """Yield real command positions without walking their ordinary arguments."""
+    _check_parser_deadline()
     todo = [0]
     visited = set()
     while todo:
+        _check_parser_deadline()
         i = todo.pop()
         while i < len(words) and ASSIGNMENT.match(words[i].value):
+            _check_parser_deadline()
             check_bashopts(words[i].value)
             i += 1
         if i >= len(words) or i in visited:
@@ -824,8 +887,10 @@ def command_starts(words, payload):
         options = [i + 1]
         seen = set()
         while options:
+            _check_parser_deadline()
             j = options.pop()
             while j < len(words):
+                _check_parser_deadline()
                 if j in seen:
                     break
                 seen.add(j)
@@ -838,7 +903,7 @@ def command_starts(words, payload):
                         text = words[j].value if j < len(words) else ''
                     else:
                         text = arg.split('=', 1)[1] if '=' in arg else arg[2:]
-                    payload(text + ' ' + ' '.join(w.raw for w in words[j + 1:]), 'env ')
+                    payload(text + ' ' + ' '.join(w.raw for w in _parser_steps(words[j + 1:])), 'env ')
                     break
                 if arg == '--':
                     todo.append(j + (2 if base == 'timeout' else 1))
@@ -861,9 +926,9 @@ def command_starts(words, payload):
                     j += 1 if '=' in arg else 2
                 elif opt in flags:
                     j += 1
-                elif not arg.startswith('--') and any(arg.startswith(o) and len(arg) > len(o) for o in takes if o.startswith('-') and not o.startswith('--')):
+                elif not arg.startswith('--') and any(arg.startswith(o) and len(arg) > len(o) for o in _parser_steps(takes) if o.startswith('-') and not o.startswith('--')):
                     j += 1
-                elif not arg.startswith('--') and all('-' + c in flags for c in arg[1:]):
+                elif not arg.startswith('--') and all('-' + c in flags for c in _parser_steps(arg[1:])):
                     j += 1
                 else:
                     # Unknown option: the next word may be its value or its command.
@@ -872,15 +937,18 @@ def command_starts(words, payload):
 
 
 def decompose_command(command, depth=0):
+    _check_parser_deadline()
     scanner = Scanner(command, depth)
     scanner.code()
     result = [re.sub(r'[ \t\n]+', ' ', command).strip(' \t\n')]
 
     def payload(text, nested_depth, prefix=''):
+        _check_parser_deadline()
         result.append(re.sub(r'[ \t\n]+', ' ', text).strip(' \t\n'))
         result.extend(decompose_command(prefix + text, nested_depth))
 
     def analyze(words, raw, docs, level):
+        _check_parser_deadline()
         if level > MAX_DEPTH:
             raise ValueError('command nesting exceeds 8 levels')
         # Reserved prefixes expose the following command; loop and case headers do not run it.
@@ -889,30 +957,34 @@ def decompose_command(command, depth=0):
             return
         result.append(raw.strip(' \t\n'))
         for i in command_starts(words, lambda text, prefix='': payload(text, level + 1, prefix)):
+            _check_parser_deadline()
             word = words[i]
             base = os.path.basename(word.value)
             args = words[i + 1:]
-            result.append(' '.join([word.raw] + [w.raw for w in args]))
-            result.append(' '.join([base] + [w.raw for w in args]))
+            result.append(' '.join([word.raw] + [w.raw for w in _parser_steps(args)]))
+            result.append(' '.join([base] + [w.raw for w in _parser_steps(args)]))
             if base == 'shopt':
                 k = 0
                 setting = False
                 while k < len(args) and args[k].value.startswith('-'):
+                    _check_parser_deadline()
                     flag = args[k].value
                     k += 1
                     if flag == '--':
                         break
                     setting = setting or 's' in flag[1:]
-                if setting and any(extglob_option(arg.value) for arg in args[k:]):
+                if setting and any(extglob_option(arg.value) for arg in _parser_steps(args[k:])):
                     raise ParseProblem('extglob turned on')
             elif base in ('export', 'declare', 'typeset', 'readonly', 'local'):
                 for arg in args:
+                    _check_parser_deadline()
                     check_bashopts(arg.value)
             # Shell -c consumes one command string; eval joins all its arguments as code.
             if base in SHELLS:
                 k = 0
                 command_string = False
                 while k < len(args):
+                    _check_parser_deadline()
                     arg = args[k]
                     if arg.value == '--':
                         k += 1
@@ -935,26 +1007,30 @@ def decompose_command(command, depth=0):
                 if command_string and k < len(args):
                     payload(args[k].value, level + 1)
                 for doc in docs:
+                    _check_parser_deadline()
                     payload(doc['body'], level + 1)
             elif base == 'eval':
                 if args and args[0].value == '--':
                     args = args[1:]
-                payload(' '.join(w.value for w in args), level + 1)
+                payload(' '.join(w.value for w in _parser_steps(args)), level + 1)
             elif base == 'find':
                 k = 0
                 while k < len(args):
+                    _check_parser_deadline()
                     if args[k].value in ('-exec', '-execdir', '-ok', '-okdir'):
                         start = k + 1
                         k = start
                         while k < len(args) and args[k].value not in (';', '+'):
+                            _check_parser_deadline()
                             k += 1
                         sub = args[start:k]
-                        analyze(sub, ' '.join(w.raw for w in sub), [], level + 1)
+                        analyze(sub, ' '.join(w.raw for w in _parser_steps(sub)), [], level + 1)
                     k += 1
 
     for words, raw, docs, level in scanner.segments:
+        _check_parser_deadline()
         analyze(words, raw, docs, level)
-    return [cmd for cmd in result if cmd]
+    return [cmd for cmd in _parser_steps(result) if cmd]
 
 
 def parse_denial(problem):
@@ -973,12 +1049,18 @@ def guard_error(exc):
 
 def parser_decide(command, settings):
     """Deny matches and parse problems; errors with configured denies fail closed."""
+    global _parser_deadline
     denies = settings.get('permissions', {}).get('deny', [])
     if not denies:
         return None, None
+    _parser_deadline = time.monotonic() + PARSER_DEADLINE_SECONDS
     try:
         patterns = parse_bash_patterns(denies)
-        if not patterns or not command or not command.strip(' \t\n'):
+        if not patterns:
+            return None, None
+        _check_parser_deadline()
+        if not command or not command.strip(' \t\n'):
+            _check_parser_deadline()
             return None, None
         if '\0' in command:
             return parse_denial('NUL byte')
@@ -988,13 +1070,19 @@ def parser_decide(command, settings):
         if command_matches_pattern(flat, patterns):
             return 'deny', 'Command matches deny pattern'
         for cmd in decompose_command(command):
+            _check_parser_deadline()
             if command_matches_pattern(cmd, patterns):
                 return 'deny', "Sub-command '{}' matches deny pattern".format(cmd)
+        _check_parser_deadline()
         return None, None
+    except ParserDeadline:
+        return 'deny', _parser_deadline_reason()
     except ParseProblem as exc:
         return parse_denial(exc)
     except Exception as exc:
         return guard_error(exc)
+    finally:
+        _parser_deadline = None
 
 
 # Keep this matcher independent of the scanner, copied from origin/main's matcher.
@@ -1526,6 +1614,7 @@ def _build_reason(reason):
 
 
 def main():
+    global _parser_deadline
     try:
         input_data = json.load(sys.stdin)
     except (json.JSONDecodeError, EOFError):
@@ -1552,11 +1641,17 @@ def main():
         decision, reason = decide(command, settings)
         if (_verbose_enabled() and configured and decision != 'deny'
                 and len(command) <= PARSER_MAX_COMMAND_LENGTH):
+            _parser_deadline = time.monotonic() + PARSER_DEADLINE_SECONDS
             try:
                 sub_commands = decompose_command(command)
+                _check_parser_deadline()
                 log(f"sub-commands: {sub_commands[:5]}{'...' if len(sub_commands) > 5 else ''}")
-            except ParseProblem as exc:
-                log(f"parse problem: {exc}")
+            except ParserDeadline:
+                log(_parser_deadline_reason())
+            except Exception as exc:
+                log(f"decomposition unavailable: {type(exc).__name__}: {exc}")
+            finally:
+                _parser_deadline = None
         log(f"decision={decision or 'passthrough'} reason={reason or 'no pattern matched'}")
         reason = _build_reason(reason) if decision == "deny" else reason
     except Exception as exc:

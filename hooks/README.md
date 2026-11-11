@@ -165,16 +165,22 @@ the hook from settings. With no deny patterns, or unreadable settings, the hook 
 Two checks run in order: an unchanged copy of the previous release's matcher first, then the
 parser if the first check stays silent. Either check can deny. Denials from the first start with
 `Legacy check: `; parser denials keep the parser's reasons. If either check fails to complete,
-the command is denied. Every command the previous release denied is still denied, and because
-the previous matcher runs first and unchanged, its denial arrives no later than before.
+the command is denied. Every command the previous release denied is still denied. No parser
+work runs before a denial from the first check.
 The legacy check runs with no time limit, as in the previous release.
-The parser then adds time: with Bash deny patterns configured, a command longer than 20,000
-characters that the first check leaves silent is denied as not analyzed without running the parser.
-At 20,000 characters, the parser's worst measured input (repeated `! `) took about 3 seconds
-on the development machine; other measured shapes took 1.5 seconds or less. Parser time grows
-with the square of the length.
-The property test checked 1,450 rows: 1,449 must-deny rows (0 silent), plus one scanner parity
-row at the length cap.
+This is unchanged from that release, so an input that made its matcher slow (for example a single
+run of tens of thousands of digits) is just as slow here.
+With Bash deny patterns configured, a command longer than 300,000 characters that the first
+check leaves silent is denied without running the parser. A command the parser has not finished
+within 3 seconds is also denied.
+On the development machine, a 4,816-character input that previously kept the parser busy for
+about 13 seconds is now denied after about 3.00 seconds.
+With the cap at 300,000, 228 measured rows up to 299,990 characters all returned from the parser
+within about 3.8 seconds on the development machine. The deadline is checked between parsing
+steps, so this is a measured figure, not a guarantee against the hook timeout.
+The property test checked 1,457 rows: 1,455 must-deny rows (0 silent), one timed row at the length
+cap that may stay silent or receive the deadline denial, and one ordinary long heredoc write
+that stays silent.
 The template's sample configuration sets `"timeout": 10` for this hook.
 [Claude Code's hooks documentation](https://code.claude.com/docs/en/hooks#timeouts) says a
 `PreToolUse` command hook that reaches its timeout is canceled and does not block the tool call
@@ -196,10 +202,13 @@ to slip past. It is not a sandbox or a security boundary: a hand-written scanner
 of Bash, and review of this hook kept finding new shapes that reached a denied command. Pair it
 with real isolation, such as `lab/`, for untrusted input.
 
-**Known over-denials:** with Bash deny patterns configured, a command over 20,000 characters
-is denied even when Bash would run nothing denied. A backslash-newline touching `|`, `;`, `&`
-or another operator character inside double quotes, or directly after `;;` in a `case` body,
-is denied although Bash runs nothing denied. Put the line break elsewhere.
+**Known over-denials:** the cap is set an order of magnitude above ordinary long heredoc writes.
+A write of about 31,000 characters is analyzed in milliseconds and is not denied by the cap.
+With Bash deny patterns configured, a command over 300,000 characters, or one the parser cannot
+finish in 3 seconds, is denied even when Bash would run nothing denied.
+A backslash-newline touching `|`, `;`, `&` or another operator character inside double quotes,
+or directly after `;;` in a `case` body, is denied although Bash runs nothing denied. Put the
+line break elsewhere.
 `[[ x =~ $$$@(x) ]]` style regex operands are also denied as not analyzed: a `$$` directly
 before `@(`, `?(`, `*(`, `+(` or `!(` in arithmetic or a `=~` operand can trigger the
 conservative extended-glob check.
