@@ -24,6 +24,9 @@ with no new settings or dependencies. A guard error with configured deny pattern
 With deny patterns configured, a command with unterminated syntax, a never-closed heredoc, a NUL
 byte or a carriage return is now denied with a reason naming what could not be parsed.
 Also not analyzed: parentheses in arithmetic parameter expansions, process substitution text in arithmetic, expansions in heredoc delimiters, unsupported backslash-newlines touching operators, and extended glob operators outside arithmetic and conditional regex operands.
+An unquoted extended glob opener is denied even after `$` or `$$`; special parameters without an adjacent `(`, double-quoted text and heredoc body text keep their existing handling.
+Commands that turn `extglob` on, including computed option names or `BASHOPTS` values that could enable it, are denied as not analyzed.
+Known over-denials: backslash-newlines touching operator characters inside double quotes or directly after `;;` in a `case` body are denied although Bash runs nothing denied; put the line break elsewhere.
 Conditional regex groups preserve word boundaries; quoted substitutions in parameters, arithmetic and subscripted words are checked as code.
 
 In every version up to v3.2, `grep "a<<b" notes.txt` followed by a denied command,

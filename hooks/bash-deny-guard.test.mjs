@@ -40,6 +40,252 @@ async function run(command, denies = ['Bash(rm:*)'], extra = {}, harness = null)
 }
 
 const D = 'rm -rf /important';
+for (const operator of ['@', '?', '*', '!']) {
+  for (const command of [
+    `echo $${operator}(a|#); ${D}`,
+    `echo $!$${operator}(a|#); ${D}`,
+    `echo \\\\$${operator}(a|#); ${D}`,
+    `echo $$$?$${operator}(a|#); ${D}`,
+    `echo $*$${operator}(a|#); ${D}`,
+    `case x in $${operator}(a|#)) :;; esac; ${D}`,
+    `for i in $${operator}(a|#); do :; done; ${D}`,
+    `f() { echo $${operator}(a|#); }; ${D}`,
+    `x=$${operator}(a|#); ${D}`,
+    `echo $(echo $${operator}(a|#); ${D})`,
+    `shopt -s extglob\necho $${operator}(a|#); ${D}`,
+    `echo $${operator}(ls)`,
+  ]) test(`round 13 dollar before glob denial: ${JSON.stringify(command)}`, async () => {
+    const result = await run(command);
+    assert.equal(result.decision, 'deny');
+    assert.match(result.reason, /^Command not analyzed: .*extended glob operator/);
+  });
+}
+
+for (const command of [
+  'echo $?', 'echo $*', 'echo $@', 'cmd "$@"', 'echo $!', 'wait $!', 'echo $$',
+  'echo $?; (ls)', 'echo $? && (ls)',
+  ...['?', '*', '@', '!', '$'].flatMap(parameter => [
+    `echo "$${parameter}(x)"`,
+    `cat <<EOF\n$${parameter}(data)\nEOF`,
+    `echo $(( $${parameter}(1) ))`,
+  ]),
+]) test(`round 13 special parameter neighbour: ${JSON.stringify(command)}`, async () => {
+  assert.equal((await run(command)).decision, undefined);
+});
+
+for (const command of [
+  `shopt -s extglob\necho $$@(a|#); ${D}`,
+  `shopt -s extglob\necho $$?(a|#); ${D}`,
+  `shopt -s extglob\necho $$*(a|#); ${D}`,
+  `shopt -s extglob\necho $$!(a|#); ${D}`,
+  `shopt -s extglob\necho $$+(a|#); ${D}`,
+  `shopt -s extglob\ncat <<@(E)\n@(E)\n${D}\n@\n`,
+  `shopt -s extglob\ncat <<!(E)\n!(E)\n${D}\n!\n`,
+  `shopt -s extglob\ncat <<?(E)\n?(E)\n${D}\n?\n`,
+  `shopt -s extglob\ncat <<+(E)\n+(E)\n${D}\n+\n`,
+  `shopt -s extglob\ncat <<*(E)\n*(E)\n${D}\n*\n`,
+  `echo $$@(a|#); ${D}`,
+  `echo $$$$@(a|#); ${D}`,
+  `echo $$$@(a|#); ${D}`,
+  `cat <<@(E)\n@(E)\n${D}\n@\n`,
+  `shopt -s extglob; ${D}`,
+  `shopt -s extglob\n${D}`,
+  `shopt -s nullglob extglob\n${D}`,
+  `shopt -s extglob nullglob\n${D}`,
+  `shopt -qs extglob\n${D}`,
+  `shopt -s "extglob"\n${D}`,
+  `shopt -s ext''glob\n${D}`,
+  `shopt -s e\\xtglob\n${D}`,
+  `shopt -s $o\n${D}`,
+  `shopt -s "$o"\n${D}`,
+  `shopt -s $(echo extglob)\n${D}`,
+  `shopt -s ext*\n${D}`,
+  `shopt -s {extglob,nullglob}\n${D}`,
+  `builtin shopt -s extglob\n${D}`,
+  `command shopt -s extglob\n${D}`,
+  `\\shopt -s extglob\n${D}`,
+  `"shopt" -s extglob\n${D}`,
+  `true && shopt -s extglob\n${D}`,
+  `eval "shopt -s extglob"\n${D}`,
+  `eval 'shopt -s extglob'\n${D}`,
+  `bash -O extglob -c '${D}'`,
+  `bash -O extglob -c 'echo $$@(a|#); ${D}'`,
+  `bash -Oextglob -c '${D}'`,
+  `bash -O nullglob -O extglob -c '${D}'`,
+  `bash -O $o -c '${D}'`,
+  `BASHOPTS=extglob bash -c '${D}'`,
+  `env BASHOPTS=extglob bash -c '${D}'`,
+  `BASHOPTS=nullglob:extglob bash -c '${D}'`,
+  `export BASHOPTS=extglob; bash -c '${D}'`,
+  `BASHOPTS=$o bash -c '${D}'`,
+  `f() { shopt -s extglob; }; f\n${D}`,
+  `(shopt -s extglob)\n${D}`,
+  `x=$(shopt -s extglob)\n${D}`,
+  'shopt -s extglob',
+  'shopt -s extglob\nls',
+  'shopt -s nullglob extglob; ls *.txt',
+  "bash -O extglob -c 'ls'",
+  'shopt -s $opts',
+]) test(`round 13 denial: ${JSON.stringify(command)}`, async () => {
+  const result = await run(command);
+  assert.equal(result.decision, 'deny');
+  assert.match(result.reason, /^Command not analyzed:/);
+});
+
+for (const command of [
+  'shopt', 'shopt -p', 'shopt -s', 'shopt -u', 'shopt -q extglob', 'shopt -p extglob', 'shopt extglob',
+  'shopt -s nullglob', 'shopt -s nullglob dotglob', 'shopt -u extglob', 'shopt -u extglob nullglob',
+  'shopt -s globstar; ls **/*.py', 'shopt -q nullglob && echo on', 'shopt -po pipefail',
+  'shopt -s nullglob; for f in *.txt; do echo "$f"; done; shopt -u nullglob',
+  "bash -c 'ls'", "bash -O nullglob -c 'ls'", "bash +O extglob -c 'ls'", 'set -o pipefail', 'set -euo pipefail',
+  'echo $$', 'echo "pid $$"', 'echo $$ > pidfile', 'kill -0 $$', 'echo $$; echo $?', 'echo "$$@"', 'f=/tmp/x.$$; echo $f',
+  'cat <<EOF\nshopt -s extglob is only text here\nEOF',
+  "echo 'shopt -s extglob'", 'echo "shopt -s extglob"', '# shopt -s extglob\nls',
+  'grep -r extglob .', 'man bash | grep -n extglob', 'git log --grep=extglob',
+]) test(`round 13 silent: ${JSON.stringify(command)}`, async () => {
+  assert.equal((await run(command)).decision, undefined);
+});
+
+for (const command of [
+  'shopt -s -- extglob',
+  'shopt -s -q extglob',
+  'shopt -sq extglob',
+  'shopt -s extglob; shopt -u extglob',
+  'shopt -s "ext*"',
+  'shopt -s ext?lob',
+  'shopt -s [e]xtglob',
+  'shopt -s `printf extglob`',
+  "shopt -s $'extglob'",
+  "shopt -s $'ext\\147lob'",
+  'shopt -s ext{glob,}',
+  'command -p builtin shopt -s extglob',
+  'env -i shopt -s extglob',
+  'sudo -u guest shopt -s extglob',
+  'timeout 5 shopt -s extglob',
+  'env -S "shopt -s extglob"',
+  'env --split-string="shopt -s extglob"',
+  '{ shopt -s extglob; }',
+  '(shopt -s extglob)',
+  'f() { shopt -s extglob; }',
+  'function f { shopt -s extglob; }',
+  'echo $(shopt -s extglob)',
+  'echo `shopt -s extglob`',
+  'cat <(shopt -s extglob)',
+  'cat >("shopt" -s extglob)',
+  "bash -c 'shopt -s extglob'",
+  "sh -c 'shopt -s extglob'",
+  "zsh -c 'shopt -s extglob'",
+  "dash -c 'shopt -s extglob'",
+  "ksh -c 'shopt -s extglob'",
+  "eval 'shopt' '-s' 'extglob'",
+  "bash <<'EOF'\nshopt -s extglob\nEOF",
+  'bash <<< "shopt -s extglob"',
+  'cat <<EOF\n$(shopt -s extglob)\nEOF',
+  'cat <<EOF\n$$$(shopt -s extglob)\nEOF',
+  'echo ${x:-$$$(shopt -s extglob)}',
+  "find . -exec shopt -s extglob \\;",
+  "bash -Oextglob -c 'ls'",
+  "bash -ecO extglob -- 'ls'",
+  "bash -c -O extglob -- 'ls'",
+  "bash -O'extglob' -c 'ls'",
+  "bash -O e\\xtglob -c 'ls'",
+  "bash -O \"$opts\" -c 'ls'",
+  "bash -O$opts -c 'ls'",
+  "bash -O ext* -c 'ls'",
+  "sh -O extglob -c 'ls'",
+  "zsh -O extglob -c 'ls'",
+  "dash -O extglob -c 'ls'",
+  "ksh -O extglob -c 'ls'",
+  'BASHOPTS=extglob',
+  'BASHOPTS=nullglob:extglob bash',
+  'BASHOPTS+=:extglob bash',
+  'BASHOPTS="extglob" bash',
+  'BASHOPTS=ex""tglob bash',
+  'BASHOPTS=e\\xtglob bash',
+  'BASHOPTS="$opts" bash',
+  'BASHOPTS=$(printf extglob) bash',
+  'BASHOPTS=ext* bash',
+  'env -- BASHOPTS=extglob bash',
+  'env BASHOPTS="$opts" bash',
+  'env -S "BASHOPTS=extglob bash"',
+  'export BASHOPTS=extglob',
+  'export BASHOPTS+=:extglob',
+  'export BASHOPTS="$opts"',
+  'declare -x BASHOPTS=extglob',
+  'declare -xr -- BASHOPTS=extglob',
+  'declare -x BASHOPTS="$opts"',
+  'declare BASHOPTS=extglob',
+  'typeset -x BASHOPTS=extglob',
+  'readonly BASHOPTS=extglob',
+  'local -x BASHOPTS=extglob',
+]) test(`round 13 enabling form: ${JSON.stringify(command)}`, async () => {
+  const result = await run(command);
+  assert.equal(result.decision, 'deny');
+  assert.match(result.reason, /^Command not analyzed: extglob turned on\./);
+});
+
+for (const command of [
+  `echo $$?(a|#); ${D}`,
+  `echo $$*(a|#); ${D}`,
+  `echo $$!(a|#); ${D}`,
+  `echo $$+(a|#); ${D}`,
+  `echo $$$?(a|#); ${D}`,
+  `echo $$$*(a|#); ${D}`,
+  `echo $$$!(a|#); ${D}`,
+  `echo $$$$?(a|#); ${D}`,
+  `echo $$$$*(a|#); ${D}`,
+  `echo $$$$!(a|#); ${D}`,
+  `echo $$$$+(a|#); ${D}`,
+  `cat <<!(E)\n!(E)\n${D}\n!\n`,
+  `cat <<?(E)\n?(E)\n${D}\n?\n`,
+  `cat <<+(E)\n+(E)\n${D}\n+\n`,
+  `cat <<*(E)\n*(E)\n${D}\n*\n`,
+]) test(`round 13 token denial: ${JSON.stringify(command)}`, async () => {
+  const result = await run(command);
+  assert.equal(result.decision, 'deny');
+  assert.match(result.reason, /^Command not analyzed: .*extended glob operator/);
+});
+
+for (const command of [
+  "echo $$'\\''",
+  ...['@', '?', '*', '!'].flatMap(operator => [
+    `echo $(( $$$${operator}(1) ))`,
+    `[[ x =~ $$$${operator}(x) ]]`,
+  ]),
+  `echo $$(${D})`,
+  `cat <<EOF\n$$(${D})\nEOF`,
+  `echo \${x:-$$(${D})}`,
+]) test(`round 13 conservative expansion inspection: ${JSON.stringify(command)}`, async () => {
+  assert.equal((await run(command)).decision, 'deny');
+});
+
+for (const command of [
+  'shopt -s -- nullglob',
+  'command -v shopt',
+  'command -V shopt -s extglob',
+  'shopt -- extglob -s',
+  'bash -ecO nullglob -- ls',
+  'bash +Oextglob -c ls',
+  'bash -c ls -O extglob',
+  'BASHOPTS=nullglob bash -c ls',
+  'env BASHOPTS=nullglob bash -c ls',
+  'export BASHOPTS=nullglob',
+  'declare -x BASHOPTS=nullglob',
+  'echo BASHOPTS=extglob',
+  'echo "$$@(data)"',
+  'cat <<EOF\n$$@(data)\nEOF',
+  'echo $$$(ls)',
+  'cat <<EOF\n$$$(ls)\nEOF',
+]) test(`round 13 ordinary neighbour: ${JSON.stringify(command)}`, async () => {
+  assert.equal((await run(command)).decision, undefined);
+});
+
+for (const command of ['shopt -s extglob', 'echo $$@(x)', 'cat <<@(E)\nx\n@(E)']) {
+  for (const denies of [[], ['Read(*)']]) test(`round 13 no Bash patterns ${JSON.stringify(denies)}: ${JSON.stringify(command)}`, async () => {
+    assert.equal((await run(command, denies)).decision, undefined);
+  });
+}
+
 for (const [name, command, reason] of [
   ['r8 command lookahead', `((${D}; echo $(case x in x) :;; esac) \${x:-)}))`, /arithmetic parameter/],
   ['r8 expansion lookahead', `echo $((${D}; echo $(case x in x) :;; esac) \${x:-)}))`, /arithmetic parameter/],
@@ -103,7 +349,6 @@ for (const command of [
   'echo $?',
   'if ! (exit 1); then echo y; fi',
   ...['||', ';', '&', '|&'].map(op => `ls ${op}\\\nls`),
-  ...['?', '*', '@', '!'].map(parameter => `echo $${parameter}(ls)`),
   "echo '?(' '*(' '+(' '@(' '!('",
   'echo \\?\\( \\*\\( \\+\\( \\@\\( \\!\\(',
   'echo hi # @(x) <\\\nls',

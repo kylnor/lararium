@@ -362,6 +362,8 @@ class Scanner:
         pattern_level = 0
         while self.i < len(s):
             ch = s[self.i]
+            if delimiter and s[self.i:self.i + 2] in ('?(', '*(', '+(', '@(', '!('):
+                raise ParseProblem('heredoc delimiter containing an extended glob operator')
             if delimiter and (s[self.i:self.i + 2] in ('${', '$[', '$(', '<(', '>(') or ch == '`'):
                 raise ParseProblem('heredoc delimiter containing a substitution marker')
             if quote is None and ch == stop:
@@ -436,6 +438,7 @@ class Scanner:
                     raise ParseProblem('process substitution in arithmetic')
                 if (quote is None and not arithmetic and not regex and
                         ch in '?*+@!' and s.startswith('(', self.i + 1)):
+                    # A preceding dollar does not hide an unquoted glob opener.
                     raise ParseProblem('extended glob operator')
                 begin = self.i
                 if s.startswith('$((', self.i):
@@ -450,9 +453,16 @@ class Scanner:
                     self.substitution(s[self.i:self.i + 2], depth)
                 elif ch == '`':
                     self.substitution('`', depth, double_quoted=quote == '"')
-                elif ch == '$' and s[self.i + 1:self.i + 2] in ('?', '*', '@', '!'):
-                    # Special parameters are expansions, not extended glob operators.
+                elif s.startswith('$$', self.i) and s[self.i + 2:self.i + 3] not in ('(', '{', '['):
+                    # Keep the PID pair from becoming an overlapping ANSI-C quote.
+                    # Still inspect overlapping substitution markers conservatively.
                     self.i += 2
+                elif ((arithmetic or regex) and quote is None and ch == '$' and
+                      s[self.i + 1:self.i + 2] in ('?', '*', '@', '!') and
+                      self.i >= start + 2 and s[self.i - 2:self.i] == '$$' and
+                      s.startswith('(', self.i + 2)):
+                    # Preserve prior conservative PID denials in arithmetic and regex data.
+                    raise ParseProblem('extended glob operator after PID expansion')
                 elif quote is None and ch == '(' and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*\+?=', s[start:self.i]):
                     self.data_unit('(', ')', depth, scan_quoted=scan_quoted)
                 if self.i != begin:
@@ -780,6 +790,17 @@ WRAPPERS = {
 }
 
 
+def extglob_option(value):
+    # Computed option names cannot establish that extended globbing stays off.
+    return value == 'extglob' or any(c in value for c in '$`*?[{}')
+
+
+def check_bashopts(value):
+    assignment = re.match(r'^BASHOPTS\+?=(.*)$', value, re.S)
+    if assignment and ('extglob' in assignment[1] or extglob_option(assignment[1])):
+        raise ParseProblem('extglob turned on')
+
+
 def command_starts(words, payload):
     """Yield real command positions without walking their ordinary arguments."""
     todo = [0]
@@ -787,6 +808,7 @@ def command_starts(words, payload):
     while todo:
         i = todo.pop()
         while i < len(words) and ASSIGNMENT.match(words[i].value):
+            check_bashopts(words[i].value)
             i += 1
         if i >= len(words) or i in visited:
             continue
@@ -822,6 +844,7 @@ def command_starts(words, payload):
                     todo.append(j + 1)
                     break
                 if ASSIGNMENT.match(arg) or NUMBER.fullmatch(arg):
+                    check_bashopts(arg)
                     j += 1
                     continue
                 if not arg.startswith('-') or arg == '-':
@@ -868,6 +891,20 @@ def decompose_command(command, depth=0):
             args = words[i + 1:]
             result.append(' '.join([word.raw] + [w.raw for w in args]))
             result.append(' '.join([base] + [w.raw for w in args]))
+            if base == 'shopt':
+                k = 0
+                setting = False
+                while k < len(args) and args[k].value.startswith('-'):
+                    flag = args[k].value
+                    k += 1
+                    if flag == '--':
+                        break
+                    setting = setting or 's' in flag[1:]
+                if setting and any(extglob_option(arg.value) for arg in args[k:]):
+                    raise ParseProblem('extglob turned on')
+            elif base in ('export', 'declare', 'typeset', 'readonly', 'local'):
+                for arg in args:
+                    check_bashopts(arg.value)
             # Shell -c consumes one command string; eval joins all its arguments as code.
             if base in SHELLS:
                 k = 0
@@ -879,6 +916,11 @@ def decompose_command(command, depth=0):
                         break
                     if arg.value in ('-', '+') or not arg.value.startswith(('-', '+')):
                         break
+                    if arg.value.startswith('-') and not arg.value.startswith('--') and 'O' in arg.value:
+                        attached = arg.value.split('O', 1)[1]
+                        following = args[k + 1].value if k + 1 < len(args) else ''
+                        if extglob_option(attached) or extglob_option(following):
+                            raise ParseProblem('extglob turned on')
                     if arg.value in ('-o', '-O', '+o', '+O', '--rcfile', '--init-file'):
                         k += 2
                         continue

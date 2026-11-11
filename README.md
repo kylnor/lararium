@@ -85,10 +85,15 @@ agents that build), with `workspaces/` for projects that have earned their own f
    The safety rails are backstops, not a sandbox or a security boundary: the Bash deny guard makes
    a deny list much harder to slip past, but a hand-written scanner cannot model all of Bash, so
    pair it with real isolation (the `lab/` below) for anything untrusted.
+   **Known over-denials:** a backslash-newline touching `|`, `;`, `&` or another operator character
+   inside double quotes, or directly after `;;` in a `case` body, is denied although Bash runs
+   nothing denied. Put the line break elsewhere.
    With deny patterns configured, it denies what it cannot parse, including these constructs:
    parentheses in arithmetic parameter expansions, process substitution text in arithmetic,
    expansions in heredoc delimiters, unsupported backslash-newlines touching operators, and extended glob
-   operators outside arithmetic and conditional regex operands.
+   operators outside arithmetic and conditional regex operands, even when preceded by `$` or `$$`.
+   A command that turns `extglob`
+   on is also denied as not analyzed.
 6. **`skills/`**: slash-command skills for the session lifecycle (`/end`, `/handoff`, `/sessions`),
    self-improvement (`/evolve`), and memory curation (`/curate`), plus the doctrine for writing
    your own.

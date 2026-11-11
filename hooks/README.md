@@ -147,6 +147,10 @@ return, unterminated syntax in any scanner, or a heredoc whose exact terminator 
 It also rejects these constructs: parentheses in arithmetic parameter expansions, process
 substitution text in arithmetic, expansions in heredoc delimiters, unsupported backslash-newlines
 touching operators, and extended glob operators outside arithmetic and conditional regex operands.
+An unquoted `?(`, `*(`, `+(`, `@(` or `!(` is rejected even when preceded by `$` or `$$`.
+Special parameters without an adjacent `(`, double-quoted text and heredoc body text remain supported.
+A command that turns `extglob` on is also denied as not analyzed, including computed option names
+with `shopt -s` or shell `-O`, and assignments of `BASHOPTS` that could enable it.
 Continuations after complete control operators remain supported when the next character is not
 an operator character.
 Unterminated syntax includes quotes, substitutions, parameter and arithmetic expansions, arithmetic
@@ -169,6 +173,10 @@ These are limits of static inspection. This guard is a backstop that makes a den
 to slip past. It is not a sandbox or a security boundary: a hand-written scanner cannot model all
 of Bash, and review of this hook kept finding new shapes that reached a denied command. Pair it
 with real isolation, such as `lab/`, for untrusted input.
+
+**Known over-denials:** a backslash-newline touching `|`, `;`, `&` or another operator character
+inside double quotes, or directly after `;;` in a `case` body, is denied although Bash runs
+nothing denied. Put the line break elsewhere.
 
 To upgrade an existing install, copy `hooks/reference/bash-deny-guard.py` over the installed copy.
 Updating this template alone does not update a copied hook.
