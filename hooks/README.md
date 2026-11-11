@@ -166,10 +166,15 @@ Two checks run in order: the parser first, then an unchanged copy of the previou
 matcher if the parser stays silent. Either check can deny. Parser denials keep their existing
 reasons. Legacy denials start with `Legacy check: ` to identify the check.
 Every command the previous release denied is still denied.
-The property test checked 1,429 must-deny rows: 0 silent.
-The legacy check has a two-second time budget on the main thread when a signal timer is available.
-Otherwise it runs directly without a time limit. An error, recursion failure or timeout leaves
-the parser's decision intact. Neither check runs shell code.
+A command slow enough to make the guard exceed the hook timeout configured in Claude Code is
+outside the guard's control, in this release and the previous one alike.
+Claude Code's hooks documentation says a `PreToolUse` command hook that reaches its timeout
+(600 seconds by default) is canceled and does not block the tool call, unless the hook entry
+sets `"onFailure": "block"` (Claude Code v2.1.295 or later). Set it on this hook if a stalled
+guard should block.
+The property test checked 1,442 must-deny rows: 0 silent.
+The legacy check runs with no time limit, as in the previous release. If either check fails to
+complete, the command is denied. Neither check runs shell code.
 
 This guard runs before Bash. It cannot resolve variables or computed command words such as `$CMD`,
 `$(echo rm)`, brace expansions, globs or `${IFS}`, aliases or functions defined elsewhere (function

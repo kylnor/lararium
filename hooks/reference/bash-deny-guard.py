@@ -29,10 +29,7 @@ import fnmatch
 import json
 import os
 import re
-import signal
 import sys
-import threading
-import time
 
 
 def load_settings(path=None):
@@ -1457,35 +1454,6 @@ def legacy_decide(command, settings):
     return None, None
 
 
-LEGACY_TIME_BUDGET_SECONDS = 2.0
-
-
-def _legacy_alarm(signum, frame):
-    raise TimeoutError('previous matcher time budget exceeded')
-
-
-def _legacy_with_budget(command, settings):
-    # Signal timers are process-wide and can only be installed on the main thread.
-    if (threading.current_thread() is not threading.main_thread() or
-            not all(hasattr(signal, name) for name in
-                    ('SIGALRM', 'ITIMER_REAL', 'setitimer', 'getitimer'))):
-        return legacy_decide(command, settings)
-    previous_handler = signal.getsignal(signal.SIGALRM)
-    previous_timer = signal.getitimer(signal.ITIMER_REAL)
-    started = time.monotonic()
-    try:
-        signal.signal(signal.SIGALRM, _legacy_alarm)
-        signal.setitimer(signal.ITIMER_REAL, LEGACY_TIME_BUDGET_SECONDS)
-        return legacy_decide(command, settings)
-    finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, previous_handler)
-        delay, interval = previous_timer
-        if delay:
-            delay = max(0.000001, delay - (time.monotonic() - started))
-        signal.setitimer(signal.ITIMER_REAL, delay, interval)
-
-
 def decide(command, settings):
     """Run the scanner first, then retain any denial from the previous matcher."""
     denies = settings.get('permissions', {}).get('deny', [])
@@ -1496,17 +1464,22 @@ def decide(command, settings):
             return None, None
     except Exception:
         # The scanner keeps its existing fail-closed reason for invalid patterns.
-        return parser_decide(command, settings)
-    verdict = parser_decide(command, settings)
+        pass
+    try:
+        verdict = parser_decide(command, settings)
+    except Exception as exc:
+        return guard_error(exc)
     if verdict[0] == 'deny':
         return verdict
     try:
-        decision, reason = _legacy_with_budget(command, settings)
+        decision, reason = legacy_decide(command, settings)
         if decision == 'deny':
             return 'deny', 'Legacy check: ' + reason
-    except BaseException:
-        # An optional check must never replace the scanner verdict with an error.
-        pass
+    except Exception as exc:
+        return 'deny', (
+            'Legacy check: could not complete ({}); command not analyzed'
+            .format(type(exc).__name__)
+        )
     return verdict
 
 

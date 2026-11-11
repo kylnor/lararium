@@ -33,8 +33,12 @@ Conditional regex groups preserve word boundaries; quoted substitutions in param
 Two checks run in order: the parser first, then an unchanged copy of the previous release's matcher
 if the parser stays silent. Either check can deny. Parser denials keep their existing reasons.
 Legacy denials start with `Legacy check: ` to identify the check.
-Every command the previous release denied is still denied. The property test checked 1,429
-must-deny rows: 0 silent.
+Every command the previous release denied is still denied.
+A command slow enough to make the guard exceed the hook timeout configured in Claude Code is
+outside the guard's control, in this release and the previous one alike.
+The property test checked 1,442 must-deny rows: 0 silent.
+The legacy check runs with no time limit, as in the previous release. If either check fails to
+complete, the command is denied.
 
 Accepted over-denials inherited from the previous matcher are pinned in ten test rows.
 Bash runs nothing denied in these cases: command substitution text inside single quotes in

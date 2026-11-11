@@ -89,6 +89,10 @@ agents that build), with `workspaces/` for projects that have earned their own f
    matcher if the parser stays silent. Either check can deny. Parser denials keep their reasons.
    Legacy denials start with `Legacy check: ` to identify the check.
    Every command the previous release denied is still denied.
+   A command slow enough to make the guard exceed the hook timeout configured in Claude Code is
+   outside the guard's control, in this release and the previous one alike.
+   The legacy check runs with no time limit, as in the previous release. If either check fails to
+   complete, the command is denied.
    **Known over-denials:** a backslash-newline touching `|`, `;`, `&` or another operator character
    inside double quotes, or directly after `;;` in a `case` body, is denied although Bash runs
    nothing denied. Put the line break elsewhere.

@@ -41,7 +41,7 @@ async function run(command, denies = ['Bash(rm:*)'], extra = {}, harness = null)
 
 const D = 'rm -rf /important';
 // All commands below are Python inputs, including strings that resemble shell code.
-async function pythonCheck(script, rows = []) {
+async function pythonCheck(script, rows = [], timeoutMs = 15000) {
   const result = await new Promise((resolve, reject) => {
     const child = spawn('python3', ['-B', '-c', [
     'import importlib.util, json, sys',
@@ -52,7 +52,7 @@ async function pythonCheck(script, rows = []) {
     script,
   ].join('\n'), guard], { stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '';
-    const timer = setTimeout(() => { child.kill(); reject(new Error('Python check exceeded 15 seconds')); }, 15000);
+    const timer = setTimeout(() => { child.kill(); reject(new Error(`Python check exceeded ${timeoutMs / 1000} seconds`)); }, timeoutMs);
     child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
     child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
     child.on('error', error => { clearTimeout(timer); reject(error); });
@@ -102,7 +102,9 @@ const mainControlRows = [
   `echo $(${D})`, `FOO=1 ${D}`, `if true; then ${D}; fi`,
 ].map(command => ({ command, deny: ['Bash(rm:*)'] }));
 const propertyRows = [...regressionRows, ...mainDocRows, ...mainControlRows];
-test(`round 14 denial union property: ${propertyRows.length} rows`, async () => {
+// Two slow commands and eleven recursion-window commands are built in Python.
+const generatedPropertyRowCount = 2 + 11;
+test(`round 14 denial union property: ${propertyRows.length + generatedPropertyRowCount} rows`, async () => {
   await pythonCheck([
     'legacy_denials = 0',
     'for row in rows:',
@@ -119,7 +121,34 @@ test(`round 14 denial union property: ${propertyRows.length} rows`, async () => 
     '        if parser[0] is None:',
     '            assert union[1] == "Legacy check: " + legacy[1], (command, union)',
     'assert legacy_denials > 0',
-  ].join('\n'), propertyRows);
+    'D = "rm -rf /important"',
+    'settings = {"permissions": {"deny": ["Bash(rm:*)"]}}',
+    'slow_commands = [',
+    '    "echo " + "1" * 50000 + "; echo $${; " + D + "; echo }",',
+    '    "let \'y=$(" + D + ")\'" + "\\n: " + "1" * 50000,',
+    ']',
+    'generated_rows = 0',
+    'for command in slow_commands:',
+    '    assert guard.decide(command, settings)[0] == "deny", command',
+    '    generated_rows += 1',
+    'def nested_decide(command, depth):',
+    '    if depth == 1:',
+    '        return guard.decide(command, settings)',
+    '    return nested_decide(command, depth - 1)',
+    'for k in range(990, 1001):',
+    '    command = "echo \'" + "<(" * k + D + ")" * k + "\'"',
+    '    try:',
+    '        legacy = guard.legacy_decide(command, settings)',
+    '    except Exception:',
+    '        pass',
+    '    else:',
+    '        assert legacy[0] == "deny", (k, legacy)',
+    '    for depth in range(4):',
+    '        union = nested_decide(command, depth) if depth else guard.decide(command, settings)',
+    '        assert union[0] == "deny", (k, depth, union)',
+    '    generated_rows += 1',
+    `assert generated_rows == ${generatedPropertyRowCount}, generated_rows`,
+  ].join('\n'), propertyRows, 60000);
 });
 
 test('round 14 docs and controls are denied by the frozen matcher', async () => {
@@ -129,13 +158,17 @@ test('round 14 docs and controls are denied by the frozen matcher', async () => 
   ].join('\n'), [...mainDocRows, ...mainControlRows]);
 });
 
-for (const fault of ['RuntimeError("legacy fixture")', 'RecursionError("legacy fixture")', 'TimeoutError("legacy fixture")', 'SystemExit(1)']) {
-  test(`round 14 optional legacy failure preserves parser verdict: ${fault}`, async () => {
+for (const fault of ['RuntimeError("legacy fixture")', 'RecursionError("legacy fixture")', 'MemoryError("legacy fixture")', 'TimeoutError("legacy fixture")']) {
+  test(`round 14 legacy failure denies unless the parser already denies or Bash patterns are absent: ${fault}`, async () => {
     await pythonCheck([
       'def fail(*args): raise ' + fault,
       'guard.legacy_decide = fail',
       'settings = {"permissions": {"deny": ["Bash(rm:*)"]}}',
-      'for command in ("ls", "rm -rf /important", "echo \\\"unclosed"):',
+      'assert guard.parser_decide("ls", settings) == (None, None)',
+      'decision, reason = guard.decide("ls", settings)',
+      'assert decision == "deny", (decision, reason)',
+      `assert reason == "Legacy check: could not complete (${fault.split('(')[0]}); command not analyzed", reason`,
+      'for command in ("rm -rf /important", "echo \\\"unclosed"):',
       '    assert guard.decide(command, settings) == guard.parser_decide(command, settings)',
       'for denies in ([], ["Read(*)"]):',
       '    assert guard.decide("rm -rf /important", {"permissions": {"deny": denies}}) == (None, None)',
@@ -143,7 +176,18 @@ for (const fault of ['RuntimeError("legacy fixture")', 'RecursionError("legacy f
   });
 }
 
-test('round 14 skips the optional check when the parser denies or Bash patterns are absent', async () => {
+test('round 14 parser failure denies only with Bash patterns configured', async () => {
+  await pythonCheck([
+    'def fail(*args): raise RuntimeError("parser fixture")',
+    'guard.parser_decide = fail',
+    'settings = {"permissions": {"deny": ["Bash(rm:*)"]}}',
+    'assert guard.decide("ls", settings) == guard.guard_error(RuntimeError("parser fixture"))',
+    'for denies in ([], ["Read(*)"]):',
+    '    assert guard.decide("ls", {"permissions": {"deny": denies}}) == (None, None)',
+  ].join('\n'));
+});
+
+test('round 14 skips the legacy check when the parser denies or Bash patterns are absent', async () => {
   await pythonCheck([
     'calls = []',
     'def legacy(*args):',
@@ -161,66 +205,6 @@ test('round 14 skips the optional check when the parser denies or Bash patterns 
   ].join('\n'));
 });
 
-test('round 14 an unavailable timer retains legacy denials and harmless silence', async () => {
-  await pythonCheck([
-    'del guard.signal.setitimer',
-    'settings = {"permissions": {"deny": ["Bash(rm:*)"]}}',
-    'assert guard.decide("ls", settings) == (None, None)',
-    'guard.legacy_decide = lambda *args: ("deny", "fixture")',
-    'assert guard.decide("ls", settings) == ("deny", "Legacy check: fixture")',
-  ].join('\n'));
-});
-
-test('round 14 a non-main thread retains legacy denials and the parser verdict on failure', async () => {
-  await pythonCheck([
-    'import threading',
-    'settings = {"permissions": {"deny": ["Bash(rm:*)"]}}',
-    'results = []',
-    'def check():',
-    '    results.append(guard.decide("ls", settings))',
-    'guard.legacy_decide = lambda *args: ("deny", "fixture")',
-    'thread = threading.Thread(target=check)',
-    'thread.start()',
-    'thread.join()',
-    'assert results == [("deny", "Legacy check: fixture")], results',
-    'def fail(*args): raise RuntimeError("legacy fixture")',
-    'guard.legacy_decide = fail',
-    'thread = threading.Thread(target=check)',
-    'thread.start()',
-    'thread.join()',
-    'assert results[1:] == [guard.parser_decide("ls", settings)], results',
-  ].join('\n'));
-});
-
-test(`round 14 denial union property without a timer: ${propertyRows.length} rows`, async () => {
-  await pythonCheck([
-    'del guard.signal.setitimer',
-    'for row in rows:',
-    '    command = row["command"].replace("{{D}}", "rm -rf /important")',
-    '    settings = {"permissions": {"deny": row["deny"]}}',
-    '    union = guard.decide(command, settings)',
-    '    assert union[0] == "deny", (command, union)',
-  ].join('\n'), propertyRows);
-});
-
-test('round 14 legacy execution is bounded and restores the signal timer', async () => {
-  await pythonCheck([
-    'import signal, time',
-    'def slow(*args):',
-    '    while True: pass',
-    'guard.legacy_decide = slow',
-    'guard.LEGACY_TIME_BUDGET_SECONDS = 0.03',
-    'handler = signal.getsignal(signal.SIGALRM)',
-    'timer = signal.getitimer(signal.ITIMER_REAL)',
-    'signal.setitimer(signal.ITIMER_REAL, 5)',
-    'started = time.monotonic()',
-    'assert guard.decide("ls", {"permissions": {"deny": ["Bash(rm:*)"]}}) == (None, None)',
-    'assert time.monotonic() - started < 1',
-    'assert signal.getsignal(signal.SIGALRM) == handler',
-    'assert 3 < signal.getitimer(signal.ITIMER_REAL)[0] <= 5',
-    'signal.setitimer(signal.ITIMER_REAL, *timer)',
-  ].join('\n'));
-});
 for (const operator of ['@', '?', '*', '!']) {
   for (const command of [
     `echo $${operator}(a|#); ${D}`,
