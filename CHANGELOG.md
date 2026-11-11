@@ -37,11 +37,12 @@ Conditional regex groups preserve word boundaries; quoted substitutions in param
 Two checks run in order: an unchanged copy of the previous release's matcher first, then the
 parser if the first check stays silent. Either check can deny. Denials from the first start with
 `Legacy check: `; parser denials keep the parser's reasons. If either check fails to complete,
-the command is denied. Every command the previous release denied is still denied. No parser
-work runs before a denial from the first check.
+the command is denied. Every command the previous release denied is still denied.
+The parser does not scan the command before a denial from the first check.
 The legacy check runs with no time limit, as in the previous release.
 This is unchanged from that release, so an input that made its matcher slow (for example a single
-run of tens of thousands of digits) is just as slow here.
+run of tens of thousands of digits) is at least as slow here, and the parser's time is added
+after it when the first check stays silent.
 With Bash deny patterns configured, a command longer than 300,000 characters that the first
 check leaves silent is denied without running the parser. A command the parser has not finished
 within 3 seconds is also denied.
@@ -50,6 +51,14 @@ about 13 seconds is now denied after about 3.00 seconds.
 With the cap at 300,000, 228 measured rows up to 299,990 characters all returned from the parser
 within about 3.8 seconds on the development machine. The deadline is checked between parsing
 steps, so this is a measured figure, not a guarantee against the hook timeout.
+Two measured cases exceed that timeout. Neither is a regression: the previous release was
+silent on both. First, the two checks add up: a run of 85,000 digits followed by a shape the
+parser cannot finish took the first check about 8 seconds and the parser its 3 seconds, about
+12 seconds in total, where the previous release was silent after about 8 seconds. Second, the
+deadline cannot interrupt a single pattern match: with a deny pattern 150,000 characters long
+and a 299,599-character command, one match took about 35 seconds. With deny patterns of 200 and
+2,000 characters the same command returned in 0.7 and 1.8 seconds. The 228 rows above used a
+short deny pattern.
 The property test checked 1,457 rows: 1,455 must-deny rows (0 silent), one timed row at the length
 cap that may stay silent or receive the deadline denial, and one ordinary long heredoc write
 that stays silent.
