@@ -10,3 +10,6 @@ handoff.md
 handoff.md.consumed
 # Optional semantic-search vectors built by `npx lararium serve --semantic`: derived, never committed.
 memory/.index/
+# Python bytecode written when a hook or test imports a script: derived, never committed.
+__pycache__/
+*.pyc

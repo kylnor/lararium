@@ -17,12 +17,13 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 
 ## v3.2.1 (2026-11-10): additive-doc
 
-The deny guard now reads Bash quoting, comments, heredocs and command boundaries together, then
-checks both the written command and its normalized command word. Paths, wrappers, conditionals
-and shell command strings no longer hide a matching deny. It remains deny-only, with no new
-settings or dependencies. A guard error with configured deny patterns now fails closed.
+The deny guard now reads supported Bash quoting, comments, heredocs and command boundaries together,
+then checks both the written command and its normalized command word. It checks paths, listed
+wrappers, supported conditionals and shell command strings for matching denies. It remains deny-only,
+with no new settings or dependencies. A guard error with configured deny patterns now fails closed.
 With deny patterns configured, a command with unterminated syntax, a never-closed heredoc, a NUL
 byte or a carriage return is now denied with a reason naming what could not be parsed.
+Also not analyzed: parentheses in arithmetic parameter expansions, process substitution text in arithmetic, expansions in heredoc delimiters, unsupported backslash-newlines touching operators, and extended glob operators outside arithmetic and conditional regex operands.
 Conditional regex groups preserve word boundaries; quoted substitutions in parameters, arithmetic and subscripted words are checked as code.
 
 In every version up to v3.2, `grep "a<<b" notes.txt` followed by a denied command,

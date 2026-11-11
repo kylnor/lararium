@@ -40,6 +40,78 @@ async function run(command, denies = ['Bash(rm:*)'], extra = {}, harness = null)
 }
 
 const D = 'rm -rf /important';
+for (const [name, command, reason] of [
+  ['r8 command lookahead', `((${D}; echo $(case x in x) :;; esac) \${x:-)}))`, /arithmetic parameter/],
+  ['r8 expansion lookahead', `echo $((${D}; echo $(case x in x) :;; esac) \${x:-)}))`, /arithmetic parameter/],
+  ['r8 parameter close', `((${D}; echo \${x:-)}))`, /arithmetic parameter/],
+  ['f1 skipped arithmetic', `false && (( 1 <(case x in x) cat <<E # ))\n${D}\nE\n;; esac) ))`, /process substitution in arithmetic/],
+  ['f1 input arithmetic', `(( 1 <(case x in x) cat <<E # ))\n${D}\nE\n;; esac) ))`, /process substitution in arithmetic/],
+  ['f1 output arithmetic', `(( 1 >(case x in x) cat <<E # ))\n${D}\nE\n;; esac) ))`, /process substitution in arithmetic/],
+  ['f1 arithmetic expansion', `echo $(( 1 <(case x in x) cat <<E # ))\n${D}\nE\n;; esac) ))`, /process substitution in arithmetic/],
+  ['f1 legacy arithmetic', `echo $[ 1 <(case x in x) cat <<E # ]\n${D}\nE\n;; esac) ]`, /process substitution in arithmetic/],
+  ['f1 parameter arithmetic', `: \${u+$(( 1 <(case x in x) cat <<E # ))\n${D}\nE\n;; esac) ))}`, /process substitution in arithmetic/],
+  ['f1 arithmetic for header', `for (( i=0 <(case x in x) cat <<E # ))\n${D}\nE\n;; esac); i<0; i++)); do :; done`, /process substitution in arithmetic/],
+  ['f2 parameter suffix delimiter', `cat <<E\${u:- }\nE\${u:- }\n${D}\n: '\nE\${u:-\n' #'`, /heredoc delimiter/],
+  ['f2 parameter delimiter', `cat <<\${x:-a b}\nhi\n\${x:-a b}\n${D}\n\${x:-a`, /heredoc delimiter/],
+  ['f2 legacy arithmetic delimiter', `cat <<E$[1 + 1]\nE$[1 + 1]\n${D}\n: '\nE$[1\n' #'`, /heredoc delimiter/],
+  ['f2 process delimiter', `cat <<E<(:)\nE<(:)\n${D}\nE`, /heredoc delimiter/],
+  ['f3 continued heredoc operator', `cat <<\\\n-E\nhi\nE\n${D}\n-E`, /backslash-newline/],
+  ['f3 continued conditional opener', `[\\\n[ x =~ (#) ]]; ${D}`, /backslash-newline/],
+  ['f3 continued conditional closer', `[[ x ]\\\n]; ${D}; echo ]]`, /backslash-newline/],
+  ['f3 continued here-string operator', `cat <\\\n<<E\n${D}\nE`, /backslash-newline/],
+  ['f3 continued group opener', `{\\\n ${D}; }`, /backslash-newline/],
+  ['f4 at pattern', `shopt -s extglob\necho @(a|#)>/dev/null; ${D}`, /extended glob/],
+  ['f4 negated pattern', `shopt -s extglob\nls !(a|#); ${D}`, /extended glob/],
+  ['f4 plus pattern', `shopt -s extglob\nls +(a|#)*; ${D}`, /extended glob/],
+  ['f4 star pattern', `shopt -s extglob\nls x*(a|#); ${D}`, /extended glob/],
+  ['f4 question pattern', `shopt -s extglob\nls ?(a|#); ${D}`, /extended glob/],
+  ['f4 case pattern', `shopt -s extglob\ncase x in @(x|#)) ${D};; esac`, /extended glob/],
+  ['f4-off at pattern', `echo @(a|#)>/dev/null; ${D}`, /extended glob/],
+  ['f4-off negated pattern', `ls !(a|#); ${D}`, /extended glob/],
+  ['continued ANSI command quote', "$\\\n'rm' -rf /important", /backslash-newline/],
+  ['continued reserved word', `i\\\nf true; then ${D}; fi`, /matches deny pattern/],
+  ['legacy arithmetic parameter parenthesis', 'echo $[ ${x:-)} ]', /arithmetic parameter/],
+  ['arithmetic for parameter parenthesis', 'for ((i=${x:-)};i<1;i++)); do :; done', /arithmetic parameter/],
+  ['arithmetic for comparison with group', 'for ((i=0; i<(n); i++)); do :; done', /process substitution in arithmetic/],
+  ['arithmetic for variables with group', 'for ((rm=0; rm<(3); rm++)); do :; done', /process substitution in arithmetic/],
+  ['output process delimiter', 'cat <<E>(:)\nx\nE', /heredoc delimiter/],
+  ['operator after continuation', 'echo x \\\n| grep x', /backslash-newline/],
+  ['operator after complete control continuation', 'ls |\\\n| ls', /backslash-newline/],
+]) test(`round 12 denial: ${name}`, async () => {
+  const result = await run(command);
+  assert.equal(result.decision, 'deny');
+  assert.match(result.reason, reason);
+  if (name !== 'continued reserved word') assert.match(result.reason, /^Command not analyzed:/);
+});
+
+for (const command of [
+  'ls |\\\ngrep x',
+  'ls &&\\\nls',
+  'echo a \\\n  b',
+  'ls -l \\\n  | grep x',
+  'echo $(( ${#a[@]} - 1 ))',
+  'echo $(( ${x:-1} + 1 ))',
+  '(( i < 3 )) && echo y',
+  'echo $(( (1 + 2) * 3 ))',
+  'diff <(sort a) <(sort b)',
+  'cat <<EOF\nrm is a word here\nEOF',
+  "cat <<'EOF'\n${x} $(y)\nEOF",
+  '[[ $x =~ ^a+(b|c)$ ]] && echo y',
+  "grep -E 'a+(b|c)' f",
+  'echo "what?(no)"',
+  'f() { echo hi; }; f',
+  'echo $?',
+  'if ! (exit 1); then echo y; fi',
+  ...['||', ';', '&', '|&'].map(op => `ls ${op}\\\nls`),
+  ...['?', '*', '@', '!'].map(parameter => `echo $${parameter}(ls)`),
+  "echo '?(' '*(' '+(' '@(' '!('",
+  'echo \\?\\( \\*\\( \\+\\( \\@\\( \\!\\(',
+  'echo hi # @(x) <\\\nls',
+  "cat <<'EOF'\n@(x) <\\\n${x:-)}\nEOF",
+]) test(`round 12 silent: ${JSON.stringify(command)}`, async () => {
+  assert.equal((await run(command)).decision, undefined);
+});
+
 const already = [
   D,
   `cat <<EOF\nx\nEOF\n${D}`,
@@ -225,7 +297,7 @@ for (const [name, command, expected, reason] of [
   ['probe 3 row 7: esac subject and pattern do not close case', `echo "$(case esac in esac) ${D};; esac)"`, 'deny'],
   ['probe 3 row 8: esac argument does not expose later pattern', 'case x in x) echo esac;; rm) echo ok;; esac', undefined],
   ['probe 3 row 9: ANSI octal NUL truncates quoted piece', "$'rm\\0ignored' -rf /important", 'deny'],
-  ['probe 3 row 10: conditional extglob parentheses are data', '[[ rm == @(rm) ]]', undefined],
+  ['probe 3 row 10: conditional extglob is not analyzed', '[[ rm == @(rm) ]]', 'deny', /extended glob operator/],
   ['probe 3 row 11: conditional command substitution is checked', `[[ -n $(${D}) ]]`, 'deny'],
   ['probe 3 row 12: conditional OR exposes following command', `[[ a == b ]] || ${D}`, 'deny'],
   ['probe 3 row 13: continued ordinary argument stays data', 'ls \\\n  -la', undefined],
@@ -280,7 +352,7 @@ for (const [name, command, expected, reason] of [
   ['ANSI NUL resets at next quoted piece', "$'r\\0ignored'$'m' -rf /important", 'deny'],
   ['ANSI NUL does not discard following suffix', "$'rm\\0ignored'other -rf /important", undefined],
   ['ANSI NUL still consumes escaped quote', "$'rm\\0ignored\\'still ignored' -rf /important", 'deny'],
-  ['conditional negated extglob parentheses are data', '[[ rm == !(rm|ls) ]]', undefined],
+  ['conditional negated extglob is not analyzed', '[[ rm == !(rm|ls) ]]', 'deny', /extended glob operator/],
   ['conditional logical groups are data', '[[ ( rm == rm ) && ( rm != ls ) ]]', undefined],
   ['conditional backticks are checked', `[[ -n \`${D}\` ]]`, 'deny'],
   ['conditional pattern substitution is checked', `[[ x == @($(${D})) ]]`, 'deny'],
@@ -288,8 +360,8 @@ for (const [name, command, expected, reason] of [
   ['conditional AND exposes following command', `[[ a == a ]] && ${D}`, 'deny'],
   ['conditional semicolon exposes following command', `[[ a == b ]]; ${D}`, 'deny'],
   ['conditional newline exposes following command', `[[ a == b ]]\n${D}`, 'deny'],
-  ['conditional closer inside quotes is data', '[[ "]]" == @(rm) ]]', undefined],
-  ['conditional single quotes suppress substitutions', `[[ '$(${D})' == @(rm) ]]`, undefined],
+  ['conditional quoted closer still rejects extglob', '[[ "]]" == @(rm) ]]', 'deny', /extended glob operator/],
+  ['conditional quoted substitution still rejects extglob', `[[ '$(${D})' == @(rm) ]]`, 'deny', /extended glob operator/],
 ]) test(`round 2: ${name}`, async () => {
   const result = await run(command);
   assert.equal(result.decision, expected);
@@ -486,7 +558,7 @@ for (const [name, command, expected, reason] of [
   ['regex leading vertical bars cannot hide following command', `[[ x =~ ||(#) ]]; ${D}\necho ]]`, 'deny'],
   ['regex leading vertical bars stay inside operand', '[[ x =~ ||(#) ]]', undefined],
   ['unclosed regex group is a parse problem', '[[ x =~ ( ]]', 'deny', /unterminated regex group/i],
-  ['unclosed extended pattern group is a parse problem', '[[ x == @( ]]', 'deny', /unterminated pattern group/i],
+  ['unclosed extended pattern group is a parse problem', '[[ x == @( ]]', 'deny', /extended glob operator/i],
   ['parameter quoted substitution parse problem propagates', "echo ${x:-'$(echo'}", 'deny', /unterminated \$\( substitution/i],
   ['arithmetic quoted substitution parse problem propagates', "echo $(( '$(echo' ))", 'deny', /unterminated \$\( substitution/i],
   ['assignment subscript quoted substitution parse problem propagates', "a['$(echo']=1", 'deny', /unterminated \$\( substitution/i],
@@ -605,7 +677,6 @@ for (const [name, command] of [
   ['grouped arithmetic variable stays data', '(( (a) ))'],
   ['adjacent grouped arithmetic expansion stays data', 'echo $(((1+2)))'],
   ['spaced grouped arithmetic expansion stays data', 'echo $(( (1) ))'],
-  ['arithmetic for comparison with group stays data', 'for ((i=0; i<(n); i++)); do :; done'],
   ['arithmetic at the nesting bound stays data', 'echo "$('.repeat(8) + 'echo $((1<<2))' + ')"'.repeat(8)],
   ['ordinary backtick command stays silent', 'echo `date`'],
   ['assigned backtick command stays silent', 'x=`git rev-parse HEAD`'],
@@ -637,7 +708,6 @@ for (const [name, command] of [
   ['if arithmetic variable is data', 'if (( rm > 2 )); then :; fi'],
   ['ternary arithmetic variables are data', 'echo $(( rm ? (rm) : (1) ))'],
   ['arithmetic variable increment is data', '((rm++))'],
-  ['arithmetic for variables are data', 'for ((rm=0; rm<(3); rm++)); do :; done'],
   ['assigned arithmetic product is data', 'x=$(( (rm+1) * 2 ))'],
   ['while arithmetic variable decrement is data', 'while ((rm--)); do :; done'],
   ['legacy arithmetic variable is data', 'echo $[rm+1]'],

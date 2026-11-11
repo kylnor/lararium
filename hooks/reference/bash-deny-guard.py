@@ -203,6 +203,18 @@ class Scanner:
             scanner.substitution(marker, self.depth, double_quoted)
         return self.substitution_ends[opening]
 
+    def continuation(self, position, control=False):
+        s = self.text
+        if not s.startswith('\\\n', position):
+            return
+        before = s[position - 1:position] if position else ''
+        after = s[position + 2:position + 3]
+        operators = '<>[]{}()$;&|'
+        if after and after in operators:
+            raise ParseProblem('backslash-newline touching an operator')
+        if before and before in operators and not control:
+            raise ParseProblem('backslash-newline touching an operator')
+
     def parenthesis_end(self, opening):
         # Locate the inner close without interpreting words as commands. Remember
         # nested closes so arithmetic expansions do not repeat this lookahead.
@@ -223,8 +235,11 @@ class Scanner:
                 i += 1
                 continue
             if ch == '\\' and i + 1 < len(s):
+                self.continuation(i)
                 i += 2 if quote is None or s[i + 1] in '$`"\\\n' else 1
                 continue
+            if s[i:i + 2] in ('<(', '>('):
+                raise ParseProblem('process substitution in arithmetic')
             if ch == '"':
                 frame[2] = None if quote else '"'
             elif quote is None and s.startswith("$'", i):
@@ -243,6 +258,8 @@ class Scanner:
                 i += 1
             elif quote is None:
                 if ch == frame[1]:
+                    if ch == '}' and any(c in s[frame[0] - 1:i + 1] for c in '()'):
+                        raise ParseProblem('parenthesis in arithmetic parameter expansion')
                     if ch == ')':
                         self.parenthesis_ends[frame[0]] = i
                     stack.pop()
@@ -286,7 +303,8 @@ class Scanner:
             else:
                 begin = self.i
                 self.word(depth, stop=close, unit_open=opening,
-                          scan_quoted=scan_quoted or marker != '(', array_item=marker == '(')
+                          scan_quoted=scan_quoted or marker != '(', array_item=marker == '(',
+                          arithmetic=marker in ('((', '$((', '$['))
                 if self.i == begin:
                     self.i += 1
         if level:
@@ -330,7 +348,7 @@ class Scanner:
         self.substitution_ends[start] = self.i
 
     def word(self, depth, delimiter=False, stop=None, unit_open=None,
-             scan_quoted=False, array_item=False, regex=False, pattern=False):
+             scan_quoted=False, array_item=False, regex=False, pattern=False, arithmetic=False):
         start = self.i
         value = []
         quoted = False
@@ -344,7 +362,7 @@ class Scanner:
         pattern_level = 0
         while self.i < len(s):
             ch = s[self.i]
-            if delimiter and (s.startswith('$(', self.i) or ch == '`'):
+            if delimiter and (s[self.i:self.i + 2] in ('${', '$[', '$(', '<(', '>(') or ch == '`'):
                 raise ParseProblem('heredoc delimiter containing a substitution marker')
             if quote is None and ch == stop:
                 break
@@ -388,6 +406,7 @@ class Scanner:
             if ch == '\\' and self.i + 1 < len(s):
                 nxt = s[self.i + 1]
                 if nxt == '\n':
+                    self.continuation(self.i)
                     self.i += 2
                 elif quote != '"' or nxt in '$`"\\':
                     quoted = True
@@ -413,17 +432,27 @@ class Scanner:
                 quote_start = self.i
                 continue
             if not delimiter:
+                if arithmetic and s[self.i:self.i + 2] in ('<(', '>('):
+                    raise ParseProblem('process substitution in arithmetic')
+                if (quote is None and not arithmetic and not regex and
+                        ch in '?*+@!' and s.startswith('(', self.i + 1)):
+                    raise ParseProblem('extended glob operator')
                 begin = self.i
                 if s.startswith('$((', self.i):
                     self.arithmetic(depth)
                 elif s.startswith('${', self.i):
                     self.data_unit('${', '}', depth)
+                    if arithmetic and any(c in s[begin:self.i] for c in '()'):
+                        raise ParseProblem('parenthesis in arithmetic parameter expansion')
                 elif s.startswith('$[', self.i):
                     self.data_unit('$[', ']', depth)
                 elif s.startswith('$(', self.i) or (quote is None and s[self.i:self.i + 2] in ('<(', '>(')):
                     self.substitution(s[self.i:self.i + 2], depth)
                 elif ch == '`':
                     self.substitution('`', depth, double_quoted=quote == '"')
+                elif ch == '$' and s[self.i + 1:self.i + 2] in ('?', '*', '@', '!'):
+                    # Special parameters are expansions, not extended glob operators.
+                    self.i += 2
                 elif quote is None and ch == '(' and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*\+?=', s[start:self.i]):
                     self.data_unit('(', ')', depth, scan_quoted=scan_quoted)
                 if self.i != begin:
@@ -516,6 +545,7 @@ class Scanner:
             if s[self.i] == '\n' and pending:
                 raise ParseProblem('heredoc body starts inside conditional ([[)')
             if s[self.i] in ' \t\n' or s.startswith('\\\n', self.i):
+                self.continuation(self.i)
                 self.i += 2 if s.startswith('\\\n', self.i) else 1
                 continue
             # word() consumes embedded hashes; only a boundary hash reaches here.
@@ -578,6 +608,7 @@ class Scanner:
                 self.i += 1
                 return True
             if s.startswith('\\\n', self.i):
+                self.continuation(self.i)
                 self.i += 2
                 continue
             if ch in ' \t':
@@ -618,6 +649,7 @@ class Scanner:
                 continue
             # Control operators separate commands; grouping exposes commands on either side.
             if ch in ';|&\n()' and s[self.i:self.i + 2] not in ('&>',):
+                begin = self.i
                 if ch == '(':
                     groups += 1
                 elif ch == ')' and groups:
@@ -633,6 +665,9 @@ class Scanner:
                 if ch == '\n':
                     self.bodies(pending, depth, substitution=end == ')')
                     pending.clear()
+                elif s.startswith('\\\n', self.i):
+                    self.continuation(self.i, control=s[begin:self.i] in ('|', '||', '&&', ';', '&', '|&'))
+                    self.i += 2
                 continue
             if ch in '{}' and (
                     self.i + 1 == len(s) or s[self.i + 1] in ' \t\n;)'):
@@ -657,6 +692,7 @@ class Scanner:
                     if s[self.i] in ' \t':
                         self.i += 1
                     elif s.startswith('\\\n', self.i):
+                        self.continuation(self.i)
                         self.i += 2
                     else:
                         break
@@ -697,6 +733,7 @@ class Scanner:
                                 if s[look] in ' \t\n':
                                     look += 1
                                 elif s.startswith('\\\n', look):
+                                    self.continuation(look)
                                     look += 2
                                 else:
                                     break

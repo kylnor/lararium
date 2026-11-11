@@ -124,9 +124,9 @@ both the full command string and each executable sub-command against the merged 
 It emits `deny` or nothing, never `allow` or `ask`. Hook denies also apply in bypass-permissions
 sessions. Derived from liberzon/claude-hooks smart-approve.py (MIT), with the allow path removed.
 
-The scanner follows Bash quoting, escapes, word-boundary comments, command separators, groups,
-conditionals and substitutions. Quoted shift text, arithmetic shifts and here-strings cannot open
-heredocs. It reads multiple heredocs in order and honors `<<-` tab stripping. Bodies are data with
+The scanner reads supported Bash quoting, escapes, word-boundary comments, command separators,
+groups, conditionals and substitutions. Quoted shift text, arithmetic shifts and here-strings
+cannot open heredocs. It reads multiple heredocs in order and honors `<<-` tab stripping. Bodies are data with
 two exceptions: an unquoted delimiter permits executable `$()` and backtick substitutions, and a
 heredoc or here-string attached directly to a shell is checked as shell commands, even when quoted.
 A body attached to `cat` and piped into a shell stays run-time data.
@@ -144,11 +144,16 @@ arguments are never treated as fresh command starts. Shell `-c` strings, `eval`,
 
 While deny patterns are configured, the guard denies what it cannot parse: a NUL byte, a carriage
 return, unterminated syntax in any scanner, or a heredoc whose exact terminator never appears.
+It also rejects these constructs: parentheses in arithmetic parameter expansions, process
+substitution text in arithmetic, expansions in heredoc delimiters, unsupported backslash-newlines
+touching operators, and extended glob operators outside arithmetic and conditional regex operands.
+Continuations after complete control operators remain supported when the next character is not
+an operator character.
 Unterminated syntax includes quotes, substitutions, parameter and arithmetic expansions, arithmetic
 commands, array initializers and `[[` conditionals, including in nested shell strings and expansions.
 A heredoc also fails if input ends or an enclosing substitution closes before the body newline.
 Here-strings have no terminator and are unaffected by the heredoc rule.
-The reason names the byte, syntax kind or heredoc delimiter in this form:
+The reason names the byte, syntax kind, construct or heredoc delimiter in this form:
 `Command not analyzed: <what>. This guard denies what it cannot parse while deny patterns are configured.`
 A guard error with configured deny patterns fails closed with a reason explaining how to remove
 the hook from settings. With no deny patterns, or unreadable settings, the hook stays silent.

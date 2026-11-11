@@ -35,6 +35,8 @@ There are limits. Variables, aliases or functions defined elsewhere, scripts and
 need run-time knowledge this hook does not have; function bodies written in the command are checked.
 Data piped into a shell can become code after the hook has
 finished. A copied binary can have another name. The README names these gaps explicitly.
+The guard is a backstop, not a sandbox or a security boundary. Untrusted code still needs real
+isolation.
 
 The bypasses affect every version through v3.2. To adopt the fix, copy
 `hooks/reference/bash-deny-guard.py` over your installed copy. Pulling this template does not
