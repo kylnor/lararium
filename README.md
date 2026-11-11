@@ -82,6 +82,67 @@ agents that build), with `workspaces/` for projects that have earned their own f
 5. **`hooks/`**: the loops that make it feel alive. Session-start briefing, the heartbeat that
    remembers yesterday, voice integrity, compaction continuity, safety rails, dispatch routing.
    Doctrine plus minimal reference implementations that run on plain files, no database required.
+   The safety rails are backstops, not a sandbox or a security boundary: the Bash deny guard makes
+   a deny list much harder to slip past, but a hand-written scanner cannot model all of Bash, so
+   pair it with real isolation (the `lab/` below) for anything untrusted.
+   Two checks run in order: an unchanged copy of the previous release's matcher first, then the
+   parser if the first check stays silent. Either check can deny. Denials from the first start with
+   `Legacy check: `; parser denials keep the parser's reasons. If either check fails to complete,
+   the command is denied. Every command the previous release denied is still denied.
+   The parser does not scan the command before a denial from the first check.
+   The legacy check runs with no time limit, as in the previous release.
+   This is unchanged from that release, so an input that made its matcher slow (for example a single
+   run of tens of thousands of digits) is at least as slow here, and the parser's time is added
+   after it when the first check stays silent.
+   With Bash deny patterns configured, a command longer than 300,000 characters that the first
+   check leaves silent is denied without running the parser. A command the parser has not finished
+   within 3 seconds is also denied.
+   On the development machine, a 4,816-character input that previously kept the parser busy for
+   about 13 seconds is now denied after about 3.00 seconds.
+   With the cap at 300,000, 228 measured rows up to 299,990 characters all returned from the parser
+   within about 3.8 seconds on the development machine. The deadline is checked between parsing
+   steps, so this is a measured figure, not a guarantee against the hook timeout.
+   Two measured cases exceed that timeout. Neither is a regression: the previous release was
+   silent on both. First, the two checks add up: a run of 85,000 digits followed by a shape the
+   parser cannot finish took the first check about 8 seconds and the parser its 3 seconds, about
+   12 seconds in total, where the previous release was silent after about 8 seconds. Second, the
+   deadline cannot interrupt a single pattern match: with a deny pattern 150,000 characters long
+   and a 299,599-character command, one match took about 35 seconds. With deny patterns of 200 and
+   2,000 characters the same command returned in 0.7 and 1.8 seconds. The 228 rows above used a
+   short deny pattern.
+   The property test checked 1,457 rows: 1,455 must-deny rows (0 silent), one timed row at the length
+   cap that may stay silent or receive the deadline denial, and one ordinary long heredoc write
+   that stays silent.
+   The sample sets `"timeout": 10`; a timed-out `PreToolUse` command hook lets the call through
+   unless `"onFailure": "block"` is set (Claude Code v2.1.295 or later), an effect inferred from the
+   configuration and [hooks documentation](https://code.claude.com/docs/en/hooks#timeouts), not observed.
+   Without a `timeout` field, the documented default is 600 seconds; add `"onFailure": "block"`
+   if a stalled guard should block.
+   **Known over-denials:** the cap is set an order of magnitude above ordinary long heredoc writes.
+   A write of about 31,000 characters is analyzed in milliseconds and is not denied by the cap.
+   With Bash deny patterns configured, a command over 300,000 characters, or one the parser cannot
+   finish in 3 seconds, is denied even when Bash would run nothing denied.
+   A backslash-newline touching `|`, `;`, `&` or another operator character inside double quotes,
+   or directly after `;;` in a `case` body, is denied although Bash runs nothing denied. Put the
+   line break elsewhere.
+   A `$$` directly before an extended-glob opener in arithmetic or a `=~` operand can also
+   trigger a denial.
+   Accepted over-denials inherited from the previous matcher are pinned in ten test rows:
+   command substitution text inside single quotes in plain words, array elements, `let`
+   arguments and `[[ =~ ]]` operands; bodies of heredocs with quoted or escaped delimiters
+   and of several heredocs on one line; text after `#` following a redirection operator;
+   and a deny-listed word alone on a line inside a multi-line `case` pattern.
+   Bash runs nothing denied in these cases.
+   Known open: 13 review rows involving loop headers, `xargs` optional arguments, GNU `env -S`
+   escapes, array comments and subscripts, an ANSI-C control escape, and `$$'` in arithmetic
+   reach denied commands that neither check denies; the previous release also missed them, so
+   they are not regressions (see [section i of hooks/README.md](hooks/README.md#i-deny-list-depth-bash-deny-guardpy-pretooluse-on-bash)).
+   With deny patterns configured, it denies what it cannot parse, including these constructs:
+   parentheses in arithmetic parameter expansions, process substitution text in arithmetic,
+   expansions in heredoc delimiters, unsupported backslash-newlines touching operators, and extended glob
+   operators outside arithmetic and conditional regex operands, even when preceded by `$` or `$$`.
+   A command that turns `extglob`
+   on is also denied as not analyzed.
 6. **`skills/`**: slash-command skills for the session lifecycle (`/end`, `/handoff`, `/sessions`),
    self-improvement (`/evolve`), and memory curation (`/curate`), plus the doctrine for writing
    your own.

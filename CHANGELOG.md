@@ -15,6 +15,91 @@ which reads your `STACK_VERSION`, works out which entries below apply, and walks
 
 ---
 
+## v3.2.1 (2026-11-10): additive-doc
+
+The deny guard now reads supported Bash quoting, comments, heredocs and command boundaries together,
+then checks both the written command and its normalized command word. It checks paths, listed
+wrappers, supported conditionals and shell command strings for matching denies. It remains deny-only,
+with no new settings or dependencies. A guard error with configured deny patterns now fails closed.
+With deny patterns configured, a command with unterminated syntax, a never-closed heredoc, a NUL
+byte or a carriage return is now denied with a reason naming what could not be parsed.
+Also not analyzed: parentheses in arithmetic parameter expansions, process substitution text in arithmetic, expansions in heredoc delimiters, unsupported backslash-newlines touching operators, and extended glob operators outside arithmetic and conditional regex operands.
+An unquoted extended glob opener is denied even after `$` or `$$`; special parameters without an adjacent `(`, double-quoted text and heredoc body text keep their existing handling.
+Commands that turn `extglob` on, including computed option names or `BASHOPTS` values that could enable it, are denied as not analyzed.
+Known over-denials: backslash-newlines touching operator characters inside double quotes or directly after `;;` in a `case` body are denied although Bash runs nothing denied; put the line break elsewhere.
+Also denied: `$$` directly before an extended-glob opener in arithmetic or a `=~` operand.
+The cap is set an order of magnitude above ordinary long heredoc writes. A write of about
+31,000 characters is analyzed in milliseconds and is not denied by the cap.
+With Bash deny patterns configured, a command over 300,000 characters, or one the parser cannot
+finish in 3 seconds, is denied even when Bash would run nothing denied.
+Conditional regex groups preserve word boundaries; quoted substitutions in parameters, arithmetic and subscripted words are checked as code.
+
+Two checks run in order: an unchanged copy of the previous release's matcher first, then the
+parser if the first check stays silent. Either check can deny. Denials from the first start with
+`Legacy check: `; parser denials keep the parser's reasons. If either check fails to complete,
+the command is denied. Every command the previous release denied is still denied.
+The parser does not scan the command before a denial from the first check.
+The legacy check runs with no time limit, as in the previous release.
+This is unchanged from that release, so an input that made its matcher slow (for example a single
+run of tens of thousands of digits) is at least as slow here, and the parser's time is added
+after it when the first check stays silent.
+With Bash deny patterns configured, a command longer than 300,000 characters that the first
+check leaves silent is denied without running the parser. A command the parser has not finished
+within 3 seconds is also denied.
+On the development machine, a 4,816-character input that previously kept the parser busy for
+about 13 seconds is now denied after about 3.00 seconds.
+With the cap at 300,000, 228 measured rows up to 299,990 characters all returned from the parser
+within about 3.8 seconds on the development machine. The deadline is checked between parsing
+steps, so this is a measured figure, not a guarantee against the hook timeout.
+Two measured cases exceed that timeout. Neither is a regression: the previous release was
+silent on both. First, the two checks add up: a run of 85,000 digits followed by a shape the
+parser cannot finish took the first check about 8 seconds and the parser its 3 seconds, about
+12 seconds in total, where the previous release was silent after about 8 seconds. Second, the
+deadline cannot interrupt a single pattern match: with a deny pattern 150,000 characters long
+and a 299,599-character command, one match took about 35 seconds. With deny patterns of 200 and
+2,000 characters the same command returned in 0.7 and 1.8 seconds. The 228 rows above used a
+short deny pattern.
+The property test checked 1,457 rows: 1,455 must-deny rows (0 silent), one timed row at the length
+cap that may stay silent or receive the deadline denial, and one ordinary long heredoc write
+that stays silent.
+The sample sets `"timeout": 10`; a timed-out `PreToolUse` command hook lets the call through
+unless `"onFailure": "block"` is set (Claude Code v2.1.295 or later), an effect inferred from the
+configuration and [hooks documentation](https://code.claude.com/docs/en/hooks#timeouts), not observed.
+Without a `timeout` field, the documented default is 600 seconds; add `"onFailure": "block"`
+if a stalled guard should block.
+
+Accepted over-denials inherited from the previous matcher are pinned in ten test rows.
+Bash runs nothing denied in these cases: command substitution text inside single quotes in
+plain words, array elements, `let` arguments and `[[ =~ ]]` operands; bodies of heredocs with
+quoted or escaped delimiters and of several heredocs on one line; text after `#` following a
+redirection operator; and a deny-listed word alone on a line inside a multi-line `case` pattern.
+
+Known open: 13 review rows reach denied commands that neither check denies.
+The previous release also missed them, so they are not regressions.
+They cover `for NAME` without `in` and `for (( ... ))` followed directly by `do` or `{` (3);
+`xargs` long options with optional arguments, such as `--replace` and `--max-lines`, followed
+by a command (2); GNU `env -S` strings using the `\_` escape (1); `#` comments inside array
+initializers, quoted variants (2); array subscript variants, including an indexed assignment
+used as a prefix to a command (2); the `$'\c\''` ANSI-C control escape followed by a quote (1);
+and `$$'` inside `$(( ))` (2).
+
+In every version up to v3.2, `grep "a<<b" notes.txt` followed by a denied command,
+`python3 -c "print(1 << 2)"` followed by a denied command, and `/bin/rm -rf /important` were not
+denied by `Bash(rm:*)`. Quoted text could falsely open a heredoc, hiding later commands, and paths
+were not normalized. Existing installs remain affected until their installed hook is replaced.
+
+The guard is a backstop, not a sandbox or a security boundary. A hand-written scanner cannot model
+all of Bash, and each review round of this change found further shapes that reached a denied
+command. Fixed shapes are pinned by tests, and the limits that remain are listed in
+section i of `hooks/README.md`. Pair the guard with real isolation, such as `lab/`, for untrusted
+input.
+
+**To adopt:** copy `hooks/reference/bash-deny-guard.py` over the installed copy and read section i
+of `hooks/README.md` for the remaining static-inspection limits. Updating the template alone does
+not update your installed copy. No interview or npm update is needed.
+
+---
+
 ## v3.2 (2026-11-05): additive-doc
 
 The lead with no hands. `agents/defs/lead.md` is an optional Claude Code dispatcher for running

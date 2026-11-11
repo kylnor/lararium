@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Bash deny guard — DENY-ONLY variant of smart-approve for Claude Code.
+"""Bash deny guard, DENY-ONLY variant of smart-approve for Claude Code.
 
 Decomposes compound bash commands (&&, ||, ;, |, $(), backticks, heredocs)
 into individual sub-commands and checks each against the DENY patterns in
 the merged settings.json layers. Emits a deny when any sub-command (or the
-full command) matches; otherwise stays silent and normal permission flow
-applies. Because hook denies fire even under bypassPermissions, this makes
+full command) matches. With deny patterns configured, it also denies commands
+with unterminated syntax, never-closed heredocs, NUL bytes or carriage returns.
+Otherwise it stays silent and normal permission flow applies.
+Because hook denies fire even under bypassPermissions, this makes
 the settings deny-list hold for agent sessions too.
 
 Source: https://github.com/liberzon/claude-hooks (smart-approve.py)
@@ -28,6 +30,34 @@ import json
 import os
 import re
 import sys
+import time
+
+
+PARSER_MAX_COMMAND_LENGTH = 300000
+PARSER_DEADLINE_SECONDS = 3.0
+_parser_deadline = None
+
+
+class ParserDeadline(Exception):
+    """The scanner has exhausted its wall-clock budget."""
+
+
+def _check_parser_deadline():
+    if _parser_deadline is not None and time.monotonic() >= _parser_deadline:
+        raise ParserDeadline()
+
+
+def _parser_steps(items):
+    # Comprehensions and generator expressions need the same per-item checks.
+    for item in items:
+        _check_parser_deadline()
+        yield item
+
+
+def _parser_deadline_reason():
+    return 'Command not analyzed: parser exceeded {:g} seconds'.format(
+        PARSER_DEADLINE_SECONDS
+    )
 
 
 def load_settings(path=None):
@@ -38,7 +68,7 @@ def load_settings(path=None):
     try:
         with open(path) as f:
             return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError):
         return {}
 
 
@@ -100,8 +130,10 @@ def parse_bash_patterns(patterns):
     Returns a list of (prefix_string, glob_pattern) tuples.
     The glob_pattern is what fnmatch should match against.
     """
+    _check_parser_deadline()
     result = []
     for pat in patterns:
+        _check_parser_deadline()
         m = re.match(r'^Bash\((.+)\)$', pat)
         if not m:
             continue
@@ -110,7 +142,7 @@ def parse_bash_patterns(patterns):
         # Split on first ':'
         colon_idx = inner.find(':')
         if colon_idx == -1:
-            # Pattern like "Bash(something)" with no colon — treat as exact prefix
+            # Pattern like "Bash(something)" with no colon: treat as exact prefix
             result.append((inner, inner))
         else:
             prefix = inner[:colon_idx]
@@ -130,6 +162,970 @@ def command_matches_pattern(cmd, patterns):
       - It equals the prefix exactly (bare command, no args), OR
       - fnmatch(cmd, glob_pattern) is True
     """
+    _check_parser_deadline()
+    for prefix, glob_pat in patterns:
+        _check_parser_deadline()
+        if cmd == prefix:
+            return True
+        if fnmatch.fnmatch(cmd, glob_pat):
+            return True
+    return False
+
+
+MAX_DEPTH = 8
+ASSIGNMENT = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*\+?=')
+SUBSCRIPT = re.compile(r'[A-Za-z_][A-Za-z0-9_]*\[')
+NUMBER = re.compile(r'^[0-9]+(?:\.[0-9]+)?[smhd]?$')
+SHELLS = {'sh', 'bash', 'zsh', 'dash', 'ksh'}
+PREFIXES = {'!', 'then', 'do', 'else', 'elif', 'if', 'while', 'until', 'coproc'}
+HEADERS = {'for', 'case', 'select', 'done', 'fi', 'esac', 'in'}
+REDIRECTION = re.compile(r'(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?(<<<|<<-|<<|&>>|&>|>>|<>|>&|<&|>\||>|<)')
+
+
+def after_prefixes(words):
+    # Bash timing and control prefixes can precede each other and compound commands.
+    _check_parser_deadline()
+    i = 0
+    while i < len(words) and not words[i].quoted:
+        _check_parser_deadline()
+        if words[i].value in PREFIXES:
+            i += 1
+        elif words[i].value == 'time':
+            j = i + 1
+            while j < len(words) and words[j].value in ('-p', '--'):
+                _check_parser_deadline()
+                j += 1
+            if j < len(words) and words[j].value.startswith('-'):
+                break
+            i = j
+        else:
+            break
+    return words[i:]
+
+
+class ParseProblem(ValueError):
+    """Syntax the scanner cannot finish, distinct from an internal guard error."""
+
+
+class Word:
+    def __init__(self, raw, value, quoted=False):
+        self.raw = raw
+        self.value = value
+        self.quoted = quoted
+
+
+class Scanner:
+    """One forward cursor; heredoc queues belong to their code context."""
+
+    def __init__(self, text, depth=0, boundary_only=False):
+        _check_parser_deadline()
+        if depth > MAX_DEPTH:
+            raise ValueError('command nesting exceeds 8 levels')
+        self.text = text
+        self.i = 0
+        self.depth = depth
+        self.segments = []
+        self.parenthesis_ends = {}
+        self.substitution_ends = {}
+        self.boundary_only = boundary_only
+
+    def substitution_end(self, opening, double_quoted=False):
+        _check_parser_deadline()
+        if opening not in self.substitution_ends:
+            scanner = Scanner(self.text, self.depth, boundary_only=True)
+            scanner.i = opening
+            scanner.parenthesis_ends = self.parenthesis_ends
+            scanner.substitution_ends = self.substitution_ends
+            marker = '`' if self.text[opening] == '`' else '$('
+            scanner.substitution(marker, self.depth, double_quoted)
+        return self.substitution_ends[opening]
+
+    def continuation(self, position, control=False):
+        _check_parser_deadline()
+        s = self.text
+        if not s.startswith('\\\n', position):
+            return
+        before = s[position - 1:position] if position else ''
+        after = s[position + 2:position + 3]
+        operators = '<>[]{}()$;&|'
+        if after and after in operators:
+            raise ParseProblem('backslash-newline touching an operator')
+        if before and before in operators and not control:
+            raise ParseProblem('backslash-newline touching an operator')
+
+    def parenthesis_end(self, opening):
+        # Locate the inner close without interpreting words as commands. Remember
+        # nested closes so arithmetic expansions do not repeat this lookahead.
+        _check_parser_deadline()
+        if opening in self.parenthesis_ends:
+            return self.parenthesis_ends[opening]
+        s = self.text
+        stack = [[opening, ')', None]]
+        i = opening + 1
+        while i < len(s):
+            _check_parser_deadline()
+            frame = stack[-1]
+            quote = frame[2]
+            ch = s[i]
+            if quote in ("'", 'ansi'):
+                if ch == ('\'' if quote == 'ansi' else quote):
+                    frame[2] = None
+                elif ch == '\\' and quote != "'":
+                    i += 1
+                i += 1
+                continue
+            if ch == '\\' and i + 1 < len(s):
+                self.continuation(i)
+                i += 2 if quote is None or s[i + 1] in '$`"\\\n' else 1
+                continue
+            if s[i:i + 2] in ('<(', '>('):
+                raise ParseProblem('process substitution in arithmetic')
+            if ch == '"':
+                frame[2] = None if quote else '"'
+            elif quote is None and s.startswith("$'", i):
+                frame[2] = 'ansi'
+                i += 1
+            elif ch == '`' or (s.startswith('$(', i) and not s.startswith('$((', i)):
+                # Shell substitutions own case patterns, comments and heredocs.
+                # Locate them without contributing command candidates.
+                i = self.substitution_end(i, double_quoted=quote == '"')
+                continue
+            elif quote is None and ch == "'":
+                frame[2] = ch
+            elif s[i:i + 2] in ('$(', '${', '$['):
+                # An expansion owns its quotes and delimiters, even inside quotes.
+                stack.append([i + 1, {'(': ')', '{': '}', '[': ']'}[s[i + 1]], None])
+                i += 1
+            elif quote is None:
+                if ch == frame[1]:
+                    if ch == '}' and any(c in s[frame[0] - 1:i + 1] for c in '()'):
+                        raise ParseProblem('parenthesis in arithmetic parameter expansion')
+                    if ch == ')':
+                        self.parenthesis_ends[frame[0]] = i
+                    stack.pop()
+                    if not stack:
+                        return i
+                elif (ch == '(' and frame[1] == ')') or (ch == '[' and frame[1] == ']'):
+                    stack.append([i, ')' if ch == '(' else ']', None])
+            i += 1
+        for position, close, quote in stack:
+            _check_parser_deadline()
+            if close == ')':
+                self.parenthesis_ends[position] = None
+        return None
+
+    def arithmetic(self, depth, marker='$(('):
+        _check_parser_deadline()
+        start = self.i
+        close = self.parenthesis_end(start + len(marker) - 1)
+        if close is not None and not self.text.startswith(')', close + 1):
+            # Only an adjacent second close selects arithmetic. Otherwise the
+            # outer parenthesis owns shell code beginning with the inner one.
+            self.i = start + len(marker) - 1
+            if not self.code(')', depth + (marker == '$((')):
+                raise ParseProblem('unterminated {} group'.format(marker))
+            return
+        self.data_unit(marker, ')', depth)
+
+    def data_unit(self, marker, close, depth, scan_quoted=False):
+        # Expansions, arithmetic commands and array words own their matching close.
+        # Their operators are data; word() still discovers executable substitutions.
+        _check_parser_deadline()
+        self.i += len(marker)
+        # Bare braces are parameter data; word() recurses into actual expansions.
+        opening = None if marker == '${' else marker[-1]
+        level = 2 if marker in ('((', '$((') else 1
+        while self.i < len(self.text) and level:
+            _check_parser_deadline()
+            ch = self.text[self.i]
+            if ch == close:
+                level -= 1
+                self.i += 1
+            elif ch == opening:
+                level += 1
+                self.i += 1
+            else:
+                begin = self.i
+                self.word(depth, stop=close, unit_open=opening,
+                          scan_quoted=scan_quoted or marker != '(', array_item=marker == '(',
+                          arithmetic=marker in ('((', '$((', '$['))
+                if self.i == begin:
+                    self.i += 1
+        if level:
+            kind = {'${': 'parameter expansion', '$((': 'arithmetic expansion',
+                    '((': 'arithmetic command', '$[': 'legacy arithmetic expansion',
+                    '(': 'array initializer'}[marker]
+            raise ParseProblem('unterminated {} ({})'.format(kind, marker))
+        return True
+
+    def substitution(self, marker, depth, double_quoted=False):
+        # Substitutions re-enter code even inside double quotes, at a bounded depth.
+        _check_parser_deadline()
+        if depth >= MAX_DEPTH:
+            raise ValueError('command nesting exceeds 8 levels')
+        start = self.i
+        if self.boundary_only and start in self.substitution_ends:
+            self.i = self.substitution_ends[start]
+            return
+        self.i += len(marker)
+        if marker == '`':
+            body = []
+            while self.i < len(self.text):
+                _check_parser_deadline()
+                ch = self.text[self.i]
+                self.i += 1
+                if ch == '`':
+                    nested = Scanner(''.join(body), depth + 1, self.boundary_only)
+                    nested.code()
+                    self.segments.extend(nested.segments)
+                    self.substitution_ends[start] = self.i
+                    return
+                if ch == '\\' and self.i < len(self.text):
+                    nxt = self.text[self.i]
+                    self.i += 1
+                    if nxt not in '$`\\' and not (double_quoted and nxt == '"'):
+                        body.append(ch)
+                    body.append(nxt)
+                else:
+                    body.append(ch)
+            raise ParseProblem('unterminated ` substitution')
+        if not self.code(')', depth + 1):
+            raise ParseProblem('unterminated {} substitution'.format(marker))
+        self.substitution_ends[start] = self.i
+
+    def word(self, depth, delimiter=False, stop=None, unit_open=None,
+             scan_quoted=False, array_item=False, regex=False, pattern=False, arithmetic=False):
+        _check_parser_deadline()
+        start = self.i
+        value = []
+        quoted = False
+        quote = None
+        ansi_ended = False
+        s = self.text
+        scan_quoted = not delimiter and (scan_quoted or (
+            array_item and s.startswith('[', start)) or bool(
+            SUBSCRIPT.match(s, start)))
+        quote_start = None
+        pattern_level = 0
+        while self.i < len(s):
+            _check_parser_deadline()
+            ch = s[self.i]
+            if delimiter and s[self.i:self.i + 2] in ('?(', '*(', '+(', '@(', '!('):
+                raise ParseProblem('heredoc delimiter containing an extended glob operator')
+            if delimiter and (s[self.i:self.i + 2] in ('${', '$[', '$(', '<(', '>(') or ch == '`'):
+                raise ParseProblem('heredoc delimiter containing a substitution marker')
+            if quote is None and ch == stop:
+                break
+            # Keep quote boundaries, but inspect their raw contents in expansion data.
+            if quote in ("'", 'ansi'):
+                if ch == "'":
+                    if scan_quoted:
+                        self.expansions(s[quote_start:self.i], depth)
+                    quote = None
+                    self.i += 1
+                elif ch == '\\' and quote == 'ansi':
+                    m = re.match(r'\\([0-7]{1,3}|x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{1,4}|U[0-9a-fA-F]{1,8}|c.|.)', s[self.i:self.i + 10], re.S)
+                    if m:
+                        esc = m.group(1)
+                        simple = {'a': '\a', 'b': '\b', 'e': '\x1b', 'E': '\x1b',
+                                  'f': '\f', 'n': '\n', 'r': '\r', 't': '\t', 'v': '\v',
+                                  '\\': '\\', "'": "'", '"': '"', '?': '?'}
+                        if esc[0] in '01234567':
+                            decoded = chr(int(esc, 8) % 256)
+                        elif esc[0] in 'xuU' and len(esc) > 1:
+                            decoded = chr(int(esc[1:], 16))
+                        elif esc[0] == 'c' and len(esc) == 2:
+                            decoded = chr(ord(esc[1].upper()) % 32)
+                        else:
+                            decoded = simple.get(esc, '\\' + esc)
+                        if decoded == '\0':
+                            ansi_ended = True
+                        if not ansi_ended:
+                            value.append(decoded)
+                        self.i += len(m.group(0))
+                    else:
+                        if not ansi_ended:
+                            value.append(ch)
+                        self.i += 1
+                else:
+                    if quote != 'ansi' or not ansi_ended:
+                        value.append(ch)
+                    self.i += 1
+                continue
+            # Backslash-newline vanishes; double quotes only escape $, `, ", and backslash.
+            if ch == '\\' and self.i + 1 < len(s):
+                nxt = s[self.i + 1]
+                if nxt == '\n':
+                    self.continuation(self.i)
+                    self.i += 2
+                elif quote != '"' or nxt in '$`"\\':
+                    quoted = True
+                    value.append(nxt)
+                    self.i += 2
+                else:
+                    value.append(ch)
+                    self.i += 1
+                continue
+            if quote is None and s.startswith('$"', self.i):
+                self.i += 1
+                ch = '"'
+            if ch == '"':
+                quoted = True
+                quote = None if quote == '"' else '"'
+                self.i += 1
+                continue
+            if quote is None and (ch == "'" or s.startswith("$'", self.i)):
+                quoted = True
+                quote = 'ansi' if ch == '$' else "'"
+                ansi_ended = False
+                self.i += 2 if ch == '$' else 1
+                quote_start = self.i
+                continue
+            if not delimiter:
+                if arithmetic and s[self.i:self.i + 2] in ('<(', '>('):
+                    raise ParseProblem('process substitution in arithmetic')
+                if (quote is None and not arithmetic and not regex and
+                        ch in '?*+@!' and s.startswith('(', self.i + 1)):
+                    # A preceding dollar does not hide an unquoted glob opener.
+                    raise ParseProblem('extended glob operator')
+                begin = self.i
+                if s.startswith('$((', self.i):
+                    self.arithmetic(depth)
+                elif s.startswith('${', self.i):
+                    self.data_unit('${', '}', depth)
+                    if arithmetic and any(c in s[begin:self.i] for c in '()'):
+                        raise ParseProblem('parenthesis in arithmetic parameter expansion')
+                elif s.startswith('$[', self.i):
+                    self.data_unit('$[', ']', depth)
+                elif s.startswith('$(', self.i) or (quote is None and s[self.i:self.i + 2] in ('<(', '>(')):
+                    self.substitution(s[self.i:self.i + 2], depth)
+                elif ch == '`':
+                    self.substitution('`', depth, double_quoted=quote == '"')
+                elif s.startswith('$$', self.i) and s[self.i + 2:self.i + 3] not in ('(', '{', '['):
+                    # Keep the PID pair from becoming an overlapping ANSI-C quote.
+                    # Still inspect overlapping substitution markers conservatively.
+                    self.i += 2
+                elif ((arithmetic or regex) and quote is None and ch == '$' and
+                      s[self.i + 1:self.i + 2] in ('?', '*', '@', '!') and
+                      self.i >= start + 2 and s[self.i - 2:self.i] == '$$' and
+                      s.startswith('(', self.i + 2)):
+                    # Preserve prior conservative PID denials in arithmetic and regex data.
+                    raise ParseProblem('extended glob operator after PID expansion')
+                elif quote is None and ch == '(' and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*\+?=', s[start:self.i]):
+                    self.data_unit('(', ')', depth, scan_quoted=scan_quoted)
+                if self.i != begin:
+                    value.append(s[begin:self.i])
+                    continue
+            # Regex groups and extended patterns keep shell metacharacters in one word.
+            if quote is None and (regex or pattern):
+                if ch == '(' and (regex or pattern_level or (
+                        self.i > start and s[self.i - 1] in '?*+@!')):
+                    pattern_level += 1
+                elif ch == ')' and pattern_level:
+                    pattern_level -= 1
+                elif not pattern_level and not (regex and ch == '|'):
+                    if ch in ' \t\n;&|()<>':
+                        break
+                value.append(ch)
+                self.i += 1
+                continue
+            if quote is None and ch == unit_open:
+                break
+            if quote is None and (ch in ' \t\n;&|()<>' or ch == '`'):
+                break
+            value.append(ch)
+            self.i += 1
+        if quote:
+            kind = {"'": 'single quote', '"': 'double quote', 'ansi': "ANSI-C quote ($'...)"}[quote]
+            raise ParseProblem('unterminated ' + kind)
+        if pattern_level:
+            raise ParseProblem('unterminated {} group'.format('regex' if regex else 'pattern'))
+        return Word(s[start:self.i], ''.join(value), quoted)
+
+    def bodies(self, pending, depth, substitution=False):
+        # Bash reads queued heredocs after newline, in order, with exact delimiter lines.
+        _check_parser_deadline()
+        s = self.text
+        for doc in pending:
+            _check_parser_deadline()
+            chunks = []
+            while self.i < len(s):
+                _check_parser_deadline()
+                end = s.find('\n', self.i)
+                if end < 0:
+                    end = len(s)
+                line = s[self.i:end]
+                self.i = min(end + 1, len(s))
+                while (not doc['quoted'] and end < len(s) and
+                       (len(line) - len(line.rstrip('\\'))) % 2):
+                    _check_parser_deadline()
+                    next_end = s.find('\n', self.i)
+                    if next_end < 0:
+                        next_end = len(s)
+                    line = line[:-1] + s[self.i:next_end]
+                    end = next_end
+                    self.i = min(end + 1, len(s))
+                tested = line.lstrip('\t') if doc['tabs'] else line
+                if substitution and tested.startswith(doc['delimiter'] + ')'):
+                    raise ParseProblem('heredoc {!r} terminator shares substitution closing line'.format(doc['delimiter']))
+                if tested == doc['delimiter']:
+                    break
+                chunks.append(tested + ('\n' if end < len(s) else ''))
+            else:
+                raise ParseProblem('heredoc {!r} has no terminator'.format(doc['delimiter']))
+            doc['body'] = ''.join(chunks)
+            # Unquoted heredocs expand substitutions; ordinary quotes there are just data.
+            if not doc['quoted']:
+                self.expansions(doc['body'], depth)
+
+    def expansions(self, body, depth):
+        _check_parser_deadline()
+        scanner = Scanner(body, depth, self.boundary_only)
+        while scanner.i < len(body):
+            _check_parser_deadline()
+            ch = body[scanner.i]
+            if ch == '\\' and scanner.i + 1 < len(body) and body[scanner.i + 1] in '\\$`\n':
+                scanner.i += 2
+            elif body.startswith('$((', scanner.i):
+                scanner.arithmetic(depth)
+            elif body.startswith('${', scanner.i):
+                scanner.data_unit('${', '}', depth)
+            elif body.startswith('$[', scanner.i):
+                scanner.data_unit('$[', ']', depth)
+            elif body.startswith('$(', scanner.i):
+                scanner.substitution('$(', depth)
+            elif ch == '`':
+                scanner.substitution('`', depth)
+            else:
+                scanner.i += 1
+        self.segments.extend(scanner.segments)
+
+    def conditional(self, depth, pending):
+        # Conditional operators and pattern groups are data, substitutions are code.
+        _check_parser_deadline()
+        self.i += 2
+        s = self.text
+        state = 'term'
+        while self.i < len(s):
+            _check_parser_deadline()
+            if s[self.i] == '\n' and pending:
+                raise ParseProblem('heredoc body starts inside conditional ([[)')
+            if s[self.i] in ' \t\n' or s.startswith('\\\n', self.i):
+                self.continuation(self.i)
+                self.i += 2 if s.startswith('\\\n', self.i) else 1
+                continue
+            # word() consumes embedded hashes; only a boundary hash reaches here.
+            if s[self.i] == '#':
+                pos = s.find('\n', self.i)
+                self.i = len(s) if pos < 0 else pos
+                continue
+            if s.startswith(']]', self.i) and (
+                    self.i + 2 == len(s) or s[self.i + 2] in ' \t\n;&|()<>'):
+                self.i += 2
+                return
+            if state != 'regex' and s[self.i:self.i + 2] in ('&&', '||'):
+                state = 'term'
+                self.i += 2
+                continue
+            if state == 'term' and s[self.i] == '(':
+                self.i += 1
+                continue
+            if s[self.i] == ')':
+                state = 'end'
+                self.i += 1
+                continue
+            begin = self.i
+            word = self.word(depth, regex=state == 'regex', pattern=state == 'right')
+            if self.i == begin:
+                self.i += 1
+            if state == 'term':
+                if not word.quoted and word.value == '!':
+                    continue
+                unary = not word.quoted and re.fullmatch(r'-[abcdefghkLnoprstuvwxGNORSz]', word.value)
+                state = 'unary' if unary else 'operator'
+            elif state == 'operator':
+                state = 'regex' if not word.quoted and word.value == '=~' else 'right'
+            else:
+                state = 'end'
+        raise ParseProblem('unterminated conditional ([[)')
+
+    def code(self, end=None, depth=None):
+        _check_parser_deadline()
+        depth = self.depth if depth is None else depth
+        s = self.text
+        words, raw, docs, pending = [], [], [], []
+        groups = 0
+        cases = []
+
+        def flush():
+            _check_parser_deadline()
+            if not self.boundary_only and (raw or words) and not (cases and cases[-1][0] != 'body'):
+                self.segments.append((words[:], ' '.join(raw), docs[:], depth))
+            words.clear()
+            raw.clear()
+            docs.clear()
+
+        while self.i < len(s):
+            _check_parser_deadline()
+            ch = s[self.i]
+            # An unquoted backtick or closing substitution parenthesis returns to its word.
+            if end and ch == end and not groups and not (
+                    end == ')' and cases and cases[-1][0] == 'pattern'):
+                if pending:
+                    raise ParseProblem('heredoc {!r} has no body before substitution closes'.format(pending[0]['delimiter']))
+                flush()
+                self.i += 1
+                return True
+            if s.startswith('\\\n', self.i):
+                self.continuation(self.i)
+                self.i += 2
+                continue
+            if ch in ' \t':
+                self.i += 1
+                continue
+            # Comments start only at a word boundary; their quotes cannot alter scanner state.
+            if ch == '#':
+                pos = s.find('\n', self.i)
+                self.i = len(s) if pos < 0 else pos
+                continue
+            # Case patterns are headers up to ')'; alternatives are not pipelines.
+            if cases and cases[-1][0] == 'pattern' and ch in '()|':
+                if ch == ')':
+                    cases[-1][0] = 'body'
+                    words.clear()
+                    raw.clear()
+                self.i += 1
+                continue
+            if s.startswith('[[', self.i) and (
+                    self.i + 2 == len(s) or s[self.i + 2] in ' \t\n') and (
+                    not cases or cases[-1][0] == 'body') and len(raw) == len(words) and not after_prefixes(words):
+                begin = self.i
+                self.conditional(depth, pending)
+                text = s[begin:self.i]
+                words.append(Word(text, '[['))
+                raw.append(text)
+                continue
+            if s.startswith('((', self.i):
+                begin = self.i
+                header = after_prefixes(words)
+                if len(header) == 1 and not header[0].quoted and header[0].value == 'for':
+                    self.data_unit('((', ')', depth)
+                else:
+                    self.arithmetic(depth, '((')
+                text = s[begin:self.i]
+                words.append(Word(text, text))
+                raw.append(text)
+                continue
+            # Control operators separate commands; grouping exposes commands on either side.
+            if ch in ';|&\n()' and s[self.i:self.i + 2] not in ('&>',):
+                begin = self.i
+                if ch == '(':
+                    groups += 1
+                elif ch == ')' and groups:
+                    groups -= 1
+                flush()
+                self.i += 1
+                if ch != '\n' and self.i < len(s) and s[self.i] in '|&;' and ch in '|&;':
+                    if ch == ';' and cases and s[self.i] in ';&':
+                        cases[-1] = ['pattern', True]
+                    self.i += 1
+                    if ch == ';' and self.i < len(s) and s[self.i] == '&':
+                        self.i += 1
+                if ch == '\n':
+                    self.bodies(pending, depth, substitution=end == ')')
+                    pending.clear()
+                elif s.startswith('\\\n', self.i):
+                    self.continuation(self.i, control=s[begin:self.i] in ('|', '||', '&&', ';', '&', '|&'))
+                    self.i += 2
+                continue
+            if ch in '{}' and (
+                    self.i + 1 == len(s) or s[self.i + 1] in ' \t\n;)'):
+                header = after_prefixes(words)
+                named_group = (ch == '{' and not any(w.quoted for w in _parser_steps(header)) and (
+                    (len(header) == 2 and header[0].value == 'function') or
+                    (len(header) == 1 and any(w.value == 'coproc' and not w.quoted for w in _parser_steps(words)))))
+                if not header or named_group:
+                    if named_group:
+                        words.clear()
+                        raw.clear()
+                    flush()
+                    self.i += 1
+                    continue
+            # Redirection operands are data; process substitutions remain executable words.
+            m = REDIRECTION.match(s, self.i)
+            if m and not (s[self.i:self.i + 2] in ('<(', '>(')):
+                op = m.group(1)
+                raw.append(m.group(0))
+                self.i += len(m.group(0))
+                while self.i < len(s):
+                    _check_parser_deadline()
+                    if s[self.i] in ' \t':
+                        self.i += 1
+                    elif s.startswith('\\\n', self.i):
+                        self.continuation(self.i)
+                        self.i += 2
+                    else:
+                        break
+                # A comment cannot supply a redirection operand or a heredoc delimiter.
+                if self.i < len(s) and s[self.i] == '#':
+                    continue
+                operand = self.word(depth, delimiter=op in ('<<', '<<-'), stop=end)
+                raw.append(operand.raw)
+                if operand.raw and op in ('<<', '<<-', '<<<'):
+                    doc = {'delimiter': operand.value, 'quoted': operand.quoted,
+                           'tabs': op == '<<-', 'body': operand.value if op == '<<<' else ''}
+                    docs.append(doc)
+                    if op != '<<<':
+                        pending.append(doc)
+                continue
+            word = self.word(depth, stop=end)
+            if self.i == len(s) or word.raw:
+                phase = cases[-1][0] if cases else None
+                command_position = len(raw) == len(words) and not after_prefixes(words)
+                if phase == 'subject':
+                    cases[-1][0] = 'in'
+                elif phase == 'in':
+                    if not word.quoted and word.value == 'in':
+                        cases[-1][0] = 'pattern'
+                        words.clear()
+                        raw.clear()
+                        continue
+                elif not word.quoted:
+                    if word.value == 'case' and command_position and phase != 'pattern':
+                        cases.append(['subject', False])
+                    elif word.value == 'esac' and cases:
+                        # In a body only a command-position esac closes the case.
+                        # The first pattern may itself be spelled esac, even unquoted.
+                        pattern_close = False
+                        if phase == 'pattern' and command_position:
+                            look = self.i
+                            while look < len(s):
+                                _check_parser_deadline()
+                                if s[look] in ' \t\n':
+                                    look += 1
+                                elif s.startswith('\\\n', look):
+                                    self.continuation(look)
+                                    look += 2
+                                else:
+                                    break
+                            following = s[look:look + 1]
+                            pattern_close = (following not in (')', '|') or (
+                                end == ')' and cases[-1][1] and following == ')'))
+                        if (phase == 'body' and command_position) or pattern_close:
+                            cases.pop()
+                raw.append(word.raw)
+                words.append(word)
+            else:
+                # A stray unmatched closer is syntax, never a reason to stop scanning.
+                self.i += 1
+        flush()
+        if pending:
+            raise ParseProblem('heredoc {!r} has no body before end of input'.format(pending[0]['delimiter']))
+        return False
+
+
+# Each wrapper lists value options and flags; unknown options branch into both readings.
+WRAPPERS = {
+    'command': (set(), {'-p'}),
+    'builtin': (set(), set()),
+    'exec': ({'-a'}, {'-c', '-l'}),
+    'env': ({'-u', '--unset', '-C', '--chdir', '-S', '--split-string'},
+            {'-i', '--ignore-environment', '-', '-0', '--null', '-v', '--debug'}),
+    'sudo': ({'-u', '--user', '-g', '--group', '-h', '--host', '-p', '--prompt',
+              '-C', '--close-from', '-T', '--command-timeout', '-r', '--role',
+              '-t', '--type', '-D', '--chdir', '-R', '--chroot'},
+             {'-E', '--preserve-env', '-H', '-n', '-S', '-b', '-k', '-K', '-v'}),
+    'doas': ({'-u', '-C'}, {'-n', '-s', '-L'}),
+    'nohup': (set(), set()),
+    'time': ({'-f', '--format', '-o', '--output'}, {'-p', '-a', '--append', '-v'}),
+    'timeout': ({'-s', '--signal', '-k', '--kill-after'},
+                {'--foreground', '--preserve-status', '-v', '--verbose'}),
+    'nice': ({'-n', '--adjustment'}, set()),
+    'ionice': ({'-c', '--class', '-n', '--classdata', '-p', '-P', '-u'}, {'-t', '--ignore'}),
+    'stdbuf': ({'-i', '--input', '-o', '--output', '-e', '--error'}, set()),
+    'setsid': (set(), {'-c', '--ctty', '-f', '--fork', '-w', '--wait'}),
+    'busybox': (set(), set()),
+    'xargs': ({'-a', '--arg-file', '-E', '-I', '--replace', '-L', '--max-lines',
+               '-n', '--max-args', '-P', '--max-procs', '-s', '--max-chars', '-d', '--delimiter'},
+              {'-0', '--null', '-r', '--no-run-if-empty', '-t', '--verbose', '-p', '--interactive', '-x', '--exit'}),
+}
+
+
+def extglob_option(value):
+    # Computed option names cannot establish that extended globbing stays off.
+    _check_parser_deadline()
+    return value == 'extglob' or any(c in value for c in '$`*?[{}')
+
+
+def check_bashopts(value):
+    _check_parser_deadline()
+    assignment = re.match(r'^BASHOPTS\+?=(.*)$', value, re.S)
+    if assignment and ('extglob' in assignment[1] or extglob_option(assignment[1])):
+        raise ParseProblem('extglob turned on')
+
+
+def command_starts(words, payload):
+    """Yield real command positions without walking their ordinary arguments."""
+    _check_parser_deadline()
+    todo = [0]
+    visited = set()
+    while todo:
+        _check_parser_deadline()
+        i = todo.pop()
+        while i < len(words) and ASSIGNMENT.match(words[i].value):
+            _check_parser_deadline()
+            check_bashopts(words[i].value)
+            i += 1
+        if i >= len(words) or i in visited:
+            continue
+        visited.add(i)
+        yield i
+        base = os.path.basename(words[i].value)
+        if base not in WRAPPERS:
+            continue
+        takes, flags = WRAPPERS[base]
+        options = [i + 1]
+        seen = set()
+        while options:
+            _check_parser_deadline()
+            j = options.pop()
+            while j < len(words):
+                _check_parser_deadline()
+                if j in seen:
+                    break
+                seen.add(j)
+                arg = words[j].value
+                if base == 'command' and arg.startswith('-') and not arg.startswith('--') and any(c in arg[1:] for c in 'vV'):
+                    break
+                if base == 'env' and (arg in ('-S', '--split-string') or arg.startswith('--split-string=') or arg.startswith('-S')):
+                    if arg in ('-S', '--split-string'):
+                        j += 1
+                        text = words[j].value if j < len(words) else ''
+                    else:
+                        text = arg.split('=', 1)[1] if '=' in arg else arg[2:]
+                    payload(text + ' ' + ' '.join(w.raw for w in _parser_steps(words[j + 1:])), 'env ')
+                    break
+                if arg == '--':
+                    todo.append(j + (2 if base == 'timeout' else 1))
+                    break
+                if base == 'timeout' and (not arg.startswith('-') or arg == '-'):
+                    todo.append(j + 1)
+                    break
+                if ASSIGNMENT.match(arg) or NUMBER.fullmatch(arg):
+                    check_bashopts(arg)
+                    j += 1
+                    continue
+                if not arg.startswith('-') or arg == '-':
+                    if arg in flags:
+                        j += 1
+                        continue
+                    todo.append(j)
+                    break
+                opt = arg.split('=', 1)[0]
+                if opt in takes:
+                    j += 1 if '=' in arg else 2
+                elif opt in flags:
+                    j += 1
+                elif not arg.startswith('--') and any(arg.startswith(o) and len(arg) > len(o) for o in _parser_steps(takes) if o.startswith('-') and not o.startswith('--')):
+                    j += 1
+                elif not arg.startswith('--') and all('-' + c in flags for c in _parser_steps(arg[1:])):
+                    j += 1
+                else:
+                    # Unknown option: the next word may be its value or its command.
+                    options.append(j + 2)
+                    j += 1
+
+
+def decompose_command(command, depth=0):
+    _check_parser_deadline()
+    scanner = Scanner(command, depth)
+    scanner.code()
+    result = [re.sub(r'[ \t\n]+', ' ', command).strip(' \t\n')]
+
+    def payload(text, nested_depth, prefix=''):
+        _check_parser_deadline()
+        result.append(re.sub(r'[ \t\n]+', ' ', text).strip(' \t\n'))
+        result.extend(decompose_command(prefix + text, nested_depth))
+
+    def analyze(words, raw, docs, level):
+        _check_parser_deadline()
+        if level > MAX_DEPTH:
+            raise ValueError('command nesting exceeds 8 levels')
+        # Reserved prefixes expose the following command; loop and case headers do not run it.
+        words = after_prefixes(words)
+        if not words or (not words[0].quoted and words[0].value in HEADERS):
+            return
+        result.append(raw.strip(' \t\n'))
+        for i in command_starts(words, lambda text, prefix='': payload(text, level + 1, prefix)):
+            _check_parser_deadline()
+            word = words[i]
+            base = os.path.basename(word.value)
+            args = words[i + 1:]
+            result.append(' '.join([word.raw] + [w.raw for w in _parser_steps(args)]))
+            result.append(' '.join([base] + [w.raw for w in _parser_steps(args)]))
+            if base == 'shopt':
+                k = 0
+                setting = False
+                while k < len(args) and args[k].value.startswith('-'):
+                    _check_parser_deadline()
+                    flag = args[k].value
+                    k += 1
+                    if flag == '--':
+                        break
+                    setting = setting or 's' in flag[1:]
+                if setting and any(extglob_option(arg.value) for arg in _parser_steps(args[k:])):
+                    raise ParseProblem('extglob turned on')
+            elif base in ('export', 'declare', 'typeset', 'readonly', 'local'):
+                for arg in args:
+                    _check_parser_deadline()
+                    check_bashopts(arg.value)
+            # Shell -c consumes one command string; eval joins all its arguments as code.
+            if base in SHELLS:
+                k = 0
+                command_string = False
+                while k < len(args):
+                    _check_parser_deadline()
+                    arg = args[k]
+                    if arg.value == '--':
+                        k += 1
+                        break
+                    if arg.value in ('-', '+') or not arg.value.startswith(('-', '+')):
+                        break
+                    if arg.value.startswith('-') and not arg.value.startswith('--') and 'O' in arg.value:
+                        attached = arg.value.split('O', 1)[1]
+                        following = args[k + 1].value if k + 1 < len(args) else ''
+                        if extglob_option(attached) or extglob_option(following):
+                            raise ParseProblem('extglob turned on')
+                    if arg.value in ('-o', '-O', '+o', '+O', '--rcfile', '--init-file'):
+                        k += 2
+                        continue
+                    if not arg.value.startswith('--') and 'c' in arg.value[1:]:
+                        command_string = arg.value.startswith('-')
+                    # A grouped -o/-O also consumes the following option value.
+                    k += 2 if not arg.value.startswith('--') and any(
+                        c in arg.value[1:] for c in 'oO') else 1
+                if command_string and k < len(args):
+                    payload(args[k].value, level + 1)
+                for doc in docs:
+                    _check_parser_deadline()
+                    payload(doc['body'], level + 1)
+            elif base == 'eval':
+                if args and args[0].value == '--':
+                    args = args[1:]
+                payload(' '.join(w.value for w in _parser_steps(args)), level + 1)
+            elif base == 'find':
+                k = 0
+                while k < len(args):
+                    _check_parser_deadline()
+                    if args[k].value in ('-exec', '-execdir', '-ok', '-okdir'):
+                        start = k + 1
+                        k = start
+                        while k < len(args) and args[k].value not in (';', '+'):
+                            _check_parser_deadline()
+                            k += 1
+                        sub = args[start:k]
+                        analyze(sub, ' '.join(w.raw for w in _parser_steps(sub)), [], level + 1)
+                    k += 1
+
+    for words, raw, docs, level in scanner.segments:
+        _check_parser_deadline()
+        analyze(words, raw, docs, level)
+    return [cmd for cmd in _parser_steps(result) if cmd]
+
+
+def parse_denial(problem):
+    return 'deny', (
+        'Command not analyzed: {}. This guard denies what it cannot parse '
+        'while deny patterns are configured.'.format(problem)
+    )
+
+
+def guard_error(exc):
+    return 'deny', (
+        'Bash deny guard error ({}: {}). Remove the bash-deny-guard.py '
+        'PreToolUse hook from your settings to unwire it.'.format(type(exc).__name__, exc)
+    )
+
+
+def parser_decide(command, settings):
+    """Deny matches and parse problems; errors with configured denies fail closed."""
+    global _parser_deadline
+    denies = settings.get('permissions', {}).get('deny', [])
+    if not denies:
+        return None, None
+    _parser_deadline = time.monotonic() + PARSER_DEADLINE_SECONDS
+    try:
+        patterns = parse_bash_patterns(denies)
+        if not patterns:
+            return None, None
+        _check_parser_deadline()
+        if not command or not command.strip(' \t\n'):
+            _check_parser_deadline()
+            return None, None
+        if '\0' in command:
+            return parse_denial('NUL byte')
+        if '\r' in command:
+            return parse_denial('carriage return')
+        flat = re.sub(r'[ \t\n]+', ' ', command).strip(' \t\n')
+        if command_matches_pattern(flat, patterns):
+            return 'deny', 'Command matches deny pattern'
+        for cmd in decompose_command(command):
+            _check_parser_deadline()
+            if command_matches_pattern(cmd, patterns):
+                return 'deny', "Sub-command '{}' matches deny pattern".format(cmd)
+        _check_parser_deadline()
+        return None, None
+    except ParserDeadline:
+        return 'deny', _parser_deadline_reason()
+    except ParseProblem as exc:
+        return parse_denial(exc)
+    except Exception as exc:
+        return guard_error(exc)
+    finally:
+        _parser_deadline = None
+
+
+# Keep this matcher independent of the scanner, copied from origin/main's matcher.
+def legacy_parse_bash_patterns(patterns):
+    """Extract command prefixes from Bash(...) permission patterns.
+
+    "Bash(git status:*)" -> "git status"
+    "Bash(rm:*)"         -> "rm"
+    Non-Bash patterns are skipped.
+
+    Returns a list of (prefix_string, glob_pattern) tuples.
+    The glob_pattern is what fnmatch should match against.
+    """
+    result = []
+    for pat in patterns:
+        m = re.match(r'^Bash\((.+)\)$', pat)
+        if not m:
+            continue
+        inner = m.group(1)
+        # inner is like "git status:*" or "rm:*" or "/opt/tools/...adb*"
+        # Split on first ':'
+        colon_idx = inner.find(':')
+        if colon_idx == -1:
+            # Pattern like "Bash(something)" with no colon , treat as exact prefix
+            result.append((inner, inner))
+        else:
+            prefix = inner[:colon_idx]
+            suffix = inner[colon_idx + 1:]
+            # The glob pattern is prefix + ' ' + suffix (for matching with args)
+            # But we also want bare prefix to match (no args)
+            glob_pat = prefix + ' ' + suffix if suffix else prefix
+            result.append((prefix, glob_pat))
+    return result
+
+
+def legacy_command_matches_pattern(cmd, patterns):
+    """Check if a command matches any of the parsed Bash patterns.
+
+    Each pattern is (prefix, glob_pattern).
+    A command matches if:
+      - It equals the prefix exactly (bare command, no args), OR
+      - fnmatch(cmd, glob_pattern) is True
+    """
     for prefix, glob_pat in patterns:
         if cmd == prefix:
             return True
@@ -138,7 +1134,7 @@ def command_matches_pattern(cmd, patterns):
     return False
 
 
-def extract_subshells(command):
+def legacy_extract_subshells(command):
     """Extract contents of executable substitutions, recursively.
 
     Returns a list of substitution content strings.
@@ -160,7 +1156,7 @@ def extract_subshells(command):
                     if depth == 0:
                         content = command[start:j]
                         subshells.append(content)
-                        subshells.extend(extract_subshells(content))
+                        subshells.extend(legacy_extract_subshells(content))
                         break
                 j += 1
             i = j + 1
@@ -178,7 +1174,7 @@ def extract_subshells(command):
                     if depth == 0:
                         content = command[start:j]
                         subshells.append(content)
-                        subshells.extend(extract_subshells(content))
+                        subshells.extend(legacy_extract_subshells(content))
                         break
                 j += 1
             i = j + 1
@@ -191,12 +1187,12 @@ def extract_subshells(command):
         content = parts[idx]
         if content.strip():
             subshells.append(content)
-            subshells.extend(extract_subshells(content))
+            subshells.extend(legacy_extract_subshells(content))
 
     return subshells
 
 
-def strip_heredocs(command):
+def legacy_strip_heredocs(command):
     """Strip heredoc bodies from a command, leaving just the <<DELIM marker.
 
     Heredocs like <<'EOF'\\n...\\nEOF are replaced with the marker only
@@ -210,7 +1206,7 @@ def strip_heredocs(command):
 
     while i < len(lines):
         if heredoc_delim is not None:
-            # Inside heredoc body — look for the terminator line
+            # Inside heredoc body , look for the terminator line
             if lines[i].strip() == heredoc_delim:
                 heredoc_delim = None
             i += 1
@@ -227,14 +1223,14 @@ def strip_heredocs(command):
     return '\n'.join(result)
 
 
-def split_on_operators(command):
+def legacy_split_on_operators(command):
     """Split a command string on &&, ||, ;, |, and newlines.
 
     Respects quoted strings and $() subshells (doesn't split inside them).
     Returns the top-level command segments.
     """
     # Strip heredoc bodies so their lines aren't treated as commands
-    command = strip_heredocs(command)
+    command = legacy_strip_heredocs(command)
     # Collapse backslash-newline continuations before parsing
     command = command.replace('\\\n', ' ')
 
@@ -272,7 +1268,7 @@ def split_on_operators(command):
             i += 1
             continue
 
-        # Track $() subshell depth — consume $( as a single token
+        # Track $() subshell depth , consume $( as a single token
         if ch == '$' and i + 1 < len(command) and command[i + 1] == '(':
             paren_depth += 1
             current.append('$')
@@ -329,7 +1325,7 @@ def split_on_operators(command):
     return [s.strip() for s in segments if s.strip()]
 
 
-def _skip_shell_value(cmd, i):
+def legacy__skip_shell_value(cmd, i):
     """Skip past one shell 'word' value starting at position i.
 
     Handles quoted strings, $() subshells (tracking paren depth), and
@@ -357,7 +1353,7 @@ def _skip_shell_value(cmd, i):
             i += 1  # skip closing quote
         return i
 
-    # Unquoted value — consume non-whitespace, tracking $() depth
+    # Unquoted value , consume non-whitespace, tracking $() depth
     paren_depth = 0
     while i < len(cmd):
         ch = cmd[i]
@@ -382,7 +1378,7 @@ def _skip_shell_value(cmd, i):
     return i
 
 
-def strip_env_vars(cmd):
+def legacy_strip_env_vars(cmd):
     """Strip leading environment variable assignments (FOO=bar cmd ...).
 
     Returns the command with env var prefixes removed.
@@ -393,8 +1389,8 @@ def strip_env_vars(cmd):
         if not m:
             break
         # Find end of value (respecting quotes and $() depth)
-        i = _skip_shell_value(cmd, m.end())
-        # If nothing follows the assignment, this IS the command — keep it
+        i = legacy__skip_shell_value(cmd, m.end())
+        # If nothing follows the assignment, this IS the command , keep it
         rest = cmd[i:].lstrip()
         if not rest:
             break
@@ -402,7 +1398,7 @@ def strip_env_vars(cmd):
     return cmd
 
 
-def strip_redirections(cmd):
+def legacy_strip_redirections(cmd):
     """Strip output/input redirections from a command.
 
     Removes patterns like >file, >>file, 2>&1, <file, etc.
@@ -417,74 +1413,74 @@ def strip_redirections(cmd):
 
 # Shell keywords that are structural, not commands to approve/deny.
 # These appear as segments after splitting on ;/newlines in for/while/if blocks.
-SHELL_KEYWORDS = frozenset({
+legacy_SHELL_KEYWORDS = frozenset({
     'do', 'done', 'then', 'else', 'elif', 'fi', 'esac', '{', '}',
     'break', 'continue',
 })
 
 # Keywords that can prefix a command when joined by ; (e.g. "do echo hello").
 # These should be stripped to expose the real command underneath.
-_KEYWORD_PREFIX_RE = re.compile(
+legacy__KEYWORD_PREFIX_RE = re.compile(
     r'^(do|then|else|elif)\s+'
 )
 
 # Patterns for shell compound statement headers (for, while, until, if, case).
 # These introduce control flow but aren't executable commands themselves.
-_COMPOUND_HEADER_RE = re.compile(
+legacy__COMPOUND_HEADER_RE = re.compile(
     r'^(for|while|until|if|case|select)\b'
 )
 
 
-def strip_keyword_prefix(cmd):
+def legacy_strip_keyword_prefix(cmd):
     """Strip leading shell keyword prefix from a command.
 
     "do echo hello" -> "echo hello"
     "then git status" -> "git status"
     """
-    m = _KEYWORD_PREFIX_RE.match(cmd)
+    m = legacy__KEYWORD_PREFIX_RE.match(cmd)
     if m:
         return cmd[m.end():]
     return cmd
 
 
-def is_shell_structural(cmd):
+def legacy_is_shell_structural(cmd):
     """Return True if cmd is a shell keyword or compound-statement header."""
-    if cmd in SHELL_KEYWORDS:
+    if cmd in legacy_SHELL_KEYWORDS:
         return True
-    if _COMPOUND_HEADER_RE.match(cmd):
+    if legacy__COMPOUND_HEADER_RE.match(cmd):
         return True
     return False
 
 
-def is_standalone_assignment(cmd):
+def legacy_is_standalone_assignment(cmd):
     """Return True if cmd is purely a variable assignment (no following command).
 
-    e.g. "result=$(curl ...)" or "FOO=bar" — these are not commands to check.
+    e.g. "result=$(curl ...)" or "FOO=bar" , these are not commands to check.
     The subshell contents, if any, are extracted and checked separately.
     """
     m = re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', cmd)
     if not m:
         return False
     # Check if the entire string is consumed by the assignment value
-    end = _skip_shell_value(cmd, m.end())
+    end = legacy__skip_shell_value(cmd, m.end())
     rest = cmd[end:].strip()
     return rest == ''
 
 
-def normalize_command(cmd):
+def legacy_normalize_command(cmd):
     """Normalize a command by stripping env vars, redirections, and whitespace."""
     cmd = cmd.strip()
     if not cmd:
         return cmd
-    cmd = strip_keyword_prefix(cmd)
-    cmd = strip_env_vars(cmd)
-    cmd = strip_redirections(cmd)
+    cmd = legacy_strip_keyword_prefix(cmd)
+    cmd = legacy_strip_env_vars(cmd)
+    cmd = legacy_strip_redirections(cmd)
     # Collapse multiple spaces
     cmd = re.sub(r'\s+', ' ', cmd)
     return cmd.strip()
 
 
-def decompose_command(command):
+def legacy_decompose_command(command):
     """Decompose a compound command into all individual sub-commands.
 
     Splits on operators, extracts subshell contents, normalizes each.
@@ -496,57 +1492,96 @@ def decompose_command(command):
     all_commands = []
 
     # Get top-level segments
-    segments = split_on_operators(command)
+    segments = legacy_split_on_operators(command)
 
     for seg in segments:
         # Also decompose any subshells found in this segment
-        subshells = extract_subshells(seg)
+        subshells = legacy_extract_subshells(seg)
         for sub in subshells:
-            sub_segments = split_on_operators(sub)
+            sub_segments = legacy_split_on_operators(sub)
             for ss in sub_segments:
-                normalized = normalize_command(ss)
+                normalized = legacy_normalize_command(ss)
                 if normalized:
                     all_commands.append(normalized)
 
         # Normalize the top-level segment itself
-        normalized = normalize_command(seg)
+        normalized = legacy_normalize_command(seg)
         if normalized:
             all_commands.append(normalized)
 
     # Filter out shell structural keywords and standalone assignments
     return [
         cmd for cmd in all_commands
-        if not is_shell_structural(cmd) and not is_standalone_assignment(cmd)
+        if not legacy_is_shell_structural(cmd) and not legacy_is_standalone_assignment(cmd)
     ]
 
 
-def decide(command, settings):
+def legacy_decide(command, settings):
     """Make a permission decision for a compound command. DENY-ONLY.
 
     Returns:
         ("deny", reason) if any sub-command OR the full command matches
                          a deny pattern
-        (None, None) otherwise — fall through to normal permission flow
+        (None, None) otherwise , fall through to normal permission flow
     """
     if not command or not command.strip():
         return None, None
 
     permissions = settings.get("permissions", {})
-    deny_patterns = parse_bash_patterns(permissions.get("deny", []))
+    deny_patterns = legacy_parse_bash_patterns(permissions.get("deny", []))
     if not deny_patterns:
         return None, None
 
     # Full-command check: pipe-shaped deny patterns ("curl * | sh") only
     # match the undecomposed string.
     flat = re.sub(r'\s+', ' ', command).strip()
-    if command_matches_pattern(flat, deny_patterns):
+    if legacy_command_matches_pattern(flat, deny_patterns):
         return "deny", f"Command matches deny pattern"
 
-    for cmd in decompose_command(command):
-        if command_matches_pattern(cmd, deny_patterns):
+    for cmd in legacy_decompose_command(command):
+        if legacy_command_matches_pattern(cmd, deny_patterns):
             return "deny", f"Sub-command '{cmd}' matches deny pattern"
 
     return None, None
+
+
+def decide(command, settings):
+    """Run the previous matcher first, then the scanner within its length cap."""
+    try:
+        permissions = settings.get('permissions', {})
+        denies = permissions.get('deny', [])
+        if not denies:
+            return None, None
+        denies = tuple(denies)
+        settings = dict(settings)
+        settings['permissions'] = dict(permissions, deny=denies)
+    except Exception as exc:
+        return guard_error(exc)
+    if not denies:
+        return None, None
+    try:
+        if not parse_bash_patterns(denies):
+            return None, None
+    except Exception:
+        # Invalid patterns still reach the fail-closed checks below.
+        pass
+    try:
+        decision, reason = legacy_decide(command, settings)
+        if decision == 'deny':
+            return 'deny', 'Legacy check: ' + reason
+    except Exception as exc:
+        return 'deny', (
+            'Legacy check: could not complete ({}); command not analyzed'
+            .format(type(exc).__name__)
+        )
+    try:
+        if len(command) > PARSER_MAX_COMMAND_LENGTH:
+            return 'deny', 'Command not analyzed: longer than {:,} characters'.format(
+                PARSER_MAX_COMMAND_LENGTH
+            )
+        return parser_decide(command, settings)
+    except Exception as exc:
+        return guard_error(exc)
 
 
 _log_lines = []
@@ -579,6 +1614,7 @@ def _build_reason(reason):
 
 
 def main():
+    global _parser_deadline
     try:
         input_data = json.load(sys.stdin)
     except (json.JSONDecodeError, EOFError):
@@ -587,7 +1623,7 @@ def main():
 
     tool_name = input_data.get("tool_name", "")
     if tool_name != "Bash":
-        log(f"tool={tool_name}, not Bash — skipping")
+        log(f"tool={tool_name}, not Bash, skipping")
         sys.exit(0)
 
     command = input_data.get("tool_input", {}).get("command", "")
@@ -595,30 +1631,46 @@ def main():
         log("empty command, skipping")
         sys.exit(0)
 
-    cmd_preview = command[:80].replace('\n', '\\n')
-    log(f"checking: {cmd_preview}{'...' if len(command) > 80 else ''}")
-
     settings_path = os.environ.get("CLAUDE_SETTINGS_PATH")
     settings = load_merged_settings(settings_path)
+    configured = bool(settings.get("permissions", {}).get("deny", []))
 
-    sub_commands = decompose_command(command)
-    log(f"sub-commands: {sub_commands[:5]}{'...' if len(sub_commands) > 5 else ''}")
-
-    decision, reason = decide(command, settings)
-
-    log(f"decision={decision or 'passthrough'} reason={reason or 'no pattern matched'}")
+    try:
+        cmd_preview = command[:80].replace('\n', '\\n')
+        log(f"checking: {cmd_preview}{'...' if len(command) > 80 else ''}")
+        decision, reason = decide(command, settings)
+        if (_verbose_enabled() and configured and decision != 'deny'
+                and len(command) <= PARSER_MAX_COMMAND_LENGTH):
+            _parser_deadline = time.monotonic() + PARSER_DEADLINE_SECONDS
+            try:
+                sub_commands = decompose_command(command)
+                _check_parser_deadline()
+                log(f"sub-commands: {sub_commands[:5]}{'...' if len(sub_commands) > 5 else ''}")
+            except ParserDeadline:
+                log(_parser_deadline_reason())
+            except Exception as exc:
+                log(f"decomposition unavailable: {type(exc).__name__}: {exc}")
+            finally:
+                _parser_deadline = None
+        log(f"decision={decision or 'passthrough'} reason={reason or 'no pattern matched'}")
+        reason = _build_reason(reason) if decision == "deny" else reason
+    except Exception as exc:
+        if configured:
+            decision, reason = guard_error(exc)
+        else:
+            decision, reason = None, None
 
     if decision == "deny":
         output = {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": decision,
-                "permissionDecisionReason": _build_reason(reason),
+                "permissionDecisionReason": reason,
             }
         }
         json.dump(output, sys.stdout)
         sys.stdout.write("\n")
-    # else: silent exit — fall through to normal prompting
+    # Otherwise fall through silently to normal prompting.
 
 
 if __name__ == "__main__":
