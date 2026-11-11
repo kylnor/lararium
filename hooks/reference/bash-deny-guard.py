@@ -182,7 +182,7 @@ class Word:
 class Scanner:
     """One forward cursor; heredoc queues belong to their code context."""
 
-    def __init__(self, text, depth=0):
+    def __init__(self, text, depth=0, boundary_only=False):
         if depth > MAX_DEPTH:
             raise ValueError('command nesting exceeds 8 levels')
         self.text = text
@@ -190,6 +190,18 @@ class Scanner:
         self.depth = depth
         self.segments = []
         self.parenthesis_ends = {}
+        self.substitution_ends = {}
+        self.boundary_only = boundary_only
+
+    def substitution_end(self, opening, double_quoted=False):
+        if opening not in self.substitution_ends:
+            scanner = Scanner(self.text, self.depth, boundary_only=True)
+            scanner.i = opening
+            scanner.parenthesis_ends = self.parenthesis_ends
+            scanner.substitution_ends = self.substitution_ends
+            marker = '`' if self.text[opening] == '`' else '$('
+            scanner.substitution(marker, self.depth, double_quoted)
+        return self.substitution_ends[opening]
 
     def parenthesis_end(self, opening):
         # Locate the inner close without interpreting words as commands. Remember
@@ -203,7 +215,7 @@ class Scanner:
             frame = stack[-1]
             quote = frame[2]
             ch = s[i]
-            if quote in ("'", 'ansi', '`'):
+            if quote in ("'", 'ansi'):
                 if ch == ('\'' if quote == 'ansi' else quote):
                     frame[2] = None
                 elif ch == '\\' and quote != "'":
@@ -218,7 +230,12 @@ class Scanner:
             elif quote is None and s.startswith("$'", i):
                 frame[2] = 'ansi'
                 i += 1
-            elif ch == '`' or (quote is None and ch == "'"):
+            elif ch == '`' or (s.startswith('$(', i) and not s.startswith('$((', i)):
+                # Shell substitutions own case patterns, comments and heredocs.
+                # Locate them without contributing command candidates.
+                i = self.substitution_end(i, double_quoted=quote == '"')
+                continue
+            elif quote is None and ch == "'":
                 frame[2] = ch
             elif s[i:i + 2] in ('$(', '${', '$['):
                 # An expansion owns its quotes and delimiters, even inside quotes.
@@ -283,6 +300,10 @@ class Scanner:
         # Substitutions re-enter code even inside double quotes, at a bounded depth.
         if depth >= MAX_DEPTH:
             raise ValueError('command nesting exceeds 8 levels')
+        start = self.i
+        if self.boundary_only and start in self.substitution_ends:
+            self.i = self.substitution_ends[start]
+            return
         self.i += len(marker)
         if marker == '`':
             body = []
@@ -290,9 +311,10 @@ class Scanner:
                 ch = self.text[self.i]
                 self.i += 1
                 if ch == '`':
-                    nested = Scanner(''.join(body), depth + 1)
+                    nested = Scanner(''.join(body), depth + 1, self.boundary_only)
                     nested.code()
                     self.segments.extend(nested.segments)
+                    self.substitution_ends[start] = self.i
                     return
                 if ch == '\\' and self.i < len(self.text):
                     nxt = self.text[self.i]
@@ -305,6 +327,7 @@ class Scanner:
             raise ParseProblem('unterminated ` substitution')
         if not self.code(')', depth + 1):
             raise ParseProblem('unterminated {} substitution'.format(marker))
+        self.substitution_ends[start] = self.i
 
     def word(self, depth, delimiter=False, stop=None, unit_open=None,
              scan_quoted=False, array_item=False, regex=False, pattern=False):
@@ -465,7 +488,7 @@ class Scanner:
                 self.expansions(doc['body'], depth)
 
     def expansions(self, body, depth):
-        scanner = Scanner(body, depth)
+        scanner = Scanner(body, depth, self.boundary_only)
         while scanner.i < len(body):
             ch = body[scanner.i]
             if ch == '\\' and scanner.i + 1 < len(body) and body[scanner.i + 1] in '\\$`\n':
@@ -538,7 +561,7 @@ class Scanner:
         cases = []
 
         def flush():
-            if (raw or words) and not (cases and cases[-1][0] != 'body'):
+            if not self.boundary_only and (raw or words) and not (cases and cases[-1][0] != 'body'):
                 self.segments.append((words[:], ' '.join(raw), docs[:], depth))
             words.clear()
             raw.clear()

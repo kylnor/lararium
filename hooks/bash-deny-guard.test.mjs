@@ -667,6 +667,54 @@ for (const [name, command] of [
   assert.match(result.reason, /matches deny pattern/);
 });
 
+for (const pattern of ['x', '(x)']) {
+  const substitution = `$(case x in ${pattern}${pattern === 'x' ? ')' : ''} :;; esac)`;
+  for (const [name, command] of [
+    ['command group', `((${D}; echo ${substitution}) )`],
+    ['expansion', `echo $((${D}; echo ${substitution}) )`],
+    ['quoted expansion', `echo "$((${D}; echo ${substitution}) )"`],
+    ['heredoc expansion', `cat <<EOF\n$((${D}; echo ${substitution}) )\nEOF`],
+    ['parameter default', `echo ${'${y:-'}$((${D}; echo ${substitution}) )}`],
+    ['shell string', `bash -c '((${D}; echo ${substitution}) )'`],
+    ['arithmetic for header', `for ((i=$((${D}; echo ${substitution}) );i<1;i++)); do :; done`],
+  ]) test(`round 11 deny pattern: ${name} with case pattern ${pattern}`, async () => {
+    const result = await run(command);
+    assert.equal(result.decision, 'deny');
+    assert.match(result.reason, /matches deny pattern/);
+  });
+}
+
+for (const [name, command] of [
+  ['case substitution in arithmetic sum', 'rm=4; echo $((rm + $(case x in x) echo 1;; esac) ))'],
+  ['case substitution in arithmetic assignment', 'rm=4; ((rm += $(case x in x) echo 1;; esac) ))'],
+  ['parenthesized case pattern in quoted arithmetic', 'rm=4; echo "$((rm + $(case x in (x) echo 1;; esac) ))"'],
+  ['ordinary substitution in arithmetic sum', 'rm=4; echo $((rm + $(echo 1) ))'],
+  ['comment close inside substitution in arithmetic', 'rm=4; echo $((rm + $(echo 1 # )\n) ))'],
+  ['heredoc close inside substitution in arithmetic', 'rm=4; echo $((rm + $(cat <<E >/dev/null\n)\nE\necho 1) ))'],
+  ['case pattern inside backticks in arithmetic', 'rm=4; echo $((rm + `case x in x) echo 1;; esac` ))'],
+]) test(`round 11 silent: ${name}`, async () => {
+  assert.equal((await run(command)).decision, undefined);
+});
+
+for (const [name, command] of [
+  ['comment close inside nested substitution', `((${D}; echo $(echo 1 # )\n)) )`],
+  ['heredoc close inside nested substitution', `((${D}; echo $(cat <<E\n)\nE\n)) )`],
+  ['case pattern inside nested backticks', `((${D}; echo \`case x in x) :;; esac\`) )`],
+]) test(`round 11 deny pattern: ${name}`, async () => {
+  const result = await run(command);
+  assert.equal(result.decision, 'deny');
+  assert.match(result.reason, /matches deny pattern/);
+});
+
+for (const [name, command] of [
+  ['command substitution', 'echo $((rm + $(echo 1'],
+  ['backtick substitution', 'echo $((rm + `echo 1'],
+]) test(`round 11 unfinished ${name} fails closed`, async () => {
+  const result = await run(command);
+  assert.equal(result.decision, 'deny');
+  assert.match(result.reason, /unterminated.*substitution/i);
+});
+
 const parseDenials = [
   ['heredoc delimiter contains command substitution marker', `cat <<$(x)\nhi\n$(x)\n${D}\n$`, /heredoc delimiter/i],
   ['heredoc delimiter contains arithmetic marker', `cat <<$((1))\nhi\n$((1))\n${D}\n$`, /heredoc delimiter/i],
