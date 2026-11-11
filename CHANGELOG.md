@@ -28,17 +28,28 @@ An unquoted extended glob opener is denied even after `$` or `$$`; special param
 Commands that turn `extglob` on, including computed option names or `BASHOPTS` values that could enable it, are denied as not analyzed.
 Known over-denials: backslash-newlines touching operator characters inside double quotes or directly after `;;` in a `case` body are denied although Bash runs nothing denied; put the line break elsewhere.
 Also denied: `$$` directly before an extended-glob opener in arithmetic or a `=~` operand.
+With Bash deny patterns configured, commands over 20,000 characters are also denied even when
+Bash would run nothing denied.
 Conditional regex groups preserve word boundaries; quoted substitutions in parameters, arithmetic and subscripted words are checked as code.
 
-Two checks run in order: the parser first, then an unchanged copy of the previous release's matcher
-if the parser stays silent. Either check can deny. Parser denials keep their existing reasons.
-Legacy denials start with `Legacy check: ` to identify the check.
-Every command the previous release denied is still denied.
-A command slow enough to make the guard exceed the hook timeout configured in Claude Code is
-outside the guard's control, in this release and the previous one alike.
-The property test checked 1,442 must-deny rows: 0 silent.
-The legacy check runs with no time limit, as in the previous release. If either check fails to
-complete, the command is denied.
+Two checks run in order: an unchanged copy of the previous release's matcher first, then the
+parser if the first check stays silent. Either check can deny. Denials from the first start with
+`Legacy check: `; parser denials keep the parser's reasons. If either check fails to complete,
+the command is denied. Every command the previous release denied is still denied, and because
+the previous matcher runs first and unchanged, its denial arrives no later than before.
+The legacy check runs with no time limit, as in the previous release.
+The parser then adds time: with Bash deny patterns configured, a command longer than 20,000
+characters that the first check leaves silent is denied as not analyzed without running the parser.
+At 20,000 characters, the parser's worst measured input (repeated `! `) took about 3 seconds
+on the development machine; other measured shapes took 1.5 seconds or less. Parser time grows
+with the square of the length.
+The property test checked 1,450 rows: 1,449 must-deny rows (0 silent), plus one scanner parity
+row at the length cap.
+The sample sets `"timeout": 10`; a timed-out `PreToolUse` command hook lets the call through
+unless `"onFailure": "block"` is set (Claude Code v2.1.295 or later), an effect inferred from the
+configuration and [hooks documentation](https://code.claude.com/docs/en/hooks#timeouts), not observed.
+Without a `timeout` field, the documented default is 600 seconds; add `"onFailure": "block"`
+if a stalled guard should block.
 
 Accepted over-denials inherited from the previous matcher are pinned in ten test rows.
 Bash runs nothing denied in these cases: command substitution text inside single quotes in

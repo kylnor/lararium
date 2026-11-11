@@ -102,10 +102,10 @@ const mainControlRows = [
   `echo $(${D})`, `FOO=1 ${D}`, `if true; then ${D}; fi`,
 ].map(command => ({ command, deny: ['Bash(rm:*)'] }));
 const propertyRows = [...regressionRows, ...mainDocRows, ...mainControlRows];
-// Two slow commands and eleven recursion-window commands are built in Python.
-const generatedPropertyRowCount = 2 + 11;
+// Two slow, eleven recursion-window, three settings and five timing rows.
+const generatedPropertyRowCount = 2 + 11 + 3 + 5;
 test(`round 14 denial union property: ${propertyRows.length + generatedPropertyRowCount} rows`, async () => {
-  await pythonCheck([
+  const timings = await pythonCheck([
     'legacy_denials = 0',
     'for row in rows:',
     '    command = row["command"].replace("{{D}}", "rm -rf /important")',
@@ -114,12 +114,11 @@ test(`round 14 denial union property: ${propertyRows.length + generatedPropertyR
     '    legacy = guard.legacy_decide(command, settings)',
     '    union = guard.decide(command, settings)',
     '    assert union[0] == "deny", (command, parser, legacy, union)',
-    '    if parser[0] == "deny":',
-    '        assert union == parser, (command, parser, union)',
     '    if legacy[0] == "deny":',
     '        legacy_denials += 1',
-    '        if parser[0] is None:',
-    '            assert union[1] == "Legacy check: " + legacy[1], (command, union)',
+    '        assert union[1] == "Legacy check: " + legacy[1], (command, union)',
+    '    else:',
+    '        assert union == parser, (command, parser, union)',
     'assert legacy_denials > 0',
     'D = "rm -rf /important"',
     'settings = {"permissions": {"deny": ["Bash(rm:*)"]}}',
@@ -128,6 +127,55 @@ test(`round 14 denial union property: ${propertyRows.length + generatedPropertyR
     '    "let \'y=$(" + D + ")\'" + "\\n: " + "1" * 50000,',
     ']',
     'generated_rows = 0',
+    'for command in ("rm file", D):',
+    '    iterator_settings = {"permissions": {"deny": iter(["Bash(rm:*)"])}}',
+    '    assert guard.decide(command, iterator_settings)[0] == "deny", command',
+    '    generated_rows += 1',
+    'original_denies = ["Bash(rm:*)"]',
+    'original_permissions = {"deny": original_denies, "allow": ["Read(*)"]}',
+    'original_settings = {"permissions": original_permissions, "extra": "retained"}',
+    'assert guard.decide(D, original_settings)[0] == "deny"',
+    'assert original_settings == {"permissions": {"deny": ["Bash(rm:*)"], "allow": ["Read(*)"]}, "extra": "retained"}',
+    'assert original_settings["permissions"] is original_permissions',
+    'assert original_permissions["deny"] is original_denies',
+    'generated_rows += 1',
+    'import time',
+    'assert guard.PARSER_MAX_COMMAND_LENGTH == 20000',
+    'length_reason = "Command not analyzed: longer than 20,000 characters"',
+    // Separators make D a command instead of an argument to echo.
+    'timed_commands = [',
+    '    ("echo ok; " + "rm" + " -rf x; " + "echo a " * 45714, 5, "legacy"),',
+    '    ("! " * 10001, 5, "length"),',
+    '    ("echo a; " * 3000 + D, 5, "legacy"),',
+    '    ("! " * 10000, 30, "parser"),',
+    '    ("echo a; " * 2000 + D, 30, "legacy"),',
+    ']',
+    'parser_calls = []',
+    'original_parser = guard.parser_decide',
+    'def track_parser(command, settings):',
+    '    parser_calls.append(command)',
+    '    return original_parser(command, settings)',
+    'guard.parser_decide = track_parser',
+    'for command, bound, check in timed_commands:',
+    '    parser_calls.clear()',
+    '    started = time.monotonic()',
+    '    verdict = guard.decide(command, settings)',
+    '    elapsed = time.monotonic() - started',
+    '    assert elapsed < bound, (len(command), elapsed, bound)',
+    '    if check != "parser":',
+    '        assert verdict[0] == "deny", (len(command), verdict)',
+    '        assert parser_calls == [], len(command)',
+    '    if check == "legacy":',
+    '        assert verdict[1].startswith("Legacy check: "), verdict',
+    '    elif check == "length":',
+    '        assert verdict[1] == length_reason, verdict',
+    '    else:',
+    '        assert len(command) == guard.PARSER_MAX_COMMAND_LENGTH',
+    '        assert parser_calls == [command]',
+    '        assert verdict == original_parser(command, settings), verdict',
+    '    print("timing:", len(command), "characters,", round(elapsed, 3), "seconds")',
+    '    generated_rows += 1',
+    'guard.parser_decide = original_parser',
     'for command in slow_commands:',
     '    assert guard.decide(command, settings)[0] == "deny", command',
     '    generated_rows += 1',
@@ -148,7 +196,8 @@ test(`round 14 denial union property: ${propertyRows.length + generatedPropertyR
     '        assert union[0] == "deny", (k, depth, union)',
     '    generated_rows += 1',
     `assert generated_rows == ${generatedPropertyRowCount}, generated_rows`,
-  ].join('\n'), propertyRows, 60000);
+  ].join('\n'), propertyRows, 120000);
+  console.log(timings.trim());
 });
 
 test('round 14 docs and controls are denied by the frozen matcher', async () => {
@@ -159,17 +208,17 @@ test('round 14 docs and controls are denied by the frozen matcher', async () => 
 });
 
 for (const fault of ['RuntimeError("legacy fixture")', 'RecursionError("legacy fixture")', 'MemoryError("legacy fixture")', 'TimeoutError("legacy fixture")']) {
-  test(`round 14 legacy failure denies unless the parser already denies or Bash patterns are absent: ${fault}`, async () => {
+  test(`round 14 legacy failure denies before the parser unless Bash patterns are absent: ${fault}`, async () => {
     await pythonCheck([
       'def fail(*args): raise ' + fault,
       'guard.legacy_decide = fail',
       'settings = {"permissions": {"deny": ["Bash(rm:*)"]}}',
-      'assert guard.parser_decide("ls", settings) == (None, None)',
+      'guard.parser_decide = fail',
       'decision, reason = guard.decide("ls", settings)',
       'assert decision == "deny", (decision, reason)',
       `assert reason == "Legacy check: could not complete (${fault.split('(')[0]}); command not analyzed", reason`,
       'for command in ("rm -rf /important", "echo \\\"unclosed"):',
-      '    assert guard.decide(command, settings) == guard.parser_decide(command, settings)',
+      '    assert guard.decide(command, settings) == (decision, reason)',
       'for denies in ([], ["Read(*)"]):',
       '    assert guard.decide("rm -rf /important", {"permissions": {"deny": denies}}) == (None, None)',
     ].join('\n'));
@@ -187,22 +236,82 @@ test('round 14 parser failure denies only with Bash patterns configured', async 
   ].join('\n'));
 });
 
-test('round 14 skips the legacy check when the parser denies or Bash patterns are absent', async () => {
+test('round 14 legacy deny returns before the parser and absent Bash patterns skip both', async () => {
   await pythonCheck([
-    'calls = []',
-    'def legacy(*args):',
-    '    calls.append(args)',
-    '    return "deny", "fixture"',
-    'guard.legacy_decide = legacy',
+    'def fail(*args): raise RuntimeError("unexpected check")',
+    'guard.parser_decide = fail',
     'settings = {"permissions": {"deny": ["Bash(rm:*)"]}}',
-    'for command in ("rm -rf /important", "echo \\\"unclosed"):',
-    '    assert guard.decide(command, settings) == guard.parser_decide(command, settings)',
+    'decision, reason = guard.decide("rm -rf /important", settings)',
+    'assert decision == "deny" and reason.startswith("Legacy check: "), (decision, reason)',
+    'guard.legacy_decide = fail',
     'for denies in ([], ["Read(*)"]):',
-    '    assert guard.decide("ls", {"permissions": {"deny": denies}}) == (None, None)',
-    'assert calls == []',
-    'assert guard.decide("ls", settings) == ("deny", "Legacy check: fixture")',
-    'assert len(calls) == 1',
+    '    for command in ("ls", "! " * 10001):',
+    '        assert guard.decide(command, {"permissions": {"deny": denies}}) == (None, None)',
   ].join('\n'));
+});
+
+test('round 14 settings copies share materialized denies and malformed settings fail closed', async () => {
+  await pythonCheck([
+    'denies = ["Bash(rm:*)"]',
+    'permissions = {"deny": denies, "allow": ["Read(*)"]}',
+    'settings = {"permissions": permissions, "extra": "retained"}',
+    'seen = []',
+    'def silent(command, copied):',
+    '    assert copied is not settings and copied["permissions"] is not permissions',
+    '    assert copied["extra"] == "retained"',
+    '    assert copied["permissions"]["allow"] is permissions["allow"]',
+    '    assert copied["permissions"]["deny"] == ("Bash(rm:*)",)',
+    '    seen.append(copied)',
+    '    return None, None',
+    'guard.legacy_decide = guard.parser_decide = silent',
+    'assert guard.decide("ls", settings) == (None, None)',
+    'assert len(seen) == 2 and seen[0] is seen[1]',
+    'assert settings["permissions"] is permissions and permissions["deny"] is denies',
+    'def broken_iterator():',
+    '    yield "Bash(rm:*)"',
+    '    raise RuntimeError("iterator fixture")',
+    'assert guard.decide("ls", {"permissions": {"deny": broken_iterator()}})[0] == "deny"',
+    'null_denies = {"permissions": {"deny": None}}',
+    'assert guard.decide("ls", null_denies) == (None, None)',
+    'assert guard.decide("rm file", null_denies) == (None, None)',
+    'for malformed in (None, {"permissions": None}, {"permissions": {"deny": 5}}):',
+    '    assert guard.decide("ls", malformed)[0] == "deny"',
+  ].join('\n'));
+});
+
+test('round 14 echo repetitions without separators leave rm as an argument', async () => {
+  await pythonCheck([
+    'import time',
+    'settings = {"permissions": {"deny": ["Bash(rm:*)"]}}',
+    'for count, bound in ((3000, 5), (2000, 30)):',
+    '    command = "echo a " * count + "rm -rf /important"',
+    '    assert guard.legacy_decide(command, settings) == (None, None)',
+    '    started = time.monotonic()',
+    '    verdict = guard.decide(command, settings)',
+    '    assert time.monotonic() - started < bound',
+    '    if count == 3000:',
+    '        assert verdict == ("deny", "Command not analyzed: longer than 20,000 characters")',
+    '    else:',
+    '        assert verdict == guard.parser_decide(command, settings) == (None, None)',
+  ].join('\n'), [], 60000);
+});
+
+for (const [name, command, reason] of [
+  ['legacy', 'echo ok; rm -rf x; ' + 'echo a '.repeat(45714), /^Legacy check: /],
+  ['length cap', '! '.repeat(10001), /^Command not analyzed: longer than 20,000 characters/],
+]) test(`round 14 verbose main respects the ${name} verdict before scanner work`, async () => {
+  const harness = [
+    'import importlib.util, sys',
+    'spec = importlib.util.spec_from_file_location("guard", sys.argv[1])',
+    'guard = importlib.util.module_from_spec(spec)',
+    'spec.loader.exec_module(guard)',
+    'def fail(*args): raise RuntimeError("unexpected scanner work")',
+    'guard.parser_decide = guard.decompose_command = fail',
+    'guard.main()',
+  ].join('\n');
+  const result = await run(command, ['Bash(rm:*)'], { SMART_APPROVE_VERBOSE: '1' }, harness);
+  assert.equal(result.decision, 'deny');
+  assert.match(result.reason, reason);
 });
 
 for (const operator of ['@', '?', '*', '!']) {
@@ -222,7 +331,8 @@ for (const operator of ['@', '?', '*', '!']) {
   ]) test(`round 13 dollar before glob denial: ${JSON.stringify(command)}`, async () => {
     const result = await run(command);
     assert.equal(result.decision, 'deny');
-    assert.match(result.reason, /^Command not analyzed: .*extended glob operator/);
+    assert.match(result.reason, command === `echo $${operator}(ls)`
+      ? /^Command not analyzed: .*extended glob operator/ : /^Legacy check: /);
   });
 }
 
@@ -238,65 +348,64 @@ for (const command of [
   assert.equal((await run(command)).decision, undefined);
 });
 
-for (const command of [
-  `shopt -s extglob\necho $$@(a|#); ${D}`,
-  `shopt -s extglob\necho $$?(a|#); ${D}`,
-  `shopt -s extglob\necho $$*(a|#); ${D}`,
-  `shopt -s extglob\necho $$!(a|#); ${D}`,
-  `shopt -s extglob\necho $$+(a|#); ${D}`,
-  `shopt -s extglob\ncat <<@(E)\n@(E)\n${D}\n@\n`,
-  `shopt -s extglob\ncat <<!(E)\n!(E)\n${D}\n!\n`,
-  `shopt -s extglob\ncat <<?(E)\n?(E)\n${D}\n?\n`,
-  `shopt -s extglob\ncat <<+(E)\n+(E)\n${D}\n+\n`,
-  `shopt -s extglob\ncat <<*(E)\n*(E)\n${D}\n*\n`,
-  `echo $$@(a|#); ${D}`,
-  `echo $$$$@(a|#); ${D}`,
-  `echo $$$@(a|#); ${D}`,
-  `cat <<@(E)\n@(E)\n${D}\n@\n`,
-  `shopt -s extglob; ${D}`,
-  `shopt -s extglob\n${D}`,
-  `shopt -s nullglob extglob\n${D}`,
-  `shopt -s extglob nullglob\n${D}`,
-  `shopt -qs extglob\n${D}`,
-  `shopt -s "extglob"\n${D}`,
-  `shopt -s ext''glob\n${D}`,
-  `shopt -s e\\xtglob\n${D}`,
-  `shopt -s $o\n${D}`,
-  `shopt -s "$o"\n${D}`,
-  `shopt -s $(echo extglob)\n${D}`,
-  `shopt -s ext*\n${D}`,
-  `shopt -s {extglob,nullglob}\n${D}`,
-  `builtin shopt -s extglob\n${D}`,
-  `command shopt -s extglob\n${D}`,
-  `\\shopt -s extglob\n${D}`,
-  `"shopt" -s extglob\n${D}`,
-  `true && shopt -s extglob\n${D}`,
-  `eval "shopt -s extglob"\n${D}`,
-  `eval 'shopt -s extglob'\n${D}`,
-  `bash -O extglob -c '${D}'`,
-  `bash -O extglob -c 'echo $$@(a|#); ${D}'`,
-  `bash -Oextglob -c '${D}'`,
-  `bash -O nullglob -O extglob -c '${D}'`,
-  `bash -O $o -c '${D}'`,
-  `BASHOPTS=extglob bash -c '${D}'`,
-  `env BASHOPTS=extglob bash -c '${D}'`,
-  `BASHOPTS=nullglob:extglob bash -c '${D}'`,
-  `export BASHOPTS=extglob; bash -c '${D}'`,
-  `BASHOPTS=$o bash -c '${D}'`,
-  `f() { shopt -s extglob; }; f\n${D}`,
-  `(shopt -s extglob)\n${D}`,
-  `x=$(shopt -s extglob)\n${D}`,
-  'shopt -s extglob',
-  'shopt -s extglob\nls',
-  'shopt -s nullglob extglob; ls *.txt',
-  "bash -O extglob -c 'ls'",
-  'shopt -s $opts',
+for (const [command, reason] of [
+  [`shopt -s extglob\necho $$@(a|#); ${D}`, /^Legacy check: /],
+  [`shopt -s extglob\necho $$?(a|#); ${D}`, /^Legacy check: /],
+  [`shopt -s extglob\necho $$*(a|#); ${D}`, /^Legacy check: /],
+  [`shopt -s extglob\necho $$!(a|#); ${D}`, /^Legacy check: /],
+  [`shopt -s extglob\necho $$+(a|#); ${D}`, /^Legacy check: /],
+  [`shopt -s extglob\ncat <<@(E)\n@(E)\n${D}\n@\n`, /^Legacy check: /],
+  [`shopt -s extglob\ncat <<!(E)\n!(E)\n${D}\n!\n`, /^Legacy check: /],
+  [`shopt -s extglob\ncat <<?(E)\n?(E)\n${D}\n?\n`, /^Legacy check: /],
+  [`shopt -s extglob\ncat <<+(E)\n+(E)\n${D}\n+\n`, /^Legacy check: /],
+  [`shopt -s extglob\ncat <<*(E)\n*(E)\n${D}\n*\n`, /^Legacy check: /],
+  [`echo $$@(a|#); ${D}`, /^Legacy check: /],
+  [`echo $$$$@(a|#); ${D}`, /^Legacy check: /],
+  [`echo $$$@(a|#); ${D}`, /^Legacy check: /],
+  [`cat <<@(E)\n@(E)\n${D}\n@\n`, /^Legacy check: /],
+  [`shopt -s extglob; ${D}`, /^Legacy check: /],
+  [`shopt -s extglob\n${D}`, /^Legacy check: /],
+  [`shopt -s nullglob extglob\n${D}`, /^Legacy check: /],
+  [`shopt -s extglob nullglob\n${D}`, /^Legacy check: /],
+  [`shopt -qs extglob\n${D}`, /^Legacy check: /],
+  [`shopt -s "extglob"\n${D}`, /^Legacy check: /],
+  [`shopt -s ext''glob\n${D}`, /^Legacy check: /],
+  [`shopt -s e\\xtglob\n${D}`, /^Legacy check: /],
+  [`shopt -s $o\n${D}`, /^Legacy check: /],
+  [`shopt -s "$o"\n${D}`, /^Legacy check: /],
+  [`shopt -s $(echo extglob)\n${D}`, /^Legacy check: /],
+  [`shopt -s ext*\n${D}`, /^Legacy check: /],
+  [`shopt -s {extglob,nullglob}\n${D}`, /^Legacy check: /],
+  [`builtin shopt -s extglob\n${D}`, /^Legacy check: /],
+  [`command shopt -s extglob\n${D}`, /^Legacy check: /],
+  [`\\shopt -s extglob\n${D}`, /^Legacy check: /],
+  [`"shopt" -s extglob\n${D}`, /^Legacy check: /],
+  [`true && shopt -s extglob\n${D}`, /^Legacy check: /],
+  [`eval "shopt -s extglob"\n${D}`, /^Legacy check: /],
+  [`eval 'shopt -s extglob'\n${D}`, /^Legacy check: /],
+  [`bash -O extglob -c '${D}'`, /^Command not analyzed:/],
+  [`bash -O extglob -c 'echo $$@(a|#); ${D}'`, /^Command not analyzed:/],
+  [`bash -Oextglob -c '${D}'`, /^Command not analyzed:/],
+  [`bash -O nullglob -O extglob -c '${D}'`, /^Command not analyzed:/],
+  [`bash -O $o -c '${D}'`, /^Command not analyzed:/],
+  [`BASHOPTS=extglob bash -c '${D}'`, /^Command not analyzed:/],
+  [`env BASHOPTS=extglob bash -c '${D}'`, /^Command not analyzed:/],
+  [`BASHOPTS=nullglob:extglob bash -c '${D}'`, /^Command not analyzed:/],
+  [`export BASHOPTS=extglob; bash -c '${D}'`, /^Command not analyzed:/],
+  [`BASHOPTS=$o bash -c '${D}'`, /^Command not analyzed:/],
+  [`f() { shopt -s extglob; }; f\n${D}`, /^Legacy check: /],
+  [`(shopt -s extglob)\n${D}`, /^Legacy check: /],
+  [`x=$(shopt -s extglob)\n${D}`, /^Legacy check: /],
+  ['shopt -s extglob', /^Command not analyzed:/],
+  ['shopt -s extglob\nls', /^Command not analyzed:/],
+  ['shopt -s nullglob extglob; ls *.txt', /^Command not analyzed:/],
+  ["bash -O extglob -c 'ls'", /^Command not analyzed:/],
+  ['shopt -s $opts', /^Command not analyzed:/],
 ]) test(`round 13 denial: ${JSON.stringify(command)}`, async () => {
   const result = await run(command);
   assert.equal(result.decision, 'deny');
-  assert.match(result.reason, /^Command not analyzed:/);
+  assert.match(result.reason, reason);
 });
-
 for (const command of [
   'shopt', 'shopt -p', 'shopt -s', 'shopt -u', 'shopt -q extglob', 'shopt -p extglob', 'shopt extglob',
   'shopt -s nullglob', 'shopt -s nullglob dotglob', 'shopt -u extglob', 'shopt -u extglob nullglob',
@@ -408,7 +517,7 @@ for (const command of [
 ]) test(`round 13 token denial: ${JSON.stringify(command)}`, async () => {
   const result = await run(command);
   assert.equal(result.decision, 'deny');
-  assert.match(result.reason, /^Command not analyzed: .*extended glob operator/);
+  assert.match(result.reason, /^Legacy check: /);
 });
 
 for (const command of [
@@ -463,28 +572,28 @@ for (const [name, command, reason] of [
   ['f1 parameter arithmetic', `: \${u+$(( 1 <(case x in x) cat <<E # ))\n${D}\nE\n;; esac) ))}`, /process substitution in arithmetic/],
   ['f1 arithmetic for header', `for (( i=0 <(case x in x) cat <<E # ))\n${D}\nE\n;; esac); i<0; i++)); do :; done`, /process substitution in arithmetic/],
   ['f2 parameter suffix delimiter', `cat <<E\${u:- }\nE\${u:- }\n${D}\n: '\nE\${u:-\n' #'`, /heredoc delimiter/],
-  ['f2 parameter delimiter', `cat <<\${x:-a b}\nhi\n\${x:-a b}\n${D}\n\${x:-a`, /heredoc delimiter/],
+  ['f2 parameter delimiter', `cat <<\${x:-a b}\nhi\n\${x:-a b}\n${D}\n\${x:-a`, /^Legacy check: /],
   ['f2 legacy arithmetic delimiter', `cat <<E$[1 + 1]\nE$[1 + 1]\n${D}\n: '\nE$[1\n' #'`, /heredoc delimiter/],
   ['f2 process delimiter', `cat <<E<(:)\nE<(:)\n${D}\nE`, /heredoc delimiter/],
-  ['f3 continued heredoc operator', `cat <<\\\n-E\nhi\nE\n${D}\n-E`, /backslash-newline/],
-  ['f3 continued conditional opener', `[\\\n[ x =~ (#) ]]; ${D}`, /backslash-newline/],
-  ['f3 continued conditional closer', `[[ x ]\\\n]; ${D}; echo ]]`, /backslash-newline/],
+  ['f3 continued heredoc operator', `cat <<\\\n-E\nhi\nE\n${D}\n-E`, /^Legacy check: /],
+  ['f3 continued conditional opener', `[\\\n[ x =~ (#) ]]; ${D}`, /^Legacy check: /],
+  ['f3 continued conditional closer', `[[ x ]\\\n]; ${D}; echo ]]`, /^Legacy check: /],
   ['f3 continued here-string operator', `cat <\\\n<<E\n${D}\nE`, /backslash-newline/],
   ['f3 continued group opener', `{\\\n ${D}; }`, /backslash-newline/],
-  ['f4 at pattern', `shopt -s extglob\necho @(a|#)>/dev/null; ${D}`, /extended glob/],
-  ['f4 negated pattern', `shopt -s extglob\nls !(a|#); ${D}`, /extended glob/],
-  ['f4 plus pattern', `shopt -s extglob\nls +(a|#)*; ${D}`, /extended glob/],
-  ['f4 star pattern', `shopt -s extglob\nls x*(a|#); ${D}`, /extended glob/],
-  ['f4 question pattern', `shopt -s extglob\nls ?(a|#); ${D}`, /extended glob/],
+  ['f4 at pattern', `shopt -s extglob\necho @(a|#)>/dev/null; ${D}`, /^Legacy check: /],
+  ['f4 negated pattern', `shopt -s extglob\nls !(a|#); ${D}`, /^Legacy check: /],
+  ['f4 plus pattern', `shopt -s extglob\nls +(a|#)*; ${D}`, /^Legacy check: /],
+  ['f4 star pattern', `shopt -s extglob\nls x*(a|#); ${D}`, /^Legacy check: /],
+  ['f4 question pattern', `shopt -s extglob\nls ?(a|#); ${D}`, /^Legacy check: /],
   ['f4 case pattern', `shopt -s extglob\ncase x in @(x|#)) ${D};; esac`, /extended glob/],
-  ['f4-off at pattern', `echo @(a|#)>/dev/null; ${D}`, /extended glob/],
-  ['f4-off negated pattern', `ls !(a|#); ${D}`, /extended glob/],
+  ['f4-off at pattern', `echo @(a|#)>/dev/null; ${D}`, /^Legacy check: /],
+  ['f4-off negated pattern', `ls !(a|#); ${D}`, /^Legacy check: /],
   ['continued ANSI command quote', "$\\\n'rm' -rf /important", /backslash-newline/],
   ['continued reserved word', `i\\\nf true; then ${D}; fi`, /matches deny pattern/],
   ['legacy arithmetic parameter parenthesis', 'echo $[ ${x:-)} ]', /arithmetic parameter/],
   ['arithmetic for parameter parenthesis', 'for ((i=${x:-)};i<1;i++)); do :; done', /arithmetic parameter/],
   ['arithmetic for comparison with group', 'for ((i=0; i<(n); i++)); do :; done', /process substitution in arithmetic/],
-  ['arithmetic for variables with group', 'for ((rm=0; rm<(3); rm++)); do :; done', /process substitution in arithmetic/],
+  ['arithmetic for variables with group', 'for ((rm=0; rm<(3); rm++)); do :; done', /^Legacy check: /],
   ['output process delimiter', 'cat <<E>(:)\nx\nE', /heredoc delimiter/],
   ['operator after continuation', 'echo x \\\n| grep x', /backslash-newline/],
   ['operator after complete control continuation', 'ls |\\\n| ls', /backslash-newline/],
@@ -492,7 +601,9 @@ for (const [name, command, reason] of [
   const result = await run(command);
   assert.equal(result.decision, 'deny');
   assert.match(result.reason, reason);
-  if (name !== 'continued reserved word') assert.match(result.reason, /^Command not analyzed:/);
+  if (name !== 'continued reserved word' && !reason.source.startsWith('^Legacy check:')) {
+    assert.match(result.reason, /^Command not analyzed:/);
+  }
 });
 
 for (const command of [
@@ -740,8 +851,8 @@ for (const [name, command, expected, reason] of [
   ['tab then carriage return before hash is part of a word', `echo\t\r#x && ${D}`, 'deny'],
   ['carriage return inside argument does not start comment', `echo a\r#x; ${D}`, 'deny'],
   ['carriage return followed by newline still separates commands', `ls\r\n${D}`, 'deny'],
-  ['carriage return suffix is denied', 'rm\r -rf /important', 'deny', /carriage return/i],
-  ['carriage return prefix is denied', '\rrm -rf /important', 'deny', /carriage return/i],
+  ['carriage return suffix is denied', 'rm\r -rf /important', 'deny', /^Legacy check: /],
+  ['carriage return prefix is denied', '\rrm -rf /important', 'deny', /^Legacy check: /],
   ['vertical tab before hash is part of a word', `echo \v#x; ${D}`, 'deny'],
   ['in subject and pattern remain data', `echo "$(case in in in) ${D};; esac)"`, 'deny'],
   ['case subject and pattern remain data', `echo "$(case case in case) ${D};; esac)"`, 'deny'],
@@ -771,7 +882,7 @@ for (const [name, command, expected, reason] of [
   ['conditional semicolon exposes following command', `[[ a == b ]]; ${D}`, 'deny'],
   ['conditional newline exposes following command', `[[ a == b ]]\n${D}`, 'deny'],
   ['conditional quoted closer still rejects extglob', '[[ "]]" == @(rm) ]]', 'deny', /extended glob operator/],
-  ['conditional quoted substitution still rejects extglob', `[[ '$(${D})' == @(rm) ]]`, 'deny', /extended glob operator/],
+  ['conditional quoted substitution still rejects extglob', `[[ '$(${D})' == @(rm) ]]`, 'deny', /^Legacy check: /],
 ]) test(`round 2: ${name}`, async () => {
   const result = await run(command);
   assert.equal(result.decision, expected);
@@ -1196,11 +1307,11 @@ for (const [name, command] of [
 });
 
 const parseDenials = [
-  ['heredoc delimiter contains command substitution marker', `cat <<$(x)\nhi\n$(x)\n${D}\n$`, /heredoc delimiter/i],
-  ['heredoc delimiter contains arithmetic marker', `cat <<$((1))\nhi\n$((1))\n${D}\n$`, /heredoc delimiter/i],
+  ['heredoc delimiter contains command substitution marker', `cat <<$(x)\nhi\n$(x)\n${D}\n$`, /^Legacy check: /],
+  ['heredoc delimiter contains arithmetic marker', `cat <<$((1))\nhi\n$((1))\n${D}\n$`, /^Legacy check: /],
   ['heredoc delimiter contains backtick marker', 'cat <<`x`\nhi\n`x`', /heredoc delimiter/i],
   ['heredoc closing beside substitution fails closed before later code', `x=$(cat <<EOF\nhi\nEOF)\n${D}; (\nEOF\n)`, /heredoc.*EOF.*shares substitution closing line/i],
-  ['heredoc body newline inside conditional fails closed', `cat <<EOF; [[ -n x\nEOF\n]]\n${D}\nEOF`, /heredoc.*conditional/i],
+  ['heredoc body newline inside conditional fails closed', `cat <<EOF; [[ -n x\nEOF\n]]\n${D}\nEOF`, /^Legacy check: /],
   ['unbalanced double quote', 'echo "unbalanced', /quote/i],
   ['heredoc never closes before denied text', `cat <<EOF\n${D}`, /heredoc.*EOF/i],
   ['malformed commit heredoc delimiter quote', 'git commit -m "$(cat <<\'EOF\ndon\'t break\nEOF\n)"', /heredoc.*EOF/i],
@@ -1224,7 +1335,7 @@ const parseDenials = [
   ['unquoted heredoc substitution', 'cat <<EOF\n$(ls\nEOF', /substitution/i],
   ['unquoted heredoc arithmetic expansion', 'cat <<EOF\n$((1 + 2\nEOF', /arithmetic expansion/i],
   ['heredoc without body newline', 'cat <<EOF', /heredoc.*EOF/i],
-  ['heredoc terminator has trailing space', `cat <<EOF\nx\nEOF \n${D}`, /heredoc.*EOF/i],
+  ['heredoc terminator has trailing space', `cat <<EOF\nx\nEOF \n${D}`, /^Legacy check: /],
   ['tab-stripped heredoc terminator has leading space', 'cat <<-EOF\n\tx\n EOF', /heredoc.*EOF/i],
   ['heredoc terminator beside substitution closing line is unsupported', 'echo "$(cat <<EOF\nx\nEOF)"', /heredoc.*EOF/i],
   ['heredoc substitution closes before body newline', 'echo "$(cat <<EOF)"', /heredoc.*EOF/i],
@@ -1236,7 +1347,9 @@ for (const [name, command, reason] of parseDenials) {
     const result = await run(command, ['Bash(rm:*)'], { SMART_APPROVE_VERBOSE: verbose });
     assert.equal(result.decision, 'deny');
     assert.match(result.reason, reason);
-    assert.match(result.reason, /^Command not analyzed: .+\. This guard denies what it cannot parse while deny patterns are configured\./);
+    if (!reason.source.startsWith('^Legacy check:')) {
+      assert.match(result.reason, /^Command not analyzed: .+\. This guard denies what it cannot parse while deny patterns are configured\./);
+    }
     assert.doesNotMatch(result.reason, /guard error/i);
   });
 }
@@ -1311,7 +1424,8 @@ for (const [name, command] of [
   ['20,000 quoted shift lines', 'echo "a<<b"\n'.repeat(20000)],
 ]) test(`performance: ${name} finishes under 2 seconds`, async () => {
   const result = await run(command);
-  assert.equal(result.decision, undefined);
+  assert.equal(result.decision, 'deny');
+  assert.equal(result.reason, 'Command not analyzed: longer than 20,000 characters');
   assert.ok(result.elapsed < 2000, `${result.elapsed.toFixed(1)} ms`);
   console.log(`# ${name}: ${result.elapsed.toFixed(1)} ms`);
 });
@@ -1327,11 +1441,10 @@ for (const [name, command, expected] of [
   console.log(`# ${name}: ${result.elapsed.toFixed(1)} ms`);
 });
 
-test('a malformed configured pattern fails closed with an actionable guard error', async () => {
+test('a malformed configured pattern fails closed in the legacy check', async () => {
   const result = await run('ls', [42]);
   assert.equal(result.decision, 'deny');
-  assert.match(result.reason, /guard error/i);
-  assert.match(result.reason, /PreToolUse.*settings.*unwire/i);
+  assert.equal(result.reason, 'Legacy check: could not complete (TypeError); command not analyzed');
 });
 
 // These fixtures invoke only the hook, including its verbose-log decomposition.

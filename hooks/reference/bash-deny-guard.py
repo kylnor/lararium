@@ -32,6 +32,9 @@ import re
 import sys
 
 
+PARSER_MAX_COMMAND_LENGTH = 20000
+
+
 def load_settings(path=None):
     """Load and return the permissions dict from settings.json."""
     if path is None:
@@ -1455,22 +1458,25 @@ def legacy_decide(command, settings):
 
 
 def decide(command, settings):
-    """Run the scanner first, then retain any denial from the previous matcher."""
-    denies = settings.get('permissions', {}).get('deny', [])
+    """Run the previous matcher first, then the scanner within its length cap."""
+    try:
+        permissions = settings.get('permissions', {})
+        denies = permissions.get('deny', [])
+        if not denies:
+            return None, None
+        denies = tuple(denies)
+        settings = dict(settings)
+        settings['permissions'] = dict(permissions, deny=denies)
+    except Exception as exc:
+        return guard_error(exc)
     if not denies:
         return None, None
     try:
         if not parse_bash_patterns(denies):
             return None, None
     except Exception:
-        # The scanner keeps its existing fail-closed reason for invalid patterns.
+        # Invalid patterns still reach the fail-closed checks below.
         pass
-    try:
-        verdict = parser_decide(command, settings)
-    except Exception as exc:
-        return guard_error(exc)
-    if verdict[0] == 'deny':
-        return verdict
     try:
         decision, reason = legacy_decide(command, settings)
         if decision == 'deny':
@@ -1480,7 +1486,14 @@ def decide(command, settings):
             'Legacy check: could not complete ({}); command not analyzed'
             .format(type(exc).__name__)
         )
-    return verdict
+    try:
+        if len(command) > PARSER_MAX_COMMAND_LENGTH:
+            return 'deny', 'Command not analyzed: longer than {:,} characters'.format(
+                PARSER_MAX_COMMAND_LENGTH
+            )
+        return parser_decide(command, settings)
+    except Exception as exc:
+        return guard_error(exc)
 
 
 _log_lines = []
@@ -1536,13 +1549,14 @@ def main():
     try:
         cmd_preview = command[:80].replace('\n', '\\n')
         log(f"checking: {cmd_preview}{'...' if len(command) > 80 else ''}")
-        if _verbose_enabled() and configured:
+        decision, reason = decide(command, settings)
+        if (_verbose_enabled() and configured and decision != 'deny'
+                and len(command) <= PARSER_MAX_COMMAND_LENGTH):
             try:
                 sub_commands = decompose_command(command)
                 log(f"sub-commands: {sub_commands[:5]}{'...' if len(sub_commands) > 5 else ''}")
             except ParseProblem as exc:
                 log(f"parse problem: {exc}")
-        decision, reason = decide(command, settings)
         log(f"decision={decision or 'passthrough'} reason={reason or 'no pattern matched'}")
         reason = _build_reason(reason) if decision == "deny" else reason
     except Exception as exc:
