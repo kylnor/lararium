@@ -29,7 +29,10 @@ import fnmatch
 import json
 import os
 import re
+import signal
 import sys
+import threading
+import time
 
 
 def load_settings(path=None):
@@ -968,7 +971,7 @@ def guard_error(exc):
     )
 
 
-def decide(command, settings):
+def parser_decide(command, settings):
     """Deny matches and parse problems; errors with configured denies fail closed."""
     denies = settings.get('permissions', {}).get('deny', [])
     if not denies:
@@ -992,6 +995,519 @@ def decide(command, settings):
         return parse_denial(exc)
     except Exception as exc:
         return guard_error(exc)
+
+
+# Keep this matcher independent of the scanner, copied from origin/main's matcher.
+def legacy_parse_bash_patterns(patterns):
+    """Extract command prefixes from Bash(...) permission patterns.
+
+    "Bash(git status:*)" -> "git status"
+    "Bash(rm:*)"         -> "rm"
+    Non-Bash patterns are skipped.
+
+    Returns a list of (prefix_string, glob_pattern) tuples.
+    The glob_pattern is what fnmatch should match against.
+    """
+    result = []
+    for pat in patterns:
+        m = re.match(r'^Bash\((.+)\)$', pat)
+        if not m:
+            continue
+        inner = m.group(1)
+        # inner is like "git status:*" or "rm:*" or "/opt/tools/...adb*"
+        # Split on first ':'
+        colon_idx = inner.find(':')
+        if colon_idx == -1:
+            # Pattern like "Bash(something)" with no colon , treat as exact prefix
+            result.append((inner, inner))
+        else:
+            prefix = inner[:colon_idx]
+            suffix = inner[colon_idx + 1:]
+            # The glob pattern is prefix + ' ' + suffix (for matching with args)
+            # But we also want bare prefix to match (no args)
+            glob_pat = prefix + ' ' + suffix if suffix else prefix
+            result.append((prefix, glob_pat))
+    return result
+
+
+def legacy_command_matches_pattern(cmd, patterns):
+    """Check if a command matches any of the parsed Bash patterns.
+
+    Each pattern is (prefix, glob_pattern).
+    A command matches if:
+      - It equals the prefix exactly (bare command, no args), OR
+      - fnmatch(cmd, glob_pattern) is True
+    """
+    for prefix, glob_pat in patterns:
+        if cmd == prefix:
+            return True
+        if fnmatch.fnmatch(cmd, glob_pat):
+            return True
+    return False
+
+
+def legacy_extract_subshells(command):
+    """Extract contents of executable substitutions, recursively.
+
+    Returns a list of substitution content strings.
+    """
+    subshells = []
+
+    i = 0
+    while i < len(command):
+        if command[i] == '$' and i + 1 < len(command) and command[i + 1] == '(' \
+                and not (i + 2 < len(command) and command[i + 2] == '('):
+            depth = 0
+            start = i + 2
+            j = i + 1
+            while j < len(command):
+                if command[j] == '(':
+                    depth += 1
+                elif command[j] == ')':
+                    depth -= 1
+                    if depth == 0:
+                        content = command[start:j]
+                        subshells.append(content)
+                        subshells.extend(legacy_extract_subshells(content))
+                        break
+                j += 1
+            i = j + 1
+            continue
+
+        if command[i] in ('<', '>') and i + 1 < len(command) and command[i + 1] == '(':
+            depth = 0
+            start = i + 2
+            j = i + 1
+            while j < len(command):
+                if command[j] == '(':
+                    depth += 1
+                elif command[j] == ')':
+                    depth -= 1
+                    if depth == 0:
+                        content = command[start:j]
+                        subshells.append(content)
+                        subshells.extend(legacy_extract_subshells(content))
+                        break
+                j += 1
+            i = j + 1
+            continue
+
+        i += 1
+
+    parts = command.split('`')
+    for idx in range(1, len(parts), 2):
+        content = parts[idx]
+        if content.strip():
+            subshells.append(content)
+            subshells.extend(legacy_extract_subshells(content))
+
+    return subshells
+
+
+def legacy_strip_heredocs(command):
+    """Strip heredoc bodies from a command, leaving just the <<DELIM marker.
+
+    Heredocs like <<'EOF'\\n...\\nEOF are replaced with the marker only
+    (body removed).  This prevents heredoc content lines from being treated
+    as sub-commands when we split on newlines.
+    """
+    lines = command.split('\n')
+    result = []
+    heredoc_delim = None
+    i = 0
+
+    while i < len(lines):
+        if heredoc_delim is not None:
+            # Inside heredoc body , look for the terminator line
+            if lines[i].strip() == heredoc_delim:
+                heredoc_delim = None
+            i += 1
+            continue
+
+        # Check for heredoc marker: <<[-]?['"]?WORD['"]?
+        m = re.search(r'<<-?\s*[\'"]?(\w+)[\'"]?', lines[i])
+        if m:
+            heredoc_delim = m.group(1)
+
+        result.append(lines[i])
+        i += 1
+
+    return '\n'.join(result)
+
+
+def legacy_split_on_operators(command):
+    """Split a command string on &&, ||, ;, |, and newlines.
+
+    Respects quoted strings and $() subshells (doesn't split inside them).
+    Returns the top-level command segments.
+    """
+    # Strip heredoc bodies so their lines aren't treated as commands
+    command = legacy_strip_heredocs(command)
+    # Collapse backslash-newline continuations before parsing
+    command = command.replace('\\\n', ' ')
+
+    segments = []
+    current = []
+    i = 0
+    in_single_quote = False
+    in_double_quote = False
+    paren_depth = 0
+
+    while i < len(command):
+        ch = command[i]
+
+        # Handle backslash escaping (not inside single quotes, where \ is literal)
+        if ch == '\\' and not in_single_quote and i + 1 < len(command):
+            current.append(ch)
+            current.append(command[i + 1])
+            i += 2
+            continue
+
+        # Track quoting
+        if ch == "'" and not in_double_quote and paren_depth == 0:
+            in_single_quote = not in_single_quote
+            current.append(ch)
+            i += 1
+            continue
+        if ch == '"' and not in_single_quote and paren_depth == 0:
+            in_double_quote = not in_double_quote
+            current.append(ch)
+            i += 1
+            continue
+
+        if in_single_quote or in_double_quote:
+            current.append(ch)
+            i += 1
+            continue
+
+        # Track $() subshell depth , consume $( as a single token
+        if ch == '$' and i + 1 < len(command) and command[i + 1] == '(':
+            paren_depth += 1
+            current.append('$')
+            current.append('(')
+            i += 2
+            continue
+        if ch == '(' and paren_depth > 0:
+            paren_depth += 1
+            current.append(ch)
+            i += 1
+            continue
+        if ch == ')' and paren_depth > 0:
+            paren_depth -= 1
+            current.append(ch)
+            i += 1
+            continue
+
+        if paren_depth > 0:
+            current.append(ch)
+            i += 1
+            continue
+
+        # Split on operators at top level
+        if ch == '&' and i + 1 < len(command) and command[i + 1] == '&':
+            segments.append(''.join(current))
+            current = []
+            i += 2
+            continue
+        if ch == '|' and i + 1 < len(command) and command[i + 1] == '|':
+            segments.append(''.join(current))
+            current = []
+            i += 2
+            continue
+        if ch == ';':
+            segments.append(''.join(current))
+            current = []
+            i += 1
+            continue
+        if ch == '|':
+            segments.append(''.join(current))
+            current = []
+            i += 1
+            continue
+        if ch == '\n':
+            segments.append(''.join(current))
+            current = []
+            i += 1
+            continue
+
+        current.append(ch)
+        i += 1
+
+    segments.append(''.join(current))
+    return [s.strip() for s in segments if s.strip()]
+
+
+def legacy__skip_shell_value(cmd, i):
+    """Skip past one shell 'word' value starting at position i.
+
+    Handles quoted strings, $() subshells (tracking paren depth), and
+    bare non-whitespace runs.  Returns the index just past the value.
+    """
+    if i >= len(cmd):
+        return i
+
+    # Quoted value
+    if cmd[i] == '"':
+        i += 1
+        while i < len(cmd) and cmd[i] != '"':
+            if cmd[i] == '\\' and i + 1 < len(cmd):
+                i += 2
+            else:
+                i += 1
+        if i < len(cmd):
+            i += 1  # skip closing quote
+        return i
+    if cmd[i] == "'":
+        i += 1
+        while i < len(cmd) and cmd[i] != "'":
+            i += 1
+        if i < len(cmd):
+            i += 1  # skip closing quote
+        return i
+
+    # Unquoted value , consume non-whitespace, tracking $() depth
+    paren_depth = 0
+    while i < len(cmd):
+        ch = cmd[i]
+        if ch == '$' and i + 1 < len(cmd) and cmd[i + 1] == '(':
+            paren_depth += 1
+            i += 2
+            continue
+        if ch == '(' and paren_depth > 0:
+            paren_depth += 1
+            i += 1
+            continue
+        if ch == ')' and paren_depth > 0:
+            paren_depth -= 1
+            i += 1
+            continue
+        if paren_depth > 0:
+            i += 1
+            continue
+        if ch in (' ', '\t'):
+            break
+        i += 1
+    return i
+
+
+def legacy_strip_env_vars(cmd):
+    """Strip leading environment variable assignments (FOO=bar cmd ...).
+
+    Returns the command with env var prefixes removed.
+    Correctly handles values containing $() subshells.
+    """
+    while True:
+        m = re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', cmd)
+        if not m:
+            break
+        # Find end of value (respecting quotes and $() depth)
+        i = legacy__skip_shell_value(cmd, m.end())
+        # If nothing follows the assignment, this IS the command , keep it
+        rest = cmd[i:].lstrip()
+        if not rest:
+            break
+        cmd = rest
+    return cmd
+
+
+def legacy_strip_redirections(cmd):
+    """Strip output/input redirections from a command.
+
+    Removes patterns like >file, >>file, 2>&1, <file, etc.
+    """
+    # Remove redirections: N>file, N>>file, N>&N, <file, <<word, <<<word
+    cmd = re.sub(r'\d*>>?\s*&?\d*\S*', '', cmd)
+    cmd = re.sub(r'<<<?\s*\S+', '', cmd)
+    # Simple input redirection: < file
+    cmd = re.sub(r'<\s*\S+', '', cmd)
+    return cmd.strip()
+
+
+# Shell keywords that are structural, not commands to approve/deny.
+# These appear as segments after splitting on ;/newlines in for/while/if blocks.
+legacy_SHELL_KEYWORDS = frozenset({
+    'do', 'done', 'then', 'else', 'elif', 'fi', 'esac', '{', '}',
+    'break', 'continue',
+})
+
+# Keywords that can prefix a command when joined by ; (e.g. "do echo hello").
+# These should be stripped to expose the real command underneath.
+legacy__KEYWORD_PREFIX_RE = re.compile(
+    r'^(do|then|else|elif)\s+'
+)
+
+# Patterns for shell compound statement headers (for, while, until, if, case).
+# These introduce control flow but aren't executable commands themselves.
+legacy__COMPOUND_HEADER_RE = re.compile(
+    r'^(for|while|until|if|case|select)\b'
+)
+
+
+def legacy_strip_keyword_prefix(cmd):
+    """Strip leading shell keyword prefix from a command.
+
+    "do echo hello" -> "echo hello"
+    "then git status" -> "git status"
+    """
+    m = legacy__KEYWORD_PREFIX_RE.match(cmd)
+    if m:
+        return cmd[m.end():]
+    return cmd
+
+
+def legacy_is_shell_structural(cmd):
+    """Return True if cmd is a shell keyword or compound-statement header."""
+    if cmd in legacy_SHELL_KEYWORDS:
+        return True
+    if legacy__COMPOUND_HEADER_RE.match(cmd):
+        return True
+    return False
+
+
+def legacy_is_standalone_assignment(cmd):
+    """Return True if cmd is purely a variable assignment (no following command).
+
+    e.g. "result=$(curl ...)" or "FOO=bar" , these are not commands to check.
+    The subshell contents, if any, are extracted and checked separately.
+    """
+    m = re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', cmd)
+    if not m:
+        return False
+    # Check if the entire string is consumed by the assignment value
+    end = legacy__skip_shell_value(cmd, m.end())
+    rest = cmd[end:].strip()
+    return rest == ''
+
+
+def legacy_normalize_command(cmd):
+    """Normalize a command by stripping env vars, redirections, and whitespace."""
+    cmd = cmd.strip()
+    if not cmd:
+        return cmd
+    cmd = legacy_strip_keyword_prefix(cmd)
+    cmd = legacy_strip_env_vars(cmd)
+    cmd = legacy_strip_redirections(cmd)
+    # Collapse multiple spaces
+    cmd = re.sub(r'\s+', ' ', cmd)
+    return cmd.strip()
+
+
+def legacy_decompose_command(command):
+    """Decompose a compound command into all individual sub-commands.
+
+    Splits on operators, extracts subshell contents, normalizes each.
+    Filters out shell structural keywords (for/do/done/etc.) and
+    standalone variable assignments (whose subshell contents are checked
+    separately).
+    Returns a list of normalized command strings.
+    """
+    all_commands = []
+
+    # Get top-level segments
+    segments = legacy_split_on_operators(command)
+
+    for seg in segments:
+        # Also decompose any subshells found in this segment
+        subshells = legacy_extract_subshells(seg)
+        for sub in subshells:
+            sub_segments = legacy_split_on_operators(sub)
+            for ss in sub_segments:
+                normalized = legacy_normalize_command(ss)
+                if normalized:
+                    all_commands.append(normalized)
+
+        # Normalize the top-level segment itself
+        normalized = legacy_normalize_command(seg)
+        if normalized:
+            all_commands.append(normalized)
+
+    # Filter out shell structural keywords and standalone assignments
+    return [
+        cmd for cmd in all_commands
+        if not legacy_is_shell_structural(cmd) and not legacy_is_standalone_assignment(cmd)
+    ]
+
+
+def legacy_decide(command, settings):
+    """Make a permission decision for a compound command. DENY-ONLY.
+
+    Returns:
+        ("deny", reason) if any sub-command OR the full command matches
+                         a deny pattern
+        (None, None) otherwise , fall through to normal permission flow
+    """
+    if not command or not command.strip():
+        return None, None
+
+    permissions = settings.get("permissions", {})
+    deny_patterns = legacy_parse_bash_patterns(permissions.get("deny", []))
+    if not deny_patterns:
+        return None, None
+
+    # Full-command check: pipe-shaped deny patterns ("curl * | sh") only
+    # match the undecomposed string.
+    flat = re.sub(r'\s+', ' ', command).strip()
+    if legacy_command_matches_pattern(flat, deny_patterns):
+        return "deny", f"Command matches deny pattern"
+
+    for cmd in legacy_decompose_command(command):
+        if legacy_command_matches_pattern(cmd, deny_patterns):
+            return "deny", f"Sub-command '{cmd}' matches deny pattern"
+
+    return None, None
+
+
+LEGACY_TIME_BUDGET_SECONDS = 2.0
+
+
+def _legacy_alarm(signum, frame):
+    raise TimeoutError('previous matcher time budget exceeded')
+
+
+def _legacy_with_budget(command, settings):
+    # Signal timers are process-wide and can only be installed on the main thread.
+    if (threading.current_thread() is not threading.main_thread() or
+            not all(hasattr(signal, name) for name in
+                    ('SIGALRM', 'ITIMER_REAL', 'setitimer', 'getitimer'))):
+        return legacy_decide(command, settings)
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    previous_timer = signal.getitimer(signal.ITIMER_REAL)
+    started = time.monotonic()
+    try:
+        signal.signal(signal.SIGALRM, _legacy_alarm)
+        signal.setitimer(signal.ITIMER_REAL, LEGACY_TIME_BUDGET_SECONDS)
+        return legacy_decide(command, settings)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+        delay, interval = previous_timer
+        if delay:
+            delay = max(0.000001, delay - (time.monotonic() - started))
+        signal.setitimer(signal.ITIMER_REAL, delay, interval)
+
+
+def decide(command, settings):
+    """Run the scanner first, then retain any denial from the previous matcher."""
+    denies = settings.get('permissions', {}).get('deny', [])
+    if not denies:
+        return None, None
+    try:
+        if not parse_bash_patterns(denies):
+            return None, None
+    except Exception:
+        # The scanner keeps its existing fail-closed reason for invalid patterns.
+        return parser_decide(command, settings)
+    verdict = parser_decide(command, settings)
+    if verdict[0] == 'deny':
+        return verdict
+    try:
+        decision, reason = _legacy_with_budget(command, settings)
+        if decision == 'deny':
+            return 'deny', 'Legacy check: ' + reason
+    except BaseException:
+        # An optional check must never replace the scanner verdict with an error.
+        pass
+    return verdict
 
 
 _log_lines = []

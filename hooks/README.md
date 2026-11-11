@@ -162,6 +162,15 @@ The reason names the byte, syntax kind, construct or heredoc delimiter in this f
 A guard error with configured deny patterns fails closed with a reason explaining how to remove
 the hook from settings. With no deny patterns, or unreadable settings, the hook stays silent.
 
+Two checks run in order: the parser first, then an unchanged copy of the previous release's
+matcher if the parser stays silent. Either check can deny. Parser denials keep their existing
+reasons. Legacy denials start with `Legacy check: ` to identify the check.
+Every command the previous release denied is still denied.
+The property test checked 1,429 must-deny rows: 0 silent.
+The legacy check has a two-second time budget on the main thread when a signal timer is available.
+Otherwise it runs directly without a time limit. An error, recursion failure or timeout leaves
+the parser's decision intact. Neither check runs shell code.
+
 This guard runs before Bash. It cannot resolve variables or computed command words such as `$CMD`,
 `$(echo rm)`, brace expansions, globs or `${IFS}`, aliases or functions defined elsewhere (function
 bodies written in the command are checked), script contents, interpreter payloads such as `python3 -c`
@@ -177,6 +186,29 @@ with real isolation, such as `lab/`, for untrusted input.
 **Known over-denials:** a backslash-newline touching `|`, `;`, `&` or another operator character
 inside double quotes, or directly after `;;` in a `case` body, is denied although Bash runs
 nothing denied. Put the line break elsewhere.
+`[[ x =~ $$$@(x) ]]` style regex operands are also denied as not analyzed: a `$$` directly
+before `@(`, `?(`, `*(`, `+(` or `!(` in arithmetic or a `=~` operand can trigger the
+conservative extended-glob check.
+Accepted over-denials inherited from the previous matcher are pinned in ten test rows.
+Bash runs nothing denied in these cases: command substitution text inside single quotes in
+plain words, array elements, `let` arguments and `[[ =~ ]]` operands; bodies of heredocs with
+a quoted or escaped delimiter and of several heredocs on one line; text after `#` following a
+redirection operator; and a deny-listed word alone on a line inside a multi-line `case` pattern.
+These denials start with `Legacy check: `.
+
+**Known open:** review found 13 rows that reach a denied command but are not denied by either
+check. The previous release also did not deny them, so these are not regressions:
+
+- `for NAME` without `in`, and `for (( ... ))`, followed directly by `do` or `{` (3).
+- `xargs` long options with optional arguments, such as `--replace` and `--max-lines`,
+  followed by a command (2).
+- GNU `env -S` strings using the `\_` escape (1).
+- A `#` comment inside an array initializer, quoted variants (2).
+- Array subscript variants, including an indexed assignment used as a prefix to a command (2).
+- The `$'\c\''` ANSI-C control escape followed by a quote (1).
+- `$$'` inside `$(( ))` (2).
+
+The run-time limits above still apply. This guard is not a sandbox or a security boundary.
 
 To upgrade an existing install, copy `hooks/reference/bash-deny-guard.py` over the installed copy.
 Updating this template alone does not update a copied hook.

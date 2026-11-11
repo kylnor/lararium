@@ -20,7 +20,7 @@ async function run(command, denies = ['Bash(rm:*)'], extra = {}, harness = null)
   delete env.CLAUDE_PROJECT_DIR;
   const started = performance.now();
   const output = await new Promise((resolve, reject) => {
-    const child = spawn('python3', harness ? ['-c', harness, guard] : [guard], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn('python3', harness ? ['-B', '-c', harness, guard] : ['-B', guard], { env, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '';
     const timeout = setTimeout(() => { child.kill(); reject(new Error('hook exceeded 5 seconds')); }, 5000);
     child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
@@ -40,6 +40,187 @@ async function run(command, denies = ['Bash(rm:*)'], extra = {}, harness = null)
 }
 
 const D = 'rm -rf /important';
+// All commands below are Python inputs, including strings that resemble shell code.
+async function pythonCheck(script, rows = []) {
+  const result = await new Promise((resolve, reject) => {
+    const child = spawn('python3', ['-B', '-c', [
+    'import importlib.util, json, sys',
+    'spec = importlib.util.spec_from_file_location("guard", sys.argv[1])',
+    'guard = importlib.util.module_from_spec(spec)',
+    'spec.loader.exec_module(guard)',
+    'rows = json.load(sys.stdin)',
+    script,
+  ].join('\n'), guard], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '', stderr = '';
+    const timer = setTimeout(() => { child.kill(); reject(new Error('Python check exceeded 15 seconds')); }, 15000);
+    child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
+    child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
+    child.on('error', error => { clearTimeout(timer); reject(error); });
+    child.on('close', status => { clearTimeout(timer); resolve({status, stdout, stderr}); });
+    child.stdin.on('error', reject);
+    child.stdin.end(JSON.stringify(rows));
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  return result.stdout;
+}
+
+// Ten former silent expectations become explicit legacy over-denials in the union.
+const legacyOverDenials = [
+  `echo '$(${D})'`,
+  `cat <<\\EOF\n$(${D})\nEOF`,
+  `cat <<EOF1 <<EOF2\n${D}\nEOF1\n${D}\nEOF2`,
+  `echo > # $(${D})`,
+  'case x in\nrm\n) echo ok;;\nesac',
+  `[[ x =~ ('$(${D})') ]]`,
+  `let 'y=$(${D})'`,
+  `[[ x =~ '$(${D})' ]]`,
+  `[[ x =~ a'$(${D})'b ]]`,
+  `a=('$(${D})')`,
+];
+for (const command of legacyOverDenials) test(`round 14 retained legacy over-denial: ${JSON.stringify(command)}`, async () => {
+  const result = await run(command);
+  assert.equal(result.decision, 'deny');
+  assert.match(result.reason, /^Legacy check: /);
+});
+
+const regressionRows = JSON.parse(fs.readFileSync(path.join(dir, 'bash-deny-guard.regressions.json'), 'utf8'));
+// origin/main ships no guard test file: 0 rows from that source.
+// Explicit examples from origin/main's docs. ops-guards.md and README.md add 0.
+// The bare deny-prefix illustration is included as a command too.
+const mainDocRows = [
+  { command: 'git status && rm -rf ~/.ssh', deny: ['Bash(rm -rf ~/.ssh:*)'] },
+  { command: 'rm -rf ~/.ssh', deny: ['Bash(rm -rf ~/.ssh:*)'] },
+  { command: 'curl * | sh', deny: ['Bash(curl * | sh)'] },
+  { command: 'rm -rf /', deny: ['Bash(rm:*)'] },
+  // Module docstring: the same pipe-shaped example, retained by source.
+  { command: 'curl * | sh', deny: ['Bash(curl * | sh)'] },
+];
+// (D) is silent in legacy_decide, so it is excluded from this source.
+const mainControlRows = [
+  D, `echo ok && ${D}`, `echo ok; ${D}`, `echo ok | ${D}`,
+  `echo $(${D})`, `FOO=1 ${D}`, `if true; then ${D}; fi`,
+].map(command => ({ command, deny: ['Bash(rm:*)'] }));
+const propertyRows = [...regressionRows, ...mainDocRows, ...mainControlRows];
+test(`round 14 denial union property: ${propertyRows.length} rows`, async () => {
+  await pythonCheck([
+    'legacy_denials = 0',
+    'for row in rows:',
+    '    command = row["command"].replace("{{D}}", "rm -rf /important")',
+    '    settings = {"permissions": {"deny": row["deny"]}}',
+    '    parser = guard.parser_decide(command, settings)',
+    '    legacy = guard.legacy_decide(command, settings)',
+    '    union = guard.decide(command, settings)',
+    '    assert union[0] == "deny", (command, parser, legacy, union)',
+    '    if parser[0] == "deny":',
+    '        assert union == parser, (command, parser, union)',
+    '    if legacy[0] == "deny":',
+    '        legacy_denials += 1',
+    '        if parser[0] is None:',
+    '            assert union[1] == "Legacy check: " + legacy[1], (command, union)',
+    'assert legacy_denials > 0',
+  ].join('\n'), propertyRows);
+});
+
+test('round 14 docs and controls are denied by the frozen matcher', async () => {
+  await pythonCheck([
+    'for row in rows:',
+    '    assert guard.legacy_decide(row["command"], {"permissions": {"deny": row["deny"]}})[0] == "deny", row',
+  ].join('\n'), [...mainDocRows, ...mainControlRows]);
+});
+
+for (const fault of ['RuntimeError("legacy fixture")', 'RecursionError("legacy fixture")', 'TimeoutError("legacy fixture")', 'SystemExit(1)']) {
+  test(`round 14 optional legacy failure preserves parser verdict: ${fault}`, async () => {
+    await pythonCheck([
+      'def fail(*args): raise ' + fault,
+      'guard.legacy_decide = fail',
+      'settings = {"permissions": {"deny": ["Bash(rm:*)"]}}',
+      'for command in ("ls", "rm -rf /important", "echo \\\"unclosed"):',
+      '    assert guard.decide(command, settings) == guard.parser_decide(command, settings)',
+      'for denies in ([], ["Read(*)"]):',
+      '    assert guard.decide("rm -rf /important", {"permissions": {"deny": denies}}) == (None, None)',
+    ].join('\n'));
+  });
+}
+
+test('round 14 skips the optional check when the parser denies or Bash patterns are absent', async () => {
+  await pythonCheck([
+    'calls = []',
+    'def legacy(*args):',
+    '    calls.append(args)',
+    '    return "deny", "fixture"',
+    'guard.legacy_decide = legacy',
+    'settings = {"permissions": {"deny": ["Bash(rm:*)"]}}',
+    'for command in ("rm -rf /important", "echo \\\"unclosed"):',
+    '    assert guard.decide(command, settings) == guard.parser_decide(command, settings)',
+    'for denies in ([], ["Read(*)"]):',
+    '    assert guard.decide("ls", {"permissions": {"deny": denies}}) == (None, None)',
+    'assert calls == []',
+    'assert guard.decide("ls", settings) == ("deny", "Legacy check: fixture")',
+    'assert len(calls) == 1',
+  ].join('\n'));
+});
+
+test('round 14 an unavailable timer retains legacy denials and harmless silence', async () => {
+  await pythonCheck([
+    'del guard.signal.setitimer',
+    'settings = {"permissions": {"deny": ["Bash(rm:*)"]}}',
+    'assert guard.decide("ls", settings) == (None, None)',
+    'guard.legacy_decide = lambda *args: ("deny", "fixture")',
+    'assert guard.decide("ls", settings) == ("deny", "Legacy check: fixture")',
+  ].join('\n'));
+});
+
+test('round 14 a non-main thread retains legacy denials and the parser verdict on failure', async () => {
+  await pythonCheck([
+    'import threading',
+    'settings = {"permissions": {"deny": ["Bash(rm:*)"]}}',
+    'results = []',
+    'def check():',
+    '    results.append(guard.decide("ls", settings))',
+    'guard.legacy_decide = lambda *args: ("deny", "fixture")',
+    'thread = threading.Thread(target=check)',
+    'thread.start()',
+    'thread.join()',
+    'assert results == [("deny", "Legacy check: fixture")], results',
+    'def fail(*args): raise RuntimeError("legacy fixture")',
+    'guard.legacy_decide = fail',
+    'thread = threading.Thread(target=check)',
+    'thread.start()',
+    'thread.join()',
+    'assert results[1:] == [guard.parser_decide("ls", settings)], results',
+  ].join('\n'));
+});
+
+test(`round 14 denial union property without a timer: ${propertyRows.length} rows`, async () => {
+  await pythonCheck([
+    'del guard.signal.setitimer',
+    'for row in rows:',
+    '    command = row["command"].replace("{{D}}", "rm -rf /important")',
+    '    settings = {"permissions": {"deny": row["deny"]}}',
+    '    union = guard.decide(command, settings)',
+    '    assert union[0] == "deny", (command, union)',
+  ].join('\n'), propertyRows);
+});
+
+test('round 14 legacy execution is bounded and restores the signal timer', async () => {
+  await pythonCheck([
+    'import signal, time',
+    'def slow(*args):',
+    '    while True: pass',
+    'guard.legacy_decide = slow',
+    'guard.LEGACY_TIME_BUDGET_SECONDS = 0.03',
+    'handler = signal.getsignal(signal.SIGALRM)',
+    'timer = signal.getitimer(signal.ITIMER_REAL)',
+    'signal.setitimer(signal.ITIMER_REAL, 5)',
+    'started = time.monotonic()',
+    'assert guard.decide("ls", {"permissions": {"deny": ["Bash(rm:*)"]}}) == (None, None)',
+    'assert time.monotonic() - started < 1',
+    'assert signal.getsignal(signal.SIGALRM) == handler',
+    'assert 3 < signal.getitimer(signal.ITIMER_REAL)[0] <= 5',
+    'signal.setitimer(signal.ITIMER_REAL, *timer)',
+  ].join('\n'));
+});
 for (const operator of ['@', '?', '*', '!']) {
   for (const command of [
     `echo $${operator}(a|#); ${D}`,
@@ -472,12 +653,12 @@ for (const command of additionalDenies) test(`deny (extended): ${JSON.stringify(
 });
 const additionalSilent = [
   'command -V rm', 'command -pv rm',
-  "echo '$(rm -rf /important)'", "echo '\\rm'",
+  "echo '\\rm'",
   `echo "${D}"`, 'echo a#b', `echo rm\\; ls`,
   `cat <<'EOF'\n\`${D}\`\nEOF`,
-  `cat <<\\EOF\n$(${D})\nEOF`,
+
   `cat <<EOF\n\\$(${D})\nEOF`,
-  `cat <<EOF1 <<EOF2\n${D}\nEOF1\n${D}\nEOF2`,
+
   `cat <<EOF | sh\n${D}\nEOF`, `cat <<< '${D}' | sh`,
   `python3 -c '${D}'`, `node -e '${D}'`,
   `for f in rm; do echo "$f"; done`, `select f in rm; do :; done`,
@@ -488,7 +669,7 @@ const additionalSilent = [
   'bash -c "echo ok" rm', 'find . -name rm -print',
   'echo { rm -rf /important', 'echo } rm -rf /important',
   'echo "$(case x in rm) echo ok;; rm|x) echo ok;; esac)"',
-  `echo > # $(${D})`,
+
 ];
 for (const command of additionalSilent) test(`silent (extended): ${JSON.stringify(command)}`, async () => {
   assert.equal((await run(command)).decision, undefined);
@@ -582,7 +763,7 @@ for (const [name, command, expected, reason] of [
   ['case subject and pattern remain data', `echo "$(case case in case) ${D};; esac)"`, 'deny'],
   ['esac argument leaves following case body checked', `echo "$(case x in x) echo esac; ${D};; esac)"`, 'deny'],
   ['in and case arguments leave later patterns as data', 'case x in x) echo in case;; rm) echo ok;; esac', undefined],
-  ['multiline case patterns are data', 'case x in\nrm\n) echo ok;;\nesac', undefined],
+  ['multiline case pattern retained legacy denial', 'case x in\nrm\n) echo ok;;\nesac', 'deny'],
   ['quoted esac pattern leaves body checked', `echo "$(case x in 'esac') ${D};; esac)"`, 'deny'],
   ['esac alternative after an arm does not expose rm pattern', 'echo "$(case x in x) :;; esac|rm) echo ok;; esac)"', undefined],
   ['esac alternative after an arm leaves body checked', `echo "$(case x in x) :;; esac|y) ${D};; esac)"`, 'deny'],
@@ -713,7 +894,7 @@ for (const [name, command, expected] of [
   ["probe 8 row 82: escaped closing parenthesis keeps regex hash in group", "[[ x =~ (\\)#) ]]; " + D + "\necho ]]", 'deny'],
   ["probe 8 row 83: regex group backtick substitution is checked", "[[ x =~ (`" + D + "`) ]]", 'deny'],
   ["probe 8 row 84: regex group double-quoted substitution is checked", "[[ x =~ (\"$(" + D + ")\") ]]", 'deny'],
-  ["probe 8 row 85: regex group single-quoted substitution stays inert", "[[ x =~ ('$(" + D + ")') ]]", undefined],
+  ["probe 8 row 85: regex group retained legacy denial", "[[ x =~ ('$(" + D + ")') ]]", 'deny'],
   ["probe 8 row 86: regex group parameter substitution is checked", "[[ x =~ (${y:-$(" + D + ")}) ]]", 'deny'],
   ["probe 8 row 87: regex group newline and hash stay literal", "[[ x =~ (a\n#) ]]; " + D + "", 'deny'],
   ["probe 8 row 90: negated regex term recognizes group", "[[ ! x =~ (#) ]]; " + D + "", 'deny'],
@@ -747,10 +928,10 @@ for (const [name, command, expected] of [
   ["probe 8 row 123: arithmetic single-quoted close preserves following command", "echo $(( ')' )); " + D + "", 'deny'],
   ["probe 8 row 124: arithmetic quoted close does not close unit", "echo $(( 1 + ')' + 1 )) ; " + D + "", 'deny'],
   ["probe 8 row 125: double-quoted arithmetic scans single quotes", "echo \"$(( '$(" + D + "; echo 1)' ))\"", 'deny'],
-  ["probe 8 row 126: let single-quoted argument stays inert", "let 'y=$(" + D + ")'", undefined],
-  ["probe 8 row 127: regex single-quoted operand stays inert", "[[ x =~ '$(" + D + ")' ]]", undefined],
+  ["probe 8 row 126: let retained legacy denial", "let 'y=$(" + D + ")'", 'deny'],
+  ["probe 8 row 127: regex operand retained legacy denial", "[[ x =~ '$(" + D + ")' ]]", 'deny'],
   ["probe 8 row 128: regex double-quoted operand expands substitution", "[[ x =~ \"$(" + D + ")\" ]]", 'deny'],
-  ["probe 8 row 129: embedded regex single-quoted span stays inert", "[[ x =~ a'$(" + D + ")'b ]]", undefined],
+  ["probe 8 row 129: embedded regex retained legacy denial", "[[ x =~ a'$(" + D + ")'b ]]", 'deny'],
   ["probe 8 row 130: regex group preserves single-quoted blank", "[[ x =~ ('a b'|c) ]]; " + D + "", 'deny'],
   ["probe 8 row 131: regex group preserves double-quoted blank", "[[ x =~ (a|\"b c\") ]]; " + D + "", 'deny'],
   ["probe 8 row 132: regex group preserves escaped blank", "[[ x =~ (a\\ b) ]]; " + D + "", 'deny'],
@@ -809,7 +990,7 @@ for (const [name, command, expected, reason] of [
   ['assignment subscript quoted substitution parse problem propagates', "a['$(echo']=1", 'deny', /unterminated \$\( substitution/i],
   ['initializer subscript quoted substitution parse problem propagates', "a=(['$(echo']=1)", 'deny', /unterminated \$\( substitution/i],
   ['heredoc legacy arithmetic scans single quotes', `cat <<EOF\n$[ '$(${D})' ]\nEOF`, 'deny'],
-  ['ordinary array element single quotes stay inert', `a=('$(${D})')`, undefined],
+  ['ordinary array element retained legacy denial', `a=('$(${D})')`, 'deny'],
 ]) test(`round 5: ${name}`, async () => {
   const result = await run(command);
   assert.equal(result.decision, expected);

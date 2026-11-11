@@ -85,9 +85,25 @@ agents that build), with `workspaces/` for projects that have earned their own f
    The safety rails are backstops, not a sandbox or a security boundary: the Bash deny guard makes
    a deny list much harder to slip past, but a hand-written scanner cannot model all of Bash, so
    pair it with real isolation (the `lab/` below) for anything untrusted.
+   Two checks run in order: the parser first, then an unchanged copy of the previous release's
+   matcher if the parser stays silent. Either check can deny. Parser denials keep their reasons.
+   Legacy denials start with `Legacy check: ` to identify the check.
+   Every command the previous release denied is still denied.
    **Known over-denials:** a backslash-newline touching `|`, `;`, `&` or another operator character
    inside double quotes, or directly after `;;` in a `case` body, is denied although Bash runs
    nothing denied. Put the line break elsewhere.
+   A `$$` directly before an extended-glob opener in arithmetic or a `=~` operand can also
+   trigger a denial.
+   Accepted over-denials inherited from the previous matcher are pinned in ten test rows:
+   command substitution text inside single quotes in plain words, array elements, `let`
+   arguments and `[[ =~ ]]` operands; bodies of heredocs with quoted or escaped delimiters
+   and of several heredocs on one line; text after `#` following a redirection operator;
+   and a deny-listed word alone on a line inside a multi-line `case` pattern.
+   Bash runs nothing denied in these cases.
+   Known open: 13 review rows involving loop headers, `xargs` optional arguments, GNU `env -S`
+   escapes, array comments and subscripts, an ANSI-C control escape, and `$$'` in arithmetic
+   reach denied commands that neither check denies; the previous release also missed them, so
+   they are not regressions (see [section i of hooks/README.md](hooks/README.md#i-deny-list-depth-bash-deny-guardpy-pretooluse-on-bash)).
    With deny patterns configured, it denies what it cannot parse, including these constructs:
    parentheses in arithmetic parameter expansions, process substitution text in arithmetic,
    expansions in heredoc delimiters, unsupported backslash-newlines touching operators, and extended glob

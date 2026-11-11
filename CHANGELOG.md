@@ -27,7 +27,29 @@ Also not analyzed: parentheses in arithmetic parameter expansions, process subst
 An unquoted extended glob opener is denied even after `$` or `$$`; special parameters without an adjacent `(`, double-quoted text and heredoc body text keep their existing handling.
 Commands that turn `extglob` on, including computed option names or `BASHOPTS` values that could enable it, are denied as not analyzed.
 Known over-denials: backslash-newlines touching operator characters inside double quotes or directly after `;;` in a `case` body are denied although Bash runs nothing denied; put the line break elsewhere.
+Also denied: `$$` directly before an extended-glob opener in arithmetic or a `=~` operand.
 Conditional regex groups preserve word boundaries; quoted substitutions in parameters, arithmetic and subscripted words are checked as code.
+
+Two checks run in order: the parser first, then an unchanged copy of the previous release's matcher
+if the parser stays silent. Either check can deny. Parser denials keep their existing reasons.
+Legacy denials start with `Legacy check: ` to identify the check.
+Every command the previous release denied is still denied. The property test checked 1,429
+must-deny rows: 0 silent.
+
+Accepted over-denials inherited from the previous matcher are pinned in ten test rows.
+Bash runs nothing denied in these cases: command substitution text inside single quotes in
+plain words, array elements, `let` arguments and `[[ =~ ]]` operands; bodies of heredocs with
+quoted or escaped delimiters and of several heredocs on one line; text after `#` following a
+redirection operator; and a deny-listed word alone on a line inside a multi-line `case` pattern.
+
+Known open: 13 review rows reach denied commands that neither check denies.
+The previous release also missed them, so they are not regressions.
+They cover `for NAME` without `in` and `for (( ... ))` followed directly by `do` or `{` (3);
+`xargs` long options with optional arguments, such as `--replace` and `--max-lines`, followed
+by a command (2); GNU `env -S` strings using the `\_` escape (1); `#` comments inside array
+initializers, quoted variants (2); array subscript variants, including an indexed assignment
+used as a prefix to a command (2); the `$'\c\''` ANSI-C control escape followed by a quote (1);
+and `$$'` inside `$(( ))` (2).
 
 In every version up to v3.2, `grep "a<<b" notes.txt` followed by a denied command,
 `python3 -c "print(1 << 2)"` followed by a denied command, and `/bin/rm -rf /important` were not
@@ -36,7 +58,7 @@ were not normalized. Existing installs remain affected until their installed hoo
 
 The guard is a backstop, not a sandbox or a security boundary. A hand-written scanner cannot model
 all of Bash, and each review round of this change found further shapes that reached a denied
-command; the ones found are closed and pinned by tests, and the limits that remain are listed in
+command. Fixed shapes are pinned by tests, and the limits that remain are listed in
 section i of `hooks/README.md`. Pair the guard with real isolation, such as `lab/`, for untrusted
 input.
 
