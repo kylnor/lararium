@@ -153,13 +153,17 @@ The reason names the byte, syntax kind or heredoc delimiter in this form:
 A guard error with configured deny patterns fails closed with a reason explaining how to remove
 the hook from settings. With no deny patterns, or unreadable settings, the hook stays silent.
 
-This guard runs before Bash. It cannot resolve variables or computed command words such as `$CMD`
-or `$(echo rm)`, aliases or functions defined elsewhere (function bodies written in the command are
-checked), script contents, interpreter payloads such as `python3 -c`
+This guard runs before Bash. It cannot resolve variables or computed command words such as `$CMD`,
+`$(echo rm)`, brace expansions, globs or `${IFS}`, aliases or functions defined elsewhere (function
+bodies written in the command are checked), script contents, interpreter payloads such as `python3 -c`
 and `node -e`, strings a builtin evaluates again at run time, such as the arguments of `let`,
 `declare`, `unset`, `read`, `trap` and `alias`, data piped into a shell at run time, or binaries that
-have been renamed or copied.
-These are limits of static inspection, so the hook does not replace a sandbox.
+have been renamed or copied. Shell command strings are checked only for `sh`, `bash`, `zsh`, `dash`
+and `ksh`; other shells and `su -c` are not checked. A script sourced from standard input is not checked.
+These are limits of static inspection. This guard is a backstop that makes a deny list much harder
+to slip past. It is not a sandbox or a security boundary: a hand-written scanner cannot model all
+of Bash, and review of this hook kept finding new shapes that reached a denied command. Pair it
+with real isolation, such as `lab/`, for untrusted input.
 
 To upgrade an existing install, copy `hooks/reference/bash-deny-guard.py` over the installed copy.
 Updating this template alone does not update a copied hook.

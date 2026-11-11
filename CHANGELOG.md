@@ -30,6 +30,12 @@ In every version up to v3.2, `grep "a<<b" notes.txt` followed by a denied comman
 denied by `Bash(rm:*)`. Quoted text could falsely open a heredoc, hiding later commands, and paths
 were not normalized. Existing installs remain affected until their installed hook is replaced.
 
+The guard is a backstop, not a sandbox or a security boundary. A hand-written scanner cannot model
+all of Bash, and each review round of this change found further shapes that reached a denied
+command; the ones found are closed and pinned by tests, and the limits that remain are listed in
+section i of `hooks/README.md`. Pair the guard with real isolation, such as `lab/`, for untrusted
+input.
+
 **To adopt:** copy `hooks/reference/bash-deny-guard.py` over the installed copy and read section i
 of `hooks/README.md` for the remaining static-inspection limits. Updating the template alone does
 not update your installed copy. No interview or npm update is needed.

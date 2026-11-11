@@ -147,6 +147,25 @@ NUMBER = re.compile(r'^[0-9]+(?:\.[0-9]+)?[smhd]?$')
 SHELLS = {'sh', 'bash', 'zsh', 'dash', 'ksh'}
 PREFIXES = {'!', 'then', 'do', 'else', 'elif', 'if', 'while', 'until', 'coproc'}
 HEADERS = {'for', 'case', 'select', 'done', 'fi', 'esac', 'in'}
+REDIRECTION = re.compile(r'(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?(<<<|<<-|<<|&>>|&>|>>|<>|>&|<&|>\||>|<)')
+
+
+def after_prefixes(words):
+    # Bash timing and control prefixes can precede each other and compound commands.
+    i = 0
+    while i < len(words) and not words[i].quoted:
+        if words[i].value in PREFIXES:
+            i += 1
+        elif words[i].value == 'time':
+            j = i + 1
+            while j < len(words) and words[j].value in ('-p', '--'):
+                j += 1
+            if j < len(words) and words[j].value.startswith('-'):
+                break
+            i = j
+        else:
+            break
+    return words[i:]
 
 
 class ParseProblem(ValueError):
@@ -171,9 +190,22 @@ class Scanner:
         self.depth = depth
         self.segments = []
 
-    def arithmetic(self, depth):
-        # Bash arithmetic owns its parentheses; shift operators are not redirects.
-        self.data_unit('$((', ')', depth)
+    def arithmetic(self, depth, marker='$(('):
+        start = self.i
+        if not self.data_unit(marker, ')', depth):
+            # Without adjacent closing parentheses Bash falls back to shell code.
+            self.i = start + len(marker) - 1
+            if not self.code(')', depth + (marker == '$((')):
+                raise ParseProblem('unterminated {} group'.format(marker))
+            return
+        # Ambiguous text gets both readings. Arithmetic can be invalid shell code,
+        # so a failed second parse must not turn valid arithmetic into a denial.
+        alternative = Scanner(self.text[start + len(marker) - 1:self.i], depth)
+        try:
+            alternative.code(')', depth)
+        except ParseProblem:
+            pass
+        self.segments.extend(alternative.segments)
 
     def data_unit(self, marker, close, depth, scan_quoted=False):
         # Expansions, arithmetic commands and array words own their matching close.
@@ -187,6 +219,8 @@ class Scanner:
             if ch == close:
                 level -= 1
                 self.i += 1
+                if marker in ('((', '$((') and level == 1 and not self.text.startswith(')', self.i):
+                    return False
             elif ch == opening:
                 level += 1
                 self.i += 1
@@ -201,13 +235,33 @@ class Scanner:
                     '((': 'arithmetic command', '$[': 'legacy arithmetic expansion',
                     '(': 'array initializer'}[marker]
             raise ParseProblem('unterminated {} ({})'.format(kind, marker))
+        return True
 
-    def substitution(self, marker, depth):
+    def substitution(self, marker, depth, double_quoted=False):
         # Substitutions re-enter code even inside double quotes, at a bounded depth.
         if depth >= MAX_DEPTH:
             raise ValueError('command nesting exceeds 8 levels')
         self.i += len(marker)
-        if not self.code('`' if marker == '`' else ')', depth + 1):
+        if marker == '`':
+            body = []
+            while self.i < len(self.text):
+                ch = self.text[self.i]
+                self.i += 1
+                if ch == '`':
+                    nested = Scanner(''.join(body), depth + 1)
+                    nested.code()
+                    self.segments.extend(nested.segments)
+                    return
+                if ch == '\\' and self.i < len(self.text):
+                    nxt = self.text[self.i]
+                    self.i += 1
+                    if nxt not in '$`\\' and not (double_quoted and nxt == '"'):
+                        body.append(ch)
+                    body.append(nxt)
+                else:
+                    body.append(ch)
+            raise ParseProblem('unterminated ` substitution')
+        if not self.code(')', depth + 1):
             raise ParseProblem('unterminated {} substitution'.format(marker))
 
     def word(self, depth, delimiter=False, stop=None, unit_open=None,
@@ -225,6 +279,8 @@ class Scanner:
         pattern_level = 0
         while self.i < len(s):
             ch = s[self.i]
+            if delimiter and (s.startswith('$(', self.i) or ch == '`'):
+                raise ParseProblem('heredoc delimiter containing a substitution marker')
             if quote is None and ch == stop:
                 break
             # Keep quote boundaries, but inspect their raw contents in expansion data.
@@ -276,6 +332,9 @@ class Scanner:
                     value.append(ch)
                     self.i += 1
                 continue
+            if quote is None and s.startswith('$"', self.i):
+                self.i += 1
+                ch = '"'
             if ch == '"':
                 quoted = True
                 quote = None if quote == '"' else '"'
@@ -299,7 +358,7 @@ class Scanner:
                 elif s.startswith('$(', self.i) or (quote is None and s[self.i:self.i + 2] in ('<(', '>(')):
                     self.substitution(s[self.i:self.i + 2], depth)
                 elif ch == '`':
-                    self.substitution('`', depth)
+                    self.substitution('`', depth, double_quoted=quote == '"')
                 elif quote is None and ch == '(' and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*\+?=', s[start:self.i]):
                     self.data_unit('(', ')', depth, scan_quoted=scan_quoted)
                 if self.i != begin:
@@ -331,7 +390,7 @@ class Scanner:
             raise ParseProblem('unterminated {} group'.format('regex' if regex else 'pattern'))
         return Word(s[start:self.i], ''.join(value), quoted)
 
-    def bodies(self, pending, depth):
+    def bodies(self, pending, depth, substitution=False):
         # Bash reads queued heredocs after newline, in order, with exact delimiter lines.
         s = self.text
         for doc in pending:
@@ -342,7 +401,17 @@ class Scanner:
                     end = len(s)
                 line = s[self.i:end]
                 self.i = min(end + 1, len(s))
+                while (not doc['quoted'] and end < len(s) and
+                       (len(line) - len(line.rstrip('\\'))) % 2):
+                    next_end = s.find('\n', self.i)
+                    if next_end < 0:
+                        next_end = len(s)
+                    line = line[:-1] + s[self.i:next_end]
+                    end = next_end
+                    self.i = min(end + 1, len(s))
                 tested = line.lstrip('\t') if doc['tabs'] else line
+                if substitution and tested.startswith(doc['delimiter'] + ')'):
+                    raise ParseProblem('heredoc {!r} terminator shares substitution closing line'.format(doc['delimiter']))
                 if tested == doc['delimiter']:
                     break
                 chunks.append(tested + ('\n' if end < len(s) else ''))
@@ -373,12 +442,14 @@ class Scanner:
                 scanner.i += 1
         self.segments.extend(scanner.segments)
 
-    def conditional(self, depth):
+    def conditional(self, depth, pending):
         # Conditional operators and pattern groups are data, substitutions are code.
         self.i += 2
         s = self.text
         state = 'term'
         while self.i < len(s):
+            if s[self.i] == '\n' and pending:
+                raise ParseProblem('heredoc body starts inside conditional ([[)')
             if s[self.i] in ' \t\n' or s.startswith('\\\n', self.i):
                 self.i += 2 if s.startswith('\\\n', self.i) else 1
                 continue
@@ -462,17 +533,16 @@ class Scanner:
                 continue
             if s.startswith('[[', self.i) and (
                     self.i + 2 == len(s) or s[self.i + 2] in ' \t\n') and (
-                    not cases or cases[-1][0] == 'body') and all(
-                    not w.quoted and w.value in PREFIXES for w in words):
+                    not cases or cases[-1][0] == 'body') and len(raw) == len(words) and not after_prefixes(words):
                 begin = self.i
-                self.conditional(depth)
+                self.conditional(depth, pending)
                 text = s[begin:self.i]
                 words.append(Word(text, '[['))
                 raw.append(text)
                 continue
             if s.startswith('((', self.i):
                 begin = self.i
-                self.data_unit('((', ')', depth)
+                self.arithmetic(depth, '((')
                 text = s[begin:self.i]
                 words.append(Word(text, text))
                 raw.append(text)
@@ -492,14 +562,12 @@ class Scanner:
                     if ch == ';' and self.i < len(s) and s[self.i] == '&':
                         self.i += 1
                 if ch == '\n':
-                    self.bodies(pending, depth)
+                    self.bodies(pending, depth, substitution=end == ')')
                     pending.clear()
                 continue
             if ch in '{}' and (
                     self.i + 1 == len(s) or s[self.i + 1] in ' \t\n;)'):
-                header = words[:]
-                while header and not header[0].quoted and header[0].value in PREFIXES:
-                    header = header[1:]
+                header = after_prefixes(words)
                 named_group = (ch == '{' and not any(w.quoted for w in header) and (
                     (len(header) == 2 and header[0].value == 'function') or
                     (len(header) == 1 and any(w.value == 'coproc' and not w.quoted for w in words))))
@@ -511,7 +579,7 @@ class Scanner:
                     self.i += 1
                     continue
             # Redirection operands are data; process substitutions remain executable words.
-            m = re.match(r'(?:[0-9]+)?(<<<|<<-|<<|&>>|&>|>>|<>|>&|<&|>\||>|<)', s[self.i:self.i + 32])
+            m = REDIRECTION.match(s, self.i)
             if m and not (s[self.i:self.i + 2] in ('<(', '>(')):
                 op = m.group(1)
                 raw.append(m.group(0))
@@ -538,7 +606,7 @@ class Scanner:
             word = self.word(depth, stop=end)
             if self.i == len(s) or word.raw:
                 phase = cases[-1][0] if cases else None
-                command_position = all(w.value in PREFIXES and not w.quoted for w in words)
+                command_position = len(raw) == len(words) and not after_prefixes(words)
                 if phase == 'subject':
                     cases[-1][0] = 'in'
                 elif phase == 'in':
@@ -642,6 +710,9 @@ def command_starts(words, payload):
                     payload(text + ' ' + ' '.join(w.raw for w in words[j + 1:]), 'env ')
                     break
                 if arg == '--':
+                    todo.append(j + (2 if base == 'timeout' else 1))
+                    break
+                if base == 'timeout' and (not arg.startswith('-') or arg == '-'):
                     todo.append(j + 1)
                     break
                 if ASSIGNMENT.match(arg) or NUMBER.fullmatch(arg):
@@ -681,8 +752,7 @@ def decompose_command(command, depth=0):
         if level > MAX_DEPTH:
             raise ValueError('command nesting exceeds 8 levels')
         # Reserved prefixes expose the following command; loop and case headers do not run it.
-        while words and not words[0].quoted and words[0].value in PREFIXES:
-            words = words[1:]
+        words = after_prefixes(words)
         if not words or (not words[0].quoted and words[0].value in HEADERS):
             return
         result.append(raw.strip(' \t\n'))

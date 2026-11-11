@@ -82,6 +82,9 @@ agents that build), with `workspaces/` for projects that have earned their own f
 5. **`hooks/`**: the loops that make it feel alive. Session-start briefing, the heartbeat that
    remembers yesterday, voice integrity, compaction continuity, safety rails, dispatch routing.
    Doctrine plus minimal reference implementations that run on plain files, no database required.
+   The safety rails are backstops, not a sandbox or a security boundary: the Bash deny guard makes
+   a deny list much harder to slip past, but a hand-written scanner cannot model all of Bash, so
+   pair it with real isolation (the `lab/` below) for anything untrusted.
 6. **`skills/`**: slash-command skills for the session lifecycle (`/end`, `/handoff`, `/sessions`),
    self-improvement (`/evolve`), and memory curation (`/curate`), plus the doctrine for writing
    your own.
