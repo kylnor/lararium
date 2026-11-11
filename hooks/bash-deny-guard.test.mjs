@@ -573,8 +573,6 @@ for (const [name, command] of [
   ['spaced nested capture is code', `echo $((${D}) )`],
   ['nested capture with trailing command is code', `echo $((${D});true)`],
   ['redirected nested capture is code', `out=$((cd /tmp && ${D}) 2>&1)`],
-  ['ambiguous adjacent command parentheses check both readings', `((${D}))`],
-  ['ambiguous adjacent capture parentheses check both readings', `echo $((${D}))`],
   ['heredoc nested capture is code', `cat <<EOF\n$((${D}) )\nEOF`],
   ['escaped nested backticks become code', "echo `echo \\`" + D + "\\``"],
   ['escaped dollar in backticks becomes substitution', "echo `echo \"\\$(" + D + ")\"`"],
@@ -599,6 +597,8 @@ for (const [name, command] of [
 });
 
 for (const [name, command] of [
+  ['adjacent command parentheses select arithmetic', `((${D}))`],
+  ['adjacent capture parentheses select arithmetic', `echo $((${D}))`],
   ['shift arithmetic stays data', 'echo $((1<<2))'],
   ['grouped arithmetic expansion stays data', 'echo $(( (1+2)*3 ))'],
   ['grouped arithmetic assignment stays data', '((x = (a+b) * 2))'],
@@ -624,6 +624,47 @@ for (const [name, command] of [
   ['quoted tab stripped heredoc delimiter does not join lines', `cat <<-'EOF'\n\thi\n\tEO\\\nF\n${D}\nEOF`],
 ]) test(`round 9 silent: ${name}`, async () => {
   assert.equal((await run(command)).decision, undefined);
+});
+
+for (const [name, command] of [
+  ['assigned command name is an arithmetic variable', 'rm=4; echo $((rm))'],
+  ['command name in arithmetic assignment is data', '((rm = 1))'],
+  ['grouped command name in arithmetic expansion is data', 'echo $(( (rm) ))'],
+  ['command name in arithmetic sum is data', 'echo $((rm + 1))'],
+  ['adjacent group around arithmetic variable is data', 'echo $(((rm)))'],
+  ['two grouped arithmetic variables are data', 'echo $(( (rm) + (rm) ))'],
+  ['double quoted arithmetic variable is data', 'echo "$((rm))"'],
+  ['if arithmetic variable is data', 'if (( rm > 2 )); then :; fi'],
+  ['ternary arithmetic variables are data', 'echo $(( rm ? (rm) : (1) ))'],
+  ['arithmetic variable increment is data', '((rm++))'],
+  ['arithmetic for variables are data', 'for ((rm=0; rm<(3); rm++)); do :; done'],
+  ['assigned arithmetic product is data', 'x=$(( (rm+1) * 2 ))'],
+  ['while arithmetic variable decrement is data', 'while ((rm--)); do :; done'],
+  ['legacy arithmetic variable is data', 'echo $[rm+1]'],
+  ['invalid arithmetic command text is data', 'echo $((rm -rf /important))'],
+  ['sum of arithmetic groups is data', 'echo $(( (1)+(2) ))'],
+  ['adjacent sum of arithmetic groups is data', 'echo $(((1)+(2)))'],
+  ['heredoc arithmetic variable is data', 'cat <<EOF\n$((rm))\nEOF'],
+  ['parameter arithmetic variable is data', 'echo ${x:-$((rm))}'],
+]) test(`round 10 silent: ${name}`, async () => {
+  assert.equal((await run(command)).decision, undefined);
+});
+
+for (const [name, command] of [
+  ['separate nested groups expose command', `( (${D}) )`],
+  ['redirected nested subshell exposes command', `((${D}) 2>&1)`],
+  ['piped nested capture exposes command', `echo $((echo a; ${D}) | cat)`],
+  ['command after inner subshell is code', `((echo a) ; ${D})`],
+  ['conditional nested subshell exposes command', `((echo a) && (${D}))`],
+  ['double quoted nested capture exposes command', `echo "$((${D}) )"`],
+  ['arithmetic expansion substitution exposes command', `echo $(( $(${D}) ))`],
+  ['arithmetic command substitution exposes command', `(( $(${D}) ))`],
+  ['arithmetic group before substitution exposes command', `echo $(( (1) + $(${D}) ))`],
+  ['parameter nested capture exposes command', `echo ${'${x:-'}$((${D}) )}`],
+]) test(`round 10 deny pattern: ${name}`, async () => {
+  const result = await run(command);
+  assert.equal(result.decision, 'deny');
+  assert.match(result.reason, /matches deny pattern/);
 });
 
 const parseDenials = [
@@ -743,6 +784,17 @@ for (const [name, command] of [
 ]) test(`performance: ${name} finishes under 2 seconds`, async () => {
   const result = await run(command);
   assert.equal(result.decision, undefined);
+  assert.ok(result.elapsed < 2000, `${result.elapsed.toFixed(1)} ms`);
+  console.log(`# ${name}: ${result.elapsed.toFixed(1)} ms`);
+});
+
+for (const [name, command, expected] of [
+  ['30 nested arithmetic expansions before denied command', 'echo ' + '$(( '.repeat(30) + '1' + ' ))'.repeat(30) + `; ${D}`, 'deny'],
+  ['30 nested arithmetic command groups', '(( '.repeat(30) + '1' + ' ))'.repeat(30), undefined],
+]) test(`performance: ${name} finishes under 2 seconds`, async () => {
+  const result = await run(command);
+  assert.equal(result.decision, expected);
+  if (expected === 'deny') assert.match(result.reason, /matches deny pattern/);
   assert.ok(result.elapsed < 2000, `${result.elapsed.toFixed(1)} ms`);
   console.log(`# ${name}: ${result.elapsed.toFixed(1)} ms`);
 });

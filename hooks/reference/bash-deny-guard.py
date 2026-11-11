@@ -189,23 +189,67 @@ class Scanner:
         self.i = 0
         self.depth = depth
         self.segments = []
+        self.parenthesis_ends = {}
+
+    def parenthesis_end(self, opening):
+        # Locate the inner close without interpreting words as commands. Remember
+        # nested closes so arithmetic expansions do not repeat this lookahead.
+        if opening in self.parenthesis_ends:
+            return self.parenthesis_ends[opening]
+        s = self.text
+        stack = [[opening, ')', None]]
+        i = opening + 1
+        while i < len(s):
+            frame = stack[-1]
+            quote = frame[2]
+            ch = s[i]
+            if quote in ("'", 'ansi', '`'):
+                if ch == ('\'' if quote == 'ansi' else quote):
+                    frame[2] = None
+                elif ch == '\\' and quote != "'":
+                    i += 1
+                i += 1
+                continue
+            if ch == '\\' and i + 1 < len(s):
+                i += 2 if quote is None or s[i + 1] in '$`"\\\n' else 1
+                continue
+            if ch == '"':
+                frame[2] = None if quote else '"'
+            elif quote is None and s.startswith("$'", i):
+                frame[2] = 'ansi'
+                i += 1
+            elif ch == '`' or (quote is None and ch == "'"):
+                frame[2] = ch
+            elif s[i:i + 2] in ('$(', '${', '$['):
+                # An expansion owns its quotes and delimiters, even inside quotes.
+                stack.append([i + 1, {'(': ')', '{': '}', '[': ']'}[s[i + 1]], None])
+                i += 1
+            elif quote is None:
+                if ch == frame[1]:
+                    if ch == ')':
+                        self.parenthesis_ends[frame[0]] = i
+                    stack.pop()
+                    if not stack:
+                        return i
+                elif (ch == '(' and frame[1] == ')') or (ch == '[' and frame[1] == ']'):
+                    stack.append([i, ')' if ch == '(' else ']', None])
+            i += 1
+        for position, close, quote in stack:
+            if close == ')':
+                self.parenthesis_ends[position] = None
+        return None
 
     def arithmetic(self, depth, marker='$(('):
         start = self.i
-        if not self.data_unit(marker, ')', depth):
-            # Without adjacent closing parentheses Bash falls back to shell code.
+        close = self.parenthesis_end(start + len(marker) - 1)
+        if close is not None and not self.text.startswith(')', close + 1):
+            # Only an adjacent second close selects arithmetic. Otherwise the
+            # outer parenthesis owns shell code beginning with the inner one.
             self.i = start + len(marker) - 1
             if not self.code(')', depth + (marker == '$((')):
                 raise ParseProblem('unterminated {} group'.format(marker))
             return
-        # Ambiguous text gets both readings. Arithmetic can be invalid shell code,
-        # so a failed second parse must not turn valid arithmetic into a denial.
-        alternative = Scanner(self.text[start + len(marker) - 1:self.i], depth)
-        try:
-            alternative.code(')', depth)
-        except ParseProblem:
-            pass
-        self.segments.extend(alternative.segments)
+        self.data_unit(marker, ')', depth)
 
     def data_unit(self, marker, close, depth, scan_quoted=False):
         # Expansions, arithmetic commands and array words own their matching close.
@@ -219,8 +263,6 @@ class Scanner:
             if ch == close:
                 level -= 1
                 self.i += 1
-                if marker in ('((', '$((') and level == 1 and not self.text.startswith(')', self.i):
-                    return False
             elif ch == opening:
                 level += 1
                 self.i += 1
@@ -542,7 +584,11 @@ class Scanner:
                 continue
             if s.startswith('((', self.i):
                 begin = self.i
-                self.arithmetic(depth, '((')
+                header = after_prefixes(words)
+                if len(header) == 1 and not header[0].quoted and header[0].value == 'for':
+                    self.data_unit('((', ')', depth)
+                else:
+                    self.arithmetic(depth, '((')
                 text = s[begin:self.i]
                 words.append(Word(text, text))
                 raw.append(text)
